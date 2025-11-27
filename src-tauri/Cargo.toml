@@ -15,10 +15,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
 core-graphics = { version = "0.25.0", default-features = false }
+core-foundation = { version = "0.10.1", default-features = false }
 objc = { version = "0.2.7", features = ["exception"] }
-serde_json = { version = "1.0.145", default-features = false, features = [
-    "std",
-] }
 tauri = { version = "2.9.3", default-features = false, features = [
     "macos-private-api",
     "unstable",

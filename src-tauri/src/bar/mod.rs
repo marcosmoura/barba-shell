@@ -1,4 +1,5 @@
 mod constants;
+mod menubar;
 mod screen;
 mod window;
 
@@ -16,6 +17,8 @@ pub fn init(app: &App) {
     screen::init_screen_watcher(move || {
         window::set_window_position(&webview_watcher_clone);
     });
+
+    menubar::start_menu_bar_visibility_watcher(&webview_window);
 
     // Make the app not appear in the dock
     let _ = app_handle.set_activation_policy(tauri::ActivationPolicy::Prohibited);

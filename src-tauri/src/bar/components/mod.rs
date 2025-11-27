@@ -1,5 +1,7 @@
 use tauri::WebviewWindow;
 
+pub mod apps;
+pub mod battery;
 pub mod hyprspace;
 pub mod media;
 

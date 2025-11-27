@@ -1,8 +1,6 @@
 import { css } from '@linaria/core';
 
-import { LAPTOP_MEDIA_QUERY } from '@/utils/media-query';
-
-const laptopMediaQuery = `@media ${LAPTOP_MEDIA_QUERY}`;
+import { CSS_LAPTOP_MEDIA_QUERY } from '@/utils/media-query';
 
 export const media = css`
   position: fixed;
@@ -19,37 +17,11 @@ export const media = css`
   padding-left: 1px;
 `;
 
-export const labelWrapper = css`
-  position: relative;
-
-  overflow: hidden;
-
+export const label = css`
   max-width: 480px;
 
-  ${laptopMediaQuery} {
+  ${CSS_LAPTOP_MEDIA_QUERY} {
     max-width: 300px;
-  }
-`;
-
-export const label = css`
-  display: inline-block;
-
-  white-space: nowrap;
-`;
-
-export const scrollingLabel = css`
-  animation: scroll-text var(--scroll-duration, 5s) linear infinite alternate;
-
-  @keyframes scroll-text {
-    0%,
-    20% {
-      transform: translateX(0);
-    }
-
-    80%,
-    100% {
-      transform: translateX(var(--scroll-distance, 0px));
-    }
   }
 `;
 

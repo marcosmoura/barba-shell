@@ -4,9 +4,10 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Button } from '@/components/Button';
 import { Icon } from '@/components/Icon';
+import { ScrollingLabel } from '@/components/ScrollingLabel';
 import { Surface } from '@/components/Surface';
 import { useMediaQuery } from '@/hooks';
-import { LAPTOP_MEDIA_QUERY } from '@/utils';
+import { LAPTOP_MEDIA_QUERY } from '@/utils/media-query';
 
 import {
   fetchLocation,
@@ -15,6 +16,7 @@ import {
   getWeatherLabel,
   openWeatherApp,
 } from './Weather.service';
+import * as styles from './Weather.styles';
 
 const queryOptions = {
   refetchInterval: 20 * 60 * 1000, // 20 minutes
@@ -45,9 +47,9 @@ export const Weather = () => {
   return (
     <Surface as={Button} onClick={onWeatherClick}>
       <Icon icon={getWeatherIcon(currentConditions)} />
-      <span>
+      <ScrollingLabel className={styles.label}>
         {!weather ? 'Loading weather...' : getWeatherLabel(currentConditions, isLaptopScreen)}
-      </span>
+      </ScrollingLabel>
     </Surface>
   );
 };

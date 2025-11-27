@@ -47,7 +47,8 @@ pub fn run() {
                 return Ok(());
             }
 
-            Ok(bar::init(app))
+            bar::init(app);
+            Ok(())
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

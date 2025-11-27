@@ -30,6 +30,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             bar::components::apps::open_app,
             bar::components::battery::get_battery_info,
+            bar::components::cpu::get_cpu_info,
             bar::components::hyprspace::get_hyprspace_current_workspace_windows,
             bar::components::hyprspace::get_hyprspace_focused_window,
             bar::components::hyprspace::get_hyprspace_focused_workspace,

@@ -6,7 +6,7 @@ import { Button } from '@/components/Button';
 import { Icon } from '@/components/Icon';
 import { Surface } from '@/components/Surface';
 
-import { fetchCpu, getCPUElements, openActivityMonitor } from './Cpu.interface';
+import { fetchCpu, getCPUElements, openActivityMonitor } from './Cpu.service';
 
 export const Cpu = () => {
   const { data: cpu } = useQuery({

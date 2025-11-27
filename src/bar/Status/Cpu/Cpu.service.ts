@@ -8,7 +8,7 @@ import type { CPUInfo } from './Cpu.types';
 export const fetchCpu = (): Promise<CPUInfo> => invoke<CPUInfo>('get_cpu_info');
 
 export const getCPUElements = (temperature: number) => {
-  if (temperature >= 80) {
+  if (temperature >= 85) {
     return {
       color: colors.red,
       icon: CpuChargeIcon,

@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability for default features",
+  "windows": [
+    "bar"
+  ],
+  "platforms": [
+    "macOS"
+  ],
+  "permissions": [
+    "core:default"
+  ]
+}

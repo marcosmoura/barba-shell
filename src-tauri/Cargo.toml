@@ -1,0 +1,47 @@
+[package]
+name = "barba"
+version = "0.1.0"
+description = "A Tauri App"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/marcosmoura/barba"
+readme = "../README.md"
+keywords = ["tauri", "desktop", "bar", "gui", "macos"]
+categories = ["gui", "macos"]
+
+[lib]
+name = "barba_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+core-graphics = { version = "0.25.0", default-features = false }
+objc = { version = "0.2.7", features = ["exception"] }
+serde_json = { version = "1.0.145", default-features = false, features = [
+    "std",
+] }
+tauri = { version = "2.9.3", default-features = false, features = [
+    "macos-private-api",
+    "unstable",
+    "wry",
+] }
+
+[build-dependencies]
+tauri-build = { version = "2.5.2", features = [] }
+
+[profile.release]
+debug = 1
+codegen-units = 1
+panic = "abort"
+incremental = true
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+multiple_crate_versions = "allow"
+
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = [
+    'cfg(feature, values("cargo-clippy"))',
+] }

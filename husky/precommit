@@ -1,0 +1,5 @@
+export NODE_OPTIONS="--experimental-strip-types"
+
+pnpm exec lint-staged --config lint-staged.config.ts
+(cd src-tauri && cargo fmt --all)
+(cd src-tauri && cargo clippy --all --fix --allow-dirty --allow-staged)

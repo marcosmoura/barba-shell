@@ -1,0 +1,83 @@
+{
+  "name": "barba",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc && vite build",
+    "dev": "vite",
+    "format": "cargo fmt --all --manifest-path src-tauri/Cargo.toml && NODE_OPTIONS=\"--experimental-strip-types\" prettier --log-level warn -l --write .",
+    "lint": "pnpm tsgo --noEmit && eslint . --fix && stylelint --formatter verbose --fix --allow-empty-input './src/**/*.(styles.ts|css)' && (cd src-tauri && cargo sort && cargo clippy --all --fix --allow-dirty --allow-staged)",
+    "prepare": "husky",
+    "release": "./scripts/release.sh",
+    "tauri": "tauri",
+    "tauri-audit": "(cd src-tauri && cargo audit --target-os macos)",
+    "test": "pnpm test:ui && pnpm test:tauri",
+    "test:tauri": "(cd src-tauri && cargo nextest run)",
+    "test:ui": "vitest run",
+    "test:ui:coverage": "vitest run --coverage --browser=chromium"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.9.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@linaria/core": "^6.3.0",
+    "@styled/typescript-styled-plugin": "^1.0.1",
+    "@tanstack/eslint-plugin-query": "^5.91.2",
+    "@tauri-apps/cli": "^2.9.4",
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@typescript-eslint/parser": "^8.48.0",
+    "@typescript/native-preview": "7.0.0-dev.20251127.1",
+    "@vitejs/plugin-react": "^5.1.1",
+    "@vitest/browser": "^4.0.14",
+    "@vitest/browser-playwright": "^4.0.14",
+    "@vitest/coverage-istanbul": "^4.0.14",
+    "@wyw-in-js/vite": "^0.8.0",
+    "babel-plugin-react-compiler": "1.0.0",
+    "eslint": "^9.39.1",
+    "eslint-import-resolver-typescript": "^4.4.4",
+    "eslint-plugin-import-x": "^4.16.1",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "globals": "^16.5.0",
+    "husky": "^9.1.7",
+    "jiti": "^2.6.1",
+    "lightningcss": "^1.30.2",
+    "lint-staged": "^16.2.7",
+    "playwright": "^1.57.0",
+    "postcss": "^8.5.6",
+    "postcss-styled-syntax": "^0.7.1",
+    "prettier": "^3.7.1",
+    "prettier-plugin-packagejson": "^2.5.19",
+    "stylelint": "^16.26.0",
+    "stylelint-config-clean-order": "^8.0.0",
+    "stylelint-config-recommended": "^17.0.0",
+    "stylelint-high-performance-animation": "^1.11.0",
+    "stylelint-order": "^7.0.0",
+    "stylelint-prettier": "^5.0.3",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.48.0",
+    "vite": "npm:rolldown-vite@7.2.8",
+    "vitest": "^4.0.14",
+    "vitest-browser-react": "^2.0.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "unrs-resolver"
+    ],
+    "overrides": {
+      "braces": "^3.0.3",
+      "micromatch": "^4.0.8",
+      "postcss": "^8.5.6",
+      "trim": "^1.0.1",
+      "trim-newlines": "^5.0.0",
+      "vite": "npm:rolldown-vite@7.2.8",
+      "yargs-parser": "^22.0.0"
+    }
+  }
+}

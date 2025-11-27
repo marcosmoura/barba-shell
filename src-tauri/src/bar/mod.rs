@@ -21,6 +21,9 @@ pub fn init(app: &App) {
 
     menubar::start_menu_bar_visibility_watcher(&webview_window);
 
+    // Initialize components
+    components::init(&webview_window);
+
     // Make the app not appear in the dock
     let _ = app_handle.set_activation_policy(tauri::ActivationPolicy::Prohibited);
     let _ = webview_window.show();

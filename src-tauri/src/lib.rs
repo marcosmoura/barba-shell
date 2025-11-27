@@ -33,6 +33,7 @@ pub fn run() {
             bar::components::hyprspace::get_hyprspace_focused_workspace,
             bar::components::hyprspace::get_hyprspace_workspaces,
             bar::components::hyprspace::go_to_hyprspace_workspace,
+            bar::components::media::get_current_media_info,
         ])
         .setup(move |app| {
             if !should_launch_ui {

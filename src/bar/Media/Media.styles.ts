@@ -1,5 +1,9 @@
 import { css } from '@linaria/core';
 
+import { LAPTOP_MEDIA_QUERY } from '@/utils/media-query';
+
+const laptopMediaQuery = `@media ${LAPTOP_MEDIA_QUERY}`;
+
 export const media = css`
   position: fixed;
   top: 0;
@@ -11,8 +15,19 @@ export const media = css`
   grid-auto-flow: column;
   row-gap: 4px;
 
+  max-width: 480px;
   height: 100%;
   padding-left: 1px;
+
+  ${laptopMediaQuery} {
+    max-width: 300px;
+  }
+`;
+
+export const label = css`
+  overflow: hidden;
+
+  white-space: nowrap;
 `;
 
 export const artwork = css`

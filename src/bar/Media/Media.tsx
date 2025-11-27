@@ -4,8 +4,7 @@ import { Button } from '@/components/Button';
 import { Icon } from '@/components/Icon';
 import { Surface } from '@/components/Surface';
 import { colors } from '@/design-system';
-import { useMediaQuery, useTauriEventQuery } from '@/hooks';
-import { LAPTOP_MEDIA_QUERY } from '@/utils';
+import { useTauriEventQuery } from '@/hooks';
 
 import {
   fetchCurrentMedia,
@@ -18,10 +17,9 @@ import * as styles from './Media.styles';
 import type { MediaPayload, TransformedMediaPayload } from './Media.types';
 
 export const Media = () => {
-  const isLaptopScreen = useMediaQuery(LAPTOP_MEDIA_QUERY);
   const { data: media } = useTauriEventQuery<MediaPayload, TransformedMediaPayload>({
     eventName: 'tauri_media_changed',
-    transformFn: (payload) => transformMediaPayload(payload, isLaptopScreen),
+    transformFn: (payload) => transformMediaPayload(payload),
     initialFetch: fetchCurrentMedia,
     queryOptions: {
       refetchOnMount: true,
@@ -51,7 +49,7 @@ export const Media = () => {
     <Surface className={styles.media} as={Button} onClick={onMediaClick}>
       {loadedArtwork && <img className={styles.artwork} src={loadedArtwork} alt={media.label} />}
       <Icon icon={svg} fill={color} color={colors.crust} size={22} />
-      <span>{media.label}</span>
+      <span className={styles.label}>{media.label}</span>
     </Surface>
   );
 };

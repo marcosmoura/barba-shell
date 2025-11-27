@@ -3,7 +3,7 @@ import {
   AppleReminderIcon,
   BrowserIcon,
   CircleIcon,
-  CodeIcon,
+  CodeSquareIcon,
   ComputerTerminal01Icon,
   DashboardCircleIcon,
   FigmaIcon,
@@ -28,7 +28,7 @@ const defaultWorkspaces = [
   },
   {
     name: 'coding',
-    icon: CodeIcon,
+    icon: CodeSquareIcon,
   },
   {
     name: 'browser',

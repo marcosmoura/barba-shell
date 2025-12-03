@@ -113,7 +113,29 @@ fn get_cache_path(state: &Map<String, Value>, extension: &str) -> String {
     path
 }
 
-const fn get_cache_dir() -> &'static str { "/tmp/com.marcosmoura.barba/media_artwork/" }
+/// Returns the cache directory for media artwork.
+///
+/// Uses `~/Library/Caches/{APP_BUNDLE_ID}/media_artwork/` on macOS for persistence.
+/// Falls back to `/tmp/{APP_BUNDLE_ID}/media_artwork/` if cache directory unavailable.
+fn get_cache_dir() -> &'static str {
+    use crate::constants::APP_BUNDLE_ID;
+    static CACHE_DIR: OnceLock<String> = OnceLock::new();
+    CACHE_DIR.get_or_init(|| {
+        dirs::cache_dir().map_or_else(
+            || format!("/tmp/{APP_BUNDLE_ID}/media_artwork/"),
+            |cache| {
+                let path = cache.join(format!("{APP_BUNDLE_ID}/media_artwork/"));
+                // Ensure the path ends with a separator for string concatenation
+                let path_str = path.to_string_lossy().into_owned();
+                if path_str.ends_with('/') {
+                    path_str
+                } else {
+                    format!("{path_str}/")
+                }
+            },
+        )
+    })
+}
 
 fn image_format_from_mime(mime: &str) -> Option<ImageFormat> {
     let mime = mime.trim();
@@ -422,9 +444,14 @@ mod tests {
 
     #[test]
     fn test_get_cache_dir() {
+        use crate::constants::APP_BUNDLE_ID;
         let dir = get_cache_dir();
-        assert_eq!(dir, "/tmp/com.marcosmoura.barba/media_artwork/");
-        assert!(dir.ends_with('/'));
+        // Should use persistent cache location or fallback to /tmp
+        assert!(
+            dir.contains(&format!("{APP_BUNDLE_ID}/media_artwork"))
+                || dir.contains(&format!("{APP_BUNDLE_ID}\\media_artwork"))
+        );
+        assert!(dir.ends_with('/') || dir.ends_with('\\'));
     }
 
     #[test]

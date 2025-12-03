@@ -1,12 +1,14 @@
+use tauri::Wry;
 use tauri::plugin::{Builder, PluginApi};
-use tauri::{Manager, Wry};
 
 mod bar;
 mod cli;
 mod config;
+mod constants;
 mod hotkey;
 mod launch;
 mod utils;
+mod wallpaper;
 
 /// Runs the Tauri application.
 ///
@@ -15,7 +17,10 @@ pub fn run() {
     // Initialize the configuration system early
     config::init();
 
-    let (should_launch_ui, cli_exit_code) = launch::get_launch_mode();
+    // Initialize wallpaper manager early so CLI commands can use it
+    wallpaper::init();
+
+    let (is_cli_mode, cli_exit_code) = launch::get_launch_mode();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
@@ -49,14 +54,8 @@ pub fn run() {
             bar::components::media::get_current_media_info,
         ])
         .setup(move |app| {
-            if !should_launch_ui {
-                app.windows().iter().for_each(|(_, w)| {
-                    let _ = w.hide();
-                    let _ = w.close();
-                });
-
-                app.cleanup_before_exit();
-                app.app_handle().exit(cli_exit_code);
+            if is_cli_mode {
+                launch::quit_app_with_code(app.handle(), cli_exit_code);
 
                 return Ok(());
             }
@@ -64,7 +63,12 @@ pub fn run() {
             // Start watching the config file for changes
             config::watch_config_file(app.handle().clone());
 
+            // Initialize Bar components
             bar::init(app);
+
+            // Start wallpaper manager (set initial wallpaper and start timer)
+            wallpaper::start();
+
             Ok(())
         })
         .run(tauri::generate_context!())

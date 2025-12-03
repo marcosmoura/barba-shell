@@ -18,8 +18,70 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
+
+/// Wallpaper cycling mode.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum WallpaperMode {
+    /// Select a random wallpaper each time.
+    #[default]
+    Random,
+    /// Cycle through wallpapers in order.
+    Sequential,
+}
+
+/// Wallpaper configuration for dynamic wallpaper management.
+///
+/// Example:
+/// ```json
+/// {
+///   "wallpapers": {
+///     "path": "/path/to/wallpapers",
+///     "list": ["wallpaper1.jpg", "wallpaper2.png"],
+///     "interval": 300,
+///     "mode": "random",
+///     "radius": 10,
+///     "blur": 5
+///   }
+/// }
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct WallpaperConfig {
+    /// Directory containing wallpaper images.
+    /// If specified, all image files in this directory will be used,
+    /// overriding the `list` field.
+    pub path: String,
+
+    /// List of wallpaper filenames to use.
+    /// If `path` is specified, this list is ignored.
+    pub list: Vec<String>,
+
+    /// Time in seconds between wallpaper changes.
+    /// If set to 0, the wallpaper will not change after the initial setting.
+    pub interval: u64,
+
+    /// Wallpaper selection mode: "random" or "sequential".
+    pub mode: WallpaperMode,
+
+    /// Radius in pixels for rounded corners.
+    pub radius: u32,
+
+    /// Blur level in pixels for Gaussian blur effect.
+    pub blur: u32,
+}
+
+impl WallpaperConfig {
+    /// Returns whether wallpaper functionality is enabled.
+    ///
+    /// Wallpapers are considered enabled if either a path is specified
+    /// or the list contains at least one wallpaper.
+    #[must_use]
+    pub const fn is_enabled(&self) -> bool { !self.path.is_empty() || !self.list.is_empty() }
+}
 
 /// Global configuration instance, loaded once at startup.
 static CONFIG: OnceLock<BarbaConfig> = OnceLock::new();
@@ -31,7 +93,7 @@ static CONFIG_PATH: OnceLock<PathBuf> = OnceLock::new();
 ///
 /// This structure is designed to be extended with additional sections
 /// as new features are added to the application.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct BarbaConfig {
     /// Global keyboard shortcuts configuration.
@@ -49,13 +111,30 @@ pub struct BarbaConfig {
     /// }
     /// ```
     pub shortcuts: HashMap<String, ShortcutCommands>,
+
+    /// Dynamic wallpaper configuration.
+    ///
+    /// Example:
+    /// ```json
+    /// {
+    ///   "wallpapers": {
+    ///     "path": "/path/to/wallpapers",
+    ///     "list": ["wallpaper1.jpg", "wallpaper2.png"],
+    ///     "interval": 300,
+    ///     "mode": "random",
+    ///     "radius": 10,
+    ///     "blur": 5
+    ///   }
+    /// }
+    /// ```
+    pub wallpapers: WallpaperConfig,
 }
 
 /// Commands to execute for a keyboard shortcut.
 ///
 /// Can be either a single command string or an array of commands
 /// that will be executed sequentially.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum ShortcutCommands {
     /// A single command to execute.
@@ -320,6 +399,35 @@ pub fn watch_config_file<R: tauri::Runtime>(app_handle: AppHandle<R>) {
     });
 }
 
+/// Generates a JSON Schema for the Barba configuration.
+///
+/// The schema includes all configuration options with their types,
+/// descriptions, and default values.
+#[must_use]
+pub fn generate_schema() -> schemars::Schema {
+    let mut schema = schemars::schema_for!(BarbaConfig);
+
+    // Add $id for proper schema identification
+    if let Some(obj) = schema.as_object_mut() {
+        obj.insert(
+            "$id".to_string(),
+            serde_json::json!("https://raw.githubusercontent.com/marcosmoura/barba-shell/main/barba.schema.json"),
+        );
+    }
+
+    schema
+}
+
+/// Generates a JSON Schema string for the Barba configuration.
+///
+/// Returns a pretty-printed JSON string that can be saved to a file
+/// or used for validation.
+#[must_use]
+pub fn generate_schema_json() -> String {
+    let schema = generate_schema();
+    serde_json::to_string_pretty(&schema).unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -395,7 +503,10 @@ mod tests {
             "Ctrl+Alt+T".to_string(),
             ShortcutCommands::Single("barba test".to_string()),
         );
-        let config = BarbaConfig { shortcuts };
+        let config = BarbaConfig {
+            shortcuts,
+            wallpapers: WallpaperConfig::default(),
+        };
 
         let json = serde_json::to_string_pretty(&config).unwrap();
         assert!(json.contains("Ctrl+Alt+T"));
@@ -432,7 +543,7 @@ mod tests {
         assert!(empty_array.get_commands().is_empty());
 
         // Array with only empty strings should return empty vec
-        let empty_strings = ShortcutCommands::Multiple(vec!["".to_string(), "  ".to_string()]);
+        let empty_strings = ShortcutCommands::Multiple(vec![String::new(), "  ".to_string()]);
         assert!(empty_strings.get_commands().is_empty());
     }
 
@@ -478,5 +589,21 @@ mod tests {
             "barba reload"
         ]);
         assert!(config.shortcuts.get("Command+H").unwrap().get_commands().is_empty());
+    }
+
+    #[test]
+    fn test_generate_schema_produces_valid_json() {
+        let schema_json = generate_schema_json();
+        assert!(!schema_json.is_empty());
+
+        // Verify it's valid JSON
+        let parsed: serde_json::Value = serde_json::from_str(&schema_json).unwrap();
+
+        // Verify it has the expected structure
+        assert!(parsed["$id"].as_str().unwrap().contains("barba.schema.json"));
+        assert_eq!(parsed["$schema"], "https://json-schema.org/draft/2020-12/schema");
+        assert_eq!(parsed["title"], "BarbaConfig");
+        assert!(parsed["properties"]["shortcuts"].is_object());
+        assert!(parsed["properties"]["wallpapers"].is_object());
     }
 }

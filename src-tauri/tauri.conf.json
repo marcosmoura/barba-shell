@@ -91,6 +91,39 @@
               "required": true
             }
           ]
+        },
+        "wallpaper": {
+          "description": "Wallpaper management commands.",
+          "subcommands": {
+            "set": {
+              "description": "Change the desktop wallpaper.",
+              "longDescription": "Manually change the wallpaper. Supports: 'next' (next in sequence), 'previous' (previous in sequence), 'random' (random selection), or a numeric index.",
+              "args": [
+                {
+                  "name": "action",
+                  "description": "Wallpaper action: next, previous, random, or index number.",
+                  "index": 1,
+                  "takesValue": true,
+                  "required": true
+                }
+              ]
+            },
+            "generate-all": {
+              "description": "Pre-generate all wallpapers.",
+              "longDescription": "Processes all wallpapers from the configuration and stores them in the cache directory. Useful for pre-caching wallpapers to avoid delays when switching.",
+              "args": []
+            }
+          }
+        },
+        "reload": {
+          "description": "Reload Barba configuration.",
+          "longDescription": "Reloads the configuration file and applies changes without restarting the application.",
+          "args": []
+        },
+        "generate-schema": {
+          "description": "Generate JSON schema for the configuration file.",
+          "longDescription": "Outputs a JSON Schema to stdout that describes the structure of the Barba configuration file. Can be redirected to a file for use with editors that support JSON Schema validation.",
+          "args": []
         }
       }
     }

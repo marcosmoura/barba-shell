@@ -1,3 +1,5 @@
+use tauri::{AppHandle, Manager};
+
 use crate::cli;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -24,7 +26,7 @@ impl LaunchMode {
         }
     }
 
-    const fn should_launch_ui(self) -> bool { matches!(self, Self::Ui) }
+    const fn is_cli_mode(self) -> bool { !matches!(self, Self::Ui) }
 
     const fn exit_code(self) -> i32 {
         match self {
@@ -42,7 +44,17 @@ pub fn get_launch_mode() -> (bool, i32) {
         std::process::exit(launch_mode.exit_code());
     }
 
-    (launch_mode.should_launch_ui(), launch_mode.exit_code())
+    (launch_mode.is_cli_mode(), launch_mode.exit_code())
+}
+
+pub fn quit_app_with_code(app: &AppHandle, cli_exit_code: i32) {
+    app.windows().iter().for_each(|(_, w)| {
+        let _ = w.hide();
+        let _ = w.close();
+    });
+
+    app.cleanup_before_exit();
+    app.app_handle().exit(cli_exit_code);
 }
 
 #[cfg(test)]

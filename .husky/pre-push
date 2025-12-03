@@ -1,5 +1,2 @@
-export NODE_OPTIONS="--experimental-strip-types"
-
-pnpm lint
-pnpm tauri build
 pnpm test
+pnpm tauri build

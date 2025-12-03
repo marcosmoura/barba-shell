@@ -248,11 +248,10 @@ impl WallpaperManager {
                     return Ok(i);
                 }
                 // Match filename without extension
-                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    if stem.to_lowercase() == filename_lower {
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+                    && stem.to_lowercase() == filename_lower {
                         return Ok(i);
                     }
-                }
             }
         }
 
@@ -381,7 +380,7 @@ pub fn perform_action(action: WallpaperAction) -> Result<(), WallpaperManagerErr
 ///
 /// # Returns
 ///
-/// A tuple of (output_string, success) where output_string contains the
+/// A tuple of (`output_string`, success) where `output_string` contains the
 /// generation log and success indicates if all wallpapers were processed.
 ///
 /// # Errors

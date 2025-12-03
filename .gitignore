@@ -35,3 +35,4 @@ test-results
 packages/desktop/tauri/binaries/*
 !packages/desktop/tauri/binaries/.gitkeep
 packages/desktop/tauri/resources/lib/
+packages/desktop/tauri/resources/Frameworks/

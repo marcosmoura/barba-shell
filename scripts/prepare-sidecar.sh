@@ -42,10 +42,21 @@ cp -R "$LIB_SRC/"* "$LIB_DEST/"
 chmod -R u+rw "$LIB_DEST"
 echo "✓ Copied media-control lib to $LIB_DEST"
 
-# For development: create lib directory in target/ so the sidecar can find its resources
+# Copy the Frameworks directory (contains MediaRemoteAdapter.framework)
+FW_SRC="$MEDIA_CONTROL_PREFIX/Frameworks/MediaRemoteAdapter.framework"
+FW_DEST="$RESOURCES_DIR/Frameworks/MediaRemoteAdapter.framework"
+rm -rf "$FW_DEST"
+mkdir -p "$(dirname "$FW_DEST")"
+cp -R "$FW_SRC" "$FW_DEST"
+# Fix permissions
+chmod -R u+rw "$FW_DEST"
+echo "✓ Copied MediaRemoteAdapter.framework to $FW_DEST"
+
+# For development: create lib and Frameworks directory in target/ so the sidecar can find its resources
 # The sidecar binary is at target/debug/media-control and looks for ../lib/media-control
 # which resolves to target/lib/media-control (not target/debug/lib/)
 TARGET_LIB="$SCRIPT_DIR/../target/lib/media-control"
+TARGET_FW="$SCRIPT_DIR/../target/Frameworks/MediaRemoteAdapter.framework"
 
 rm -rf "$TARGET_LIB"
 mkdir -p "$(dirname "$TARGET_LIB")"
@@ -53,6 +64,12 @@ cp -R "$LIB_SRC" "$TARGET_LIB"
 # Fix permissions for development copy too
 chmod -R u+rw "$TARGET_LIB"
 echo "✓ Copied media-control lib to target/lib for development"
+
+rm -rf "$TARGET_FW"
+mkdir -p "$(dirname "$TARGET_FW")"
+cp -R "$FW_SRC" "$TARGET_FW"
+chmod -R u+rw "$TARGET_FW"
+echo "✓ Copied MediaRemoteAdapter.framework to target/Frameworks for development"
 
 echo ""
 echo "Done! The sidecar and its resources are ready for bundling."

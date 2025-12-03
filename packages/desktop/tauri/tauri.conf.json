@@ -61,9 +61,6 @@
     "externalBin": [
       "binaries/media-control"
     ],
-    "resources": {
-      "resources/lib/media-control/*": "lib/media-control/"
-    },
     "icon": [
       "icons/32x32.png",
       "icons/64x64.png",
@@ -73,7 +70,11 @@
       "icons/icon.png"
     ],
     "macOS": {
-      "minimumSystemVersion": "10.15"
+      "minimumSystemVersion": "10.15",
+      "files": {
+        "lib": "resources/lib",
+        "Frameworks": "resources/Frameworks"
+      }
     }
   }
 }

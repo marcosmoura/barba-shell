@@ -1,8 +1,11 @@
 //! macOS wallpaper setting functionality.
 //!
-//! Uses the `wallpaper` crate to set the desktop wallpaper.
+//! Uses native macOS APIs to set the desktop wallpaper for each screen.
 
 use std::path::Path;
+
+use objc::runtime::{Class, Object};
+use objc::{msg_send, sel, sel_impl};
 
 /// Errors that can occur when setting the wallpaper.
 #[derive(Debug)]
@@ -11,6 +14,8 @@ pub enum WallpaperError {
     FileNotFound(String),
     /// Failed to set the wallpaper.
     SetWallpaperFailed(String),
+    /// Invalid screen index.
+    InvalidScreen(usize),
 }
 
 impl std::fmt::Display for WallpaperError {
@@ -18,13 +23,32 @@ impl std::fmt::Display for WallpaperError {
         match self {
             Self::FileNotFound(path) => write!(f, "Wallpaper file not found: {path}"),
             Self::SetWallpaperFailed(msg) => write!(f, "Failed to set wallpaper: {msg}"),
+            Self::InvalidScreen(idx) => write!(f, "Invalid screen index: {idx}"),
         }
     }
 }
 
 impl std::error::Error for WallpaperError {}
 
-/// Sets the desktop wallpaper.
+/// Returns the number of available screens.
+#[must_use]
+pub fn screen_count() -> usize {
+    unsafe {
+        let Some(screen_class) = Class::get("NSScreen") else {
+            return 1;
+        };
+
+        let screens: *mut Object = msg_send![screen_class, screens];
+        if screens.is_null() {
+            return 1;
+        }
+
+        let count: usize = msg_send![screens, count];
+        if count == 0 { 1 } else { count }
+    }
+}
+
+/// Sets the desktop wallpaper for all screens.
 ///
 /// # Arguments
 ///
@@ -42,4 +66,115 @@ pub fn set_wallpaper(path: &Path) -> Result<(), WallpaperError> {
 
     wallpaper::set_from_path(&path_str)
         .map_err(|e| WallpaperError::SetWallpaperFailed(e.to_string()))
+}
+
+/// Sets the desktop wallpaper for a specific screen.
+///
+/// # Arguments
+///
+/// * `path` - Path to the image file to set as wallpaper
+/// * `screen_index` - The 0-based index of the screen
+///
+/// # Errors
+///
+/// Returns an error if the file doesn't exist, the screen index is invalid,
+/// or the wallpaper setting fails.
+#[allow(clippy::cast_possible_truncation)]
+pub fn set_wallpaper_for_screen(path: &Path, screen_index: usize) -> Result<(), WallpaperError> {
+    if !path.exists() {
+        return Err(WallpaperError::FileNotFound(path.display().to_string()));
+    }
+
+    unsafe {
+        // Get NSScreen class and screens array
+        let Some(screen_class) = Class::get("NSScreen") else {
+            return Err(WallpaperError::SetWallpaperFailed(
+                "Failed to get NSScreen class".to_string(),
+            ));
+        };
+
+        let screens: *mut Object = msg_send![screen_class, screens];
+        if screens.is_null() {
+            return Err(WallpaperError::SetWallpaperFailed(
+                "Failed to get screens".to_string(),
+            ));
+        }
+
+        let count: usize = msg_send![screens, count];
+        if screen_index >= count {
+            return Err(WallpaperError::InvalidScreen(screen_index));
+        }
+
+        // Get the specific screen
+        let screen: *mut Object = msg_send![screens, objectAtIndex: screen_index];
+        if screen.is_null() {
+            return Err(WallpaperError::InvalidScreen(screen_index));
+        }
+
+        // Get NSWorkspace shared workspace
+        let Some(workspace_class) = Class::get("NSWorkspace") else {
+            return Err(WallpaperError::SetWallpaperFailed(
+                "Failed to get NSWorkspace class".to_string(),
+            ));
+        };
+
+        let workspace: *mut Object = msg_send![workspace_class, sharedWorkspace];
+        if workspace.is_null() {
+            return Err(WallpaperError::SetWallpaperFailed(
+                "Failed to get shared workspace".to_string(),
+            ));
+        }
+
+        // Create NSURL from path
+        let Some(url_class) = Class::get("NSURL") else {
+            return Err(WallpaperError::SetWallpaperFailed(
+                "Failed to get NSURL class".to_string(),
+            ));
+        };
+
+        let path_str = path.display().to_string();
+        let Some(string_class) = Class::get("NSString") else {
+            return Err(WallpaperError::SetWallpaperFailed(
+                "Failed to get NSString class".to_string(),
+            ));
+        };
+
+        let path_ns: *mut Object = msg_send![string_class, alloc];
+        let path_ns: *mut Object =
+            msg_send![path_ns, initWithBytes:path_str.as_ptr() length:path_str.len() encoding:4u64]; // NSUTF8StringEncoding = 4
+
+        let url: *mut Object = msg_send![url_class, fileURLWithPath: path_ns];
+        if url.is_null() {
+            return Err(WallpaperError::SetWallpaperFailed(
+                "Failed to create URL from path".to_string(),
+            ));
+        }
+
+        // Set wallpaper for screen: setDesktopImageURL:forScreen:options:error:
+        let options: *mut Object = msg_send![Class::get("NSDictionary").unwrap(), dictionary];
+        let mut error: *mut Object = std::ptr::null_mut();
+
+        let success: bool = msg_send![workspace, setDesktopImageURL:url forScreen:screen options:options error:&mut error];
+
+        if !success {
+            let error_msg = if error.is_null() {
+                "Unknown error".to_string()
+            } else {
+                let desc: *mut Object = msg_send![error, localizedDescription];
+                if desc.is_null() {
+                    "Unknown error".to_string()
+                } else {
+                    let bytes: *const u8 = msg_send![desc, UTF8String];
+                    if bytes.is_null() {
+                        "Unknown error".to_string()
+                    } else {
+                        std::ffi::CStr::from_ptr(bytes.cast()).to_string_lossy().to_string()
+                    }
+                }
+            };
+            return Err(WallpaperError::SetWallpaperFailed(error_msg));
+        }
+
+        Ok(())
+    }
 }

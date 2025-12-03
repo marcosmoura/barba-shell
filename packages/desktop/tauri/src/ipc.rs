@@ -110,6 +110,101 @@ fn run_server(listener: &UnixListener, app_handle: &AppHandle, running: &Arc<Ato
     }
 }
 
+/// Screen target for wallpaper commands.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum ScreenTarget {
+    All,
+    Main,
+    Index(usize),
+}
+
+/// Data for wallpaper set commands.
+#[derive(serde::Deserialize)]
+struct WallpaperSetData {
+    path: Option<String>,
+    random: bool,
+    screen: ScreenTarget,
+}
+
+/// Handles the wallpaper-set command.
+fn handle_wallpaper_set(data: &str) {
+    let set_data: WallpaperSetData = match serde_json::from_str(data) {
+        Ok(d) => d,
+        Err(err) => {
+            eprintln!("barba: failed to parse wallpaper data: {err}");
+            return;
+        }
+    };
+
+    let result = if set_data.random {
+        handle_random_wallpaper(&set_data.screen)
+    } else if let Some(path) = set_data.path {
+        handle_file_wallpaper(path, &set_data.screen)
+    } else {
+        Err(crate::wallpaper::WallpaperManagerError::InvalidAction(
+            "Either path or random must be specified".to_string(),
+        ))
+    };
+
+    if let Err(err) = result {
+        eprintln!("barba: wallpaper error: {err}");
+    }
+}
+
+/// Handles setting a random wallpaper for the specified screen target.
+fn handle_random_wallpaper(
+    screen: &ScreenTarget,
+) -> Result<(), crate::wallpaper::WallpaperManagerError> {
+    match screen {
+        ScreenTarget::All => {
+            let action = crate::wallpaper::WallpaperAction::Random;
+            crate::wallpaper::perform_action(&action)
+        }
+        ScreenTarget::Main => {
+            let action = crate::wallpaper::WallpaperAction::RandomForScreen(0);
+            crate::wallpaper::perform_action(&action)
+        }
+        ScreenTarget::Index(idx) => {
+            if *idx == 0 {
+                Err(crate::wallpaper::WallpaperManagerError::InvalidScreen(
+                    "Screen index must be 1 or greater".to_string(),
+                ))
+            } else {
+                let action = crate::wallpaper::WallpaperAction::RandomForScreen(idx - 1);
+                crate::wallpaper::perform_action(&action)
+            }
+        }
+    }
+}
+
+/// Handles setting a specific wallpaper file for the specified screen target.
+fn handle_file_wallpaper(
+    path: String,
+    screen: &ScreenTarget,
+) -> Result<(), crate::wallpaper::WallpaperManagerError> {
+    match screen {
+        ScreenTarget::All => {
+            let action = crate::wallpaper::WallpaperAction::File(path);
+            crate::wallpaper::perform_action(&action)
+        }
+        ScreenTarget::Main => {
+            let action = crate::wallpaper::WallpaperAction::FileForScreen(0, path);
+            crate::wallpaper::perform_action(&action)
+        }
+        ScreenTarget::Index(idx) => {
+            if *idx == 0 {
+                Err(crate::wallpaper::WallpaperManagerError::InvalidScreen(
+                    "Screen index must be 1 or greater".to_string(),
+                ))
+            } else {
+                let action = crate::wallpaper::WallpaperAction::FileForScreen(idx - 1, path);
+                crate::wallpaper::perform_action(&action)
+            }
+        }
+    }
+}
+
 /// Handles a client connection.
 fn handle_client(mut stream: UnixStream, app_handle: &AppHandle) {
     // Set blocking mode for this connection
@@ -147,34 +242,7 @@ fn handle_client(mut stream: UnixStream, app_handle: &AppHandle) {
     match payload.name.as_str() {
         "wallpaper-set" => {
             if let Some(data) = &payload.data {
-                // Parse the JSON data
-                #[derive(serde::Deserialize)]
-                struct WallpaperSetData {
-                    action: Option<String>,
-                    file: Option<String>,
-                }
-
-                match serde_json::from_str::<WallpaperSetData>(data) {
-                    Ok(set_data) => {
-                        // Determine the action to perform
-                        let wallpaper_action = if let Some(filename) = set_data.file {
-                            Some(crate::wallpaper::WallpaperAction::File(filename))
-                        } else if let Some(action_str) = set_data.action {
-                            crate::wallpaper::parse_action(&action_str)
-                        } else {
-                            None
-                        };
-
-                        if let Some(ref action) = wallpaper_action
-                            && let Err(err) = crate::wallpaper::perform_action(action)
-                        {
-                            eprintln!("barba: wallpaper error: {err}");
-                        }
-                    }
-                    Err(err) => {
-                        eprintln!("barba: failed to parse wallpaper data: {err}");
-                    }
-                }
+                handle_wallpaper_set(data);
             }
             stream.write_all(b"1").ok();
             return;
@@ -182,7 +250,6 @@ fn handle_client(mut stream: UnixStream, app_handle: &AppHandle) {
         "wallpaper-generate-all" => {
             match crate::wallpaper::generate_all() {
                 Ok(output) => {
-                    // Send output with 'O' prefix to indicate output follows
                     let response = format!("O{output}");
                     stream.write_all(response.as_bytes()).ok();
                 }

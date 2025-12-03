@@ -125,8 +125,9 @@ The standalone CLI (`barba`) provides:
 barba reload                        # Reload configuration
 barba focus-changed                 # Notify focus change (for window manager integration)
 barba workspace-changed <name>      # Notify workspace change
-barba wallpaper set <action>        # Set wallpaper (next/previous/random)
-barba wallpaper set --f <filename>  # Set wallpaper by filename
+barba wallpaper set <path>          # Set wallpaper from file path
+barba wallpaper set --random        # Set random wallpaper
+barba wallpaper set --screen <target>  # Target: all, main, or 1-based index
 barba wallpaper generate-all        # Pre-generate all wallpapers
 barba generate-schema               # Output JSON schema for config
 ```

@@ -32,14 +32,14 @@ fn expand_tilde(path: &str) -> PathBuf {
 /// Actions that can be performed on the wallpaper.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WallpaperAction {
-    /// Set the next wallpaper in sequence.
-    Next,
-    /// Set the previous wallpaper in sequence.
-    Previous,
-    /// Set a random wallpaper.
+    /// Set a random wallpaper (different for each screen).
     Random,
-    /// Set a specific wallpaper by filename.
+    /// Set a random wallpaper for a specific screen (0-based index).
+    RandomForScreen(usize),
+    /// Set a specific wallpaper by filename (same for all screens).
     File(String),
+    /// Set a specific wallpaper for a specific screen.
+    FileForScreen(usize, String),
 }
 
 /// Errors that can occur in wallpaper management.
@@ -55,6 +55,10 @@ pub enum WallpaperManagerError {
     MacOS(macos::WallpaperError),
     /// Invalid path specified in configuration.
     InvalidPath(String),
+    /// Invalid screen index or configuration.
+    InvalidScreen(String),
+    /// Invalid action or command.
+    InvalidAction(String),
     /// Manager not initialized.
     NotInitialized,
 }
@@ -67,6 +71,8 @@ impl std::fmt::Display for WallpaperManagerError {
             Self::Processing(err) => write!(f, "Image processing error: {err}"),
             Self::MacOS(err) => write!(f, "macOS wallpaper error: {err}"),
             Self::InvalidPath(path) => write!(f, "Invalid wallpaper path: {path}"),
+            Self::InvalidScreen(msg) => write!(f, "Invalid screen: {msg}"),
+            Self::InvalidAction(msg) => write!(f, "Invalid action: {msg}"),
             Self::NotInitialized => write!(f, "Wallpaper manager not initialized"),
         }
     }
@@ -203,6 +209,43 @@ impl WallpaperManager {
         Ok(())
     }
 
+    /// Sets the wallpaper at the given index for a specific screen.
+    fn set_wallpaper_at_index_for_screen(
+        &self,
+        index: usize,
+        screen_index: usize,
+    ) -> Result<(), WallpaperManagerError> {
+        let _lock = self.change_lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+
+        let source = &self.wallpapers[index];
+
+        // Process the image with screen-specific settings
+        let processed_path =
+            processing::process_image_for_screen(source, &self.config, screen_index)?;
+
+        // Set the wallpaper for the specific screen
+        macos::set_wallpaper_for_screen(&processed_path, screen_index)?;
+
+        Ok(())
+    }
+
+    /// Sets a random wallpaper for each screen.
+    fn set_random_wallpapers_per_screen(&self) -> Result<(), WallpaperManagerError> {
+        let screen_count = macos::screen_count();
+        let mut rng = rand::rng();
+
+        for screen_index in 0..screen_count {
+            let index = rng.random_range(0..self.wallpapers.len());
+            self.set_wallpaper_at_index_for_screen(index, screen_index)?;
+        }
+
+        // Update the current index to the last one set (for timer purposes)
+        let last_index = rng.random_range(0..self.wallpapers.len());
+        self.current_index.store(last_index, Ordering::SeqCst);
+
+        Ok(())
+    }
+
     /// Sets the initial wallpaper on startup.
     #[cfg_attr(debug_assertions, allow(dead_code))]
     pub fn set_initial_wallpaper(&self) -> Result<(), WallpaperManagerError> {
@@ -212,27 +255,36 @@ impl WallpaperManager {
 
     /// Performs a wallpaper action.
     pub fn perform_action(&self, action: &WallpaperAction) -> Result<(), WallpaperManagerError> {
-        let index = match action {
-            WallpaperAction::Next => {
-                let current = self.current_index.load(Ordering::SeqCst);
-                (current + 1) % self.wallpapers.len()
-            }
-            WallpaperAction::Previous => {
-                let current = self.current_index.load(Ordering::SeqCst);
-                if current == 0 {
-                    self.wallpapers.len() - 1
-                } else {
-                    current - 1
-                }
-            }
+        match action {
             WallpaperAction::Random => {
-                let mut rng = rand::rng();
-                rng.random_range(0..self.wallpapers.len())
+                // For random action, set a different random wallpaper for each screen
+                self.set_random_wallpapers_per_screen()
             }
-            WallpaperAction::File(filename) => self.find_wallpaper_index(filename)?,
-        };
-
-        self.set_wallpaper_at_index(index)
+            WallpaperAction::RandomForScreen(screen_index) => {
+                // Set a random wallpaper for a specific screen
+                let screen_count = macos::screen_count();
+                if *screen_index >= screen_count {
+                    return Err(WallpaperManagerError::InvalidScreen(format!(
+                        "Screen index {} is out of range (0-{})",
+                        screen_index,
+                        screen_count - 1
+                    )));
+                }
+                let mut rng = rand::rng();
+                let index = rng.random_range(0..self.wallpapers.len());
+                self.set_wallpaper_at_index_for_screen(index, *screen_index)
+            }
+            WallpaperAction::File(filename) => {
+                // Set a specific wallpaper for all screens
+                let index = self.find_wallpaper_index(filename)?;
+                self.set_wallpaper_at_index(index)
+            }
+            WallpaperAction::FileForScreen(screen_index, filename) => {
+                // Set a specific wallpaper for a specific screen
+                let index = self.find_wallpaper_index(filename)?;
+                self.set_wallpaper_at_index_for_screen(index, *screen_index)
+            }
+        }
     }
 
     /// Finds the index of a wallpaper by filename.
@@ -396,43 +448,34 @@ pub fn generate_all() -> Result<String, WallpaperManagerError> {
 
     let manager = get_manager().ok_or(WallpaperManagerError::NotInitialized)?;
 
+    let screen_count = macos::screen_count();
     let total = manager.wallpapers.len();
-    let mut output = format!("Generating a total of {total} wallpapers.\n\n");
+    let mut output = format!(
+        "Generating wallpapers for {screen_count} screen(s), {total} wallpaper(s) each.\n\n"
+    );
 
-    for wallpaper in &manager.wallpapers {
-        let name = wallpaper.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
+    for screen_index in 0..screen_count {
+        let _ = writeln!(output, "Screen {screen_index}:");
 
-        match processing::process_image(wallpaper, &manager.config) {
-            Ok(cached_path) => {
-                let cached_name =
-                    cached_path.file_name().and_then(|n| n.to_str()).unwrap_or("cached");
-                let _ = writeln!(output, "{GREEN}✓{RESET} {name} -> {cached_name}");
-            }
-            Err(err) => {
-                let _ = writeln!(output, "{RED}⨉{RESET} {name} -> error: {err}");
+        for wallpaper in &manager.wallpapers {
+            let name = wallpaper.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
+
+            match processing::process_image_for_screen(wallpaper, &manager.config, screen_index) {
+                Ok(cached_path) => {
+                    let cached_name =
+                        cached_path.file_name().and_then(|n| n.to_str()).unwrap_or("cached");
+                    let _ = writeln!(output, "  {GREEN}✓{RESET} {name} -> {cached_name}");
+                }
+                Err(err) => {
+                    let _ = writeln!(output, "  {RED}⨉{RESET} {name} -> error: {err}");
+                }
             }
         }
+
+        let _ = writeln!(output);
     }
 
     Ok(output)
-}
-
-/// Parses a CLI argument into a `WallpaperAction`.
-///
-/// # Arguments
-///
-/// * `arg` - The CLI argument: "next", "previous", or "random"
-///
-/// # Returns
-///
-/// The corresponding `WallpaperAction`, or `None` if the argument is invalid.
-pub fn parse_action(arg: &str) -> Option<WallpaperAction> {
-    match arg.to_lowercase().as_str() {
-        "next" => Some(WallpaperAction::Next),
-        "previous" | "prev" => Some(WallpaperAction::Previous),
-        "random" => Some(WallpaperAction::Random),
-        _ => None,
-    }
 }
 
 #[cfg(test)]
@@ -440,13 +483,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_action() {
-        assert_eq!(parse_action("next"), Some(WallpaperAction::Next));
-        assert_eq!(parse_action("NEXT"), Some(WallpaperAction::Next));
-        assert_eq!(parse_action("previous"), Some(WallpaperAction::Previous));
-        assert_eq!(parse_action("prev"), Some(WallpaperAction::Previous));
-        assert_eq!(parse_action("random"), Some(WallpaperAction::Random));
-        assert_eq!(parse_action("wallpaper.png"), None);
-        assert_eq!(parse_action("my-image.jpg"), None);
+    fn test_wallpaper_action_variants() {
+        // Test that all variants can be created
+        let _random = WallpaperAction::Random;
+        let _random_screen = WallpaperAction::RandomForScreen(0);
+        let _file = WallpaperAction::File("test.jpg".to_string());
+        let _file_screen = WallpaperAction::FileForScreen(0, "test.jpg".to_string());
     }
 }

@@ -2,6 +2,8 @@
 //!
 //! This module defines all CLI commands and their arguments.
 
+use std::str::FromStr;
+
 use clap::{Parser, Subcommand};
 
 use crate::error::CliError;
@@ -59,44 +61,90 @@ pub enum Commands {
     GenerateSchema,
 }
 
-/// Wallpaper action for the set command.
-#[derive(Debug, Clone, clap::ValueEnum, serde::Serialize)]
+/// Screen target for wallpaper commands.
+///
+/// Specifies which screen(s) should receive the wallpaper.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum WallpaperAction {
-    /// Set the next wallpaper in sequence.
-    Next,
-    /// Set the previous wallpaper in sequence.
-    Previous,
-    /// Set a random wallpaper.
-    Random,
+pub enum ScreenTarget {
+    /// Apply to all screens.
+    #[default]
+    All,
+    /// Apply to the main screen only.
+    Main,
+    /// Apply to a specific screen by 1-based index.
+    Index(usize),
+}
+
+impl FromStr for ScreenTarget {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "all" => Ok(Self::All),
+            "main" => Ok(Self::Main),
+            _ => s.parse::<usize>().map(Self::Index).map_err(|_| {
+                format!(
+                    "Invalid screen value '{s}'. Expected 'all', 'main', or a positive integer."
+                )
+            }),
+        }
+    }
+}
+
+impl std::fmt::Display for ScreenTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::All => write!(f, "all"),
+            Self::Main => write!(f, "main"),
+            Self::Index(idx) => write!(f, "{idx}"),
+        }
+    }
 }
 
 /// Data sent for the wallpaper set command.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct WallpaperSetData {
-    /// The action to perform (next, previous, random), if specified.
+    /// The path to the image file to set as wallpaper, if specified.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub action: Option<WallpaperAction>,
-    /// The filename to set, if specified.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub file: Option<String>,
+    pub path: Option<String>,
+    /// Whether to set a random wallpaper.
+    pub random: bool,
+    /// The target screen(s) for the wallpaper.
+    pub screen: ScreenTarget,
 }
 
 /// Wallpaper subcommands.
 #[derive(Subcommand, Debug)]
 pub enum WallpaperCommands {
-    /// Change the desktop wallpaper.
+    /// Set the desktop wallpaper.
     ///
-    /// Use 'next', 'previous', or 'random' to cycle through wallpapers,
-    /// or use --file to set a specific wallpaper by filename.
+    /// Set a specific wallpaper by providing a path, or use --random to set
+    /// a random wallpaper from the configured wallpaper directory.
+    #[command(
+        verbatim_doc_comment,
+        after_long_help = r#"Examples:
+  barba wallpaper set /path/to/image.jpg               # Specific wallpaper for all screens
+  barba wallpaper set /path/to/image.jpg --screen main # Specific wallpaper for main screen
+  barba wallpaper set /path/to/image.jpg --screen 2    # Specific wallpaper for screen 2
+  barba wallpaper set --random                         # Random wallpaper for all screens
+  barba wallpaper set --random --screen main           # Random wallpaper for main screen
+  barba wallpaper set --random --screen 2              # Random wallpaper for screen 2"#
+    )]
     Set {
-        /// Wallpaper action: next, previous, or random.
-        #[arg(value_enum, required_unless_present = "file", conflicts_with = "file")]
-        action: Option<WallpaperAction>,
+        /// The path to the image to use as wallpaper.
+        #[arg(value_name = "PATH")]
+        path: Option<String>,
 
-        /// Set a specific wallpaper by filename (e.g., 'sunset.jpg' or 'sunset').
-        #[arg(short, long)]
-        file: Option<String>,
+        /// Set a random wallpaper from the configured wallpaper directory.
+        #[arg(long, short)]
+        random: bool,
+
+        /// Specify which screen(s) to set the wallpaper on.
+        /// Values: all, main, <index> (1-based).
+        /// Default: all
+        #[arg(long, short, default_value = "all")]
+        screen: ScreenTarget,
     },
 
     /// Pre-generate all wallpapers.
@@ -138,10 +186,25 @@ impl Cli {
             }
 
             Commands::Wallpaper(wallpaper_cmd) => match wallpaper_cmd {
-                WallpaperCommands::Set { action, file } => {
+                WallpaperCommands::Set { path, random, screen } => {
+                    // Validate: either path or random must be specified, but not both
+                    if path.is_some() && *random {
+                        return Err(CliError::InvalidArguments(
+                            "Cannot specify both <path> and --random. Use one or the other."
+                                .to_string(),
+                        ));
+                    }
+
+                    if path.is_none() && !*random {
+                        return Err(CliError::InvalidArguments(
+                            "Either <path> or --random must be specified.".to_string(),
+                        ));
+                    }
+
                     let data = WallpaperSetData {
-                        action: action.clone(),
-                        file: file.clone(),
+                        path: path.clone(),
+                        random: *random,
+                        screen: screen.clone(),
                     };
                     let payload = CliEventPayload {
                         name: "wallpaper-set".to_string(),
@@ -154,7 +217,7 @@ impl Cli {
                         name: "wallpaper-generate-all".to_string(),
                         data: None,
                     };
-                    ipc::send_to_desktop_app(&payload)?;
+                    ipc::send_to_desktop_app_extended(&payload)?;
                 }
             },
 
@@ -202,5 +265,89 @@ mod tests {
         let json = serde_json::to_string(&payload).unwrap();
         assert!(json.contains("test-event"));
         assert!(json.contains("null"));
+    }
+
+    #[test]
+    fn test_screen_target_from_str_all() {
+        let target: ScreenTarget = "all".parse().unwrap();
+        assert_eq!(target, ScreenTarget::All);
+    }
+
+    #[test]
+    fn test_screen_target_from_str_main() {
+        let target: ScreenTarget = "main".parse().unwrap();
+        assert_eq!(target, ScreenTarget::Main);
+    }
+
+    #[test]
+    fn test_screen_target_from_str_index() {
+        let target: ScreenTarget = "2".parse().unwrap();
+        assert_eq!(target, ScreenTarget::Index(2));
+    }
+
+    #[test]
+    fn test_screen_target_from_str_case_insensitive() {
+        let target: ScreenTarget = "ALL".parse().unwrap();
+        assert_eq!(target, ScreenTarget::All);
+
+        let target: ScreenTarget = "Main".parse().unwrap();
+        assert_eq!(target, ScreenTarget::Main);
+    }
+
+    #[test]
+    fn test_screen_target_from_str_invalid() {
+        let result: Result<ScreenTarget, _> = "invalid".parse();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid screen value"));
+    }
+
+    #[test]
+    fn test_screen_target_display() {
+        assert_eq!(ScreenTarget::All.to_string(), "all");
+        assert_eq!(ScreenTarget::Main.to_string(), "main");
+        assert_eq!(ScreenTarget::Index(2).to_string(), "2");
+    }
+
+    #[test]
+    fn test_screen_target_default() {
+        let target = ScreenTarget::default();
+        assert_eq!(target, ScreenTarget::All);
+    }
+
+    #[test]
+    fn test_wallpaper_set_data_serialization_with_path() {
+        let data = WallpaperSetData {
+            path: Some("/path/to/image.jpg".to_string()),
+            random: false,
+            screen: ScreenTarget::All,
+        };
+        let json = serde_json::to_string(&data).unwrap();
+        assert!(json.contains("/path/to/image.jpg"));
+        assert!(json.contains("\"random\":false"));
+        assert!(json.contains("\"screen\":\"all\""));
+    }
+
+    #[test]
+    fn test_wallpaper_set_data_serialization_with_random() {
+        let data = WallpaperSetData {
+            path: None,
+            random: true,
+            screen: ScreenTarget::Main,
+        };
+        let json = serde_json::to_string(&data).unwrap();
+        assert!(!json.contains("path"));
+        assert!(json.contains("\"random\":true"));
+        assert!(json.contains("\"screen\":\"main\""));
+    }
+
+    #[test]
+    fn test_wallpaper_set_data_serialization_with_screen_index() {
+        let data = WallpaperSetData {
+            path: Some("/path/to/image.jpg".to_string()),
+            random: false,
+            screen: ScreenTarget::Index(2),
+        };
+        let json = serde_json::to_string(&data).unwrap();
+        assert!(json.contains("\"screen\":{\"index\":2}"));
     }
 }

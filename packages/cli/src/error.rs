@@ -11,6 +11,8 @@ pub enum CliError {
     ConnectionFailed(String),
     /// Failed to send message to the desktop app.
     SendFailed(String),
+    /// Invalid command arguments.
+    InvalidArguments(String),
     /// IO error.
     Io(std::io::Error),
 }
@@ -26,6 +28,9 @@ impl fmt::Display for CliError {
             }
             Self::SendFailed(msg) => {
                 write!(f, "Failed to send command to Barba desktop app: {msg}")
+            }
+            Self::InvalidArguments(msg) => {
+                write!(f, "{msg}")
             }
             Self::Io(err) => write!(f, "IO error: {err}"),
         }
@@ -63,6 +68,13 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("network error"));
         assert!(msg.contains("send"));
+    }
+
+    #[test]
+    fn test_invalid_arguments_display() {
+        let err = CliError::InvalidArguments("Cannot specify both path and random".to_string());
+        let msg = err.to_string();
+        assert!(msg.contains("Cannot specify both path and random"));
     }
 
     #[test]

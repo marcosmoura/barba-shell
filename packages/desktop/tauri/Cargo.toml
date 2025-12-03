@@ -26,6 +26,7 @@ image = { version = "0.25.9", default-features = false, features = [
 ] }
 json_comments = "0.2.2"
 keepawake = "0.6"
+natord = "1.0.9"
 notify = { version = "8.2.0", features = ["macos_fsevent"] }
 objc = { version = "0.2.7", features = ["exception"] }
 rand = { version = "0.9.2", default-features = false, features = [

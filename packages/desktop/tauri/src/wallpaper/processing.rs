@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use image::codecs::jpeg::JpegEncoder;
 use image::{DynamicImage, GenericImageView, ImageReader, Rgb, RgbImage};
+use natord::compare;
 use objc::runtime::{Class, Object};
 use objc::{msg_send, sel, sel_impl};
 
@@ -114,6 +115,49 @@ pub fn get_primary_screen_size() -> ScreenSize {
     }
 }
 
+/// Gets the screen dimensions for a specific screen by index.
+///
+/// Returns a 4K fallback if screen detection fails or the index is invalid.
+#[must_use]
+#[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+pub fn get_screen_size(screen_index: usize) -> ScreenSize {
+    unsafe {
+        let Some(screen_class) = Class::get("NSScreen") else {
+            return ScreenSize::default_4k();
+        };
+
+        let screens: *mut Object = msg_send![screen_class, screens];
+        if screens.is_null() {
+            return ScreenSize::default_4k();
+        }
+
+        let count: usize = msg_send![screens, count];
+        if screen_index >= count {
+            return ScreenSize::default_4k();
+        }
+
+        let screen: *mut Object = msg_send![screens, objectAtIndex: screen_index];
+        if screen.is_null() {
+            return ScreenSize::default_4k();
+        }
+
+        let frame: NSRect = msg_send![screen, frame];
+
+        // Get the backing scale factor for Retina displays
+        let scale: f64 = msg_send![screen, backingScaleFactor];
+
+        // Calculate actual pixel dimensions
+        let width = (frame.size.width * scale) as u32;
+        let height = (frame.size.height * scale) as u32;
+
+        if width == 0 || height == 0 {
+            return ScreenSize::default_4k();
+        }
+
+        ScreenSize { width, height }
+    }
+}
+
 /// Returns the cache directory for processed wallpapers.
 ///
 /// Uses `~/Library/Caches/{APP_BUNDLE_ID}/wallpapers` on macOS for persistence across reboots.
@@ -136,10 +180,34 @@ fn cache_filename(source: &Path, config: &WallpaperConfig, screen: ScreenSize) -
     )
 }
 
+/// Generates a unique cache filename for a specific screen.
+fn cache_filename_for_screen(
+    source: &Path,
+    config: &WallpaperConfig,
+    screen: ScreenSize,
+    screen_index: usize,
+) -> String {
+    let stem = source.file_stem().and_then(|s| s.to_str()).unwrap_or("wallpaper");
+    format!(
+        "{stem}_s{screen_index}_{}x{}_r{}_b{}.jpg",
+        screen.width, screen.height, config.radius, config.blur
+    )
+}
+
 /// Returns the full path to the cached processed image.
 pub fn cached_path(source: &Path, config: &WallpaperConfig) -> PathBuf {
     let screen = get_primary_screen_size();
     cache_dir().join(cache_filename(source, config, screen))
+}
+
+/// Returns the full path to the cached processed image for a specific screen.
+pub fn cached_path_for_screen(
+    source: &Path,
+    config: &WallpaperConfig,
+    screen_index: usize,
+) -> PathBuf {
+    let screen = get_screen_size(screen_index);
+    cache_dir().join(cache_filename_for_screen(source, config, screen, screen_index))
 }
 
 /// Checks if a cached processed image exists and is valid.
@@ -183,8 +251,8 @@ pub fn list_images_in_directory(dir: &Path) -> Vec<PathBuf> {
         }
     }
 
-    // Sort for consistent ordering in sequential mode
-    images.sort();
+    // Sort for consistent ordering in sequential mode using natural/human sorting
+    images.sort_by(|a, b| compare(a.to_string_lossy().as_ref(), b.to_string_lossy().as_ref()));
     images
 }
 
@@ -206,6 +274,60 @@ pub fn process_image(source: &Path, config: &WallpaperConfig) -> Result<PathBuf,
 
     let screen = get_primary_screen_size();
     let cache_path = cached_path(source, config);
+
+    // Return cached version if it exists
+    if cache_path.exists() {
+        return Ok(cache_path);
+    }
+
+    // Load the source image
+    let img = ImageReader::open(source)
+        .map_err(|_| ProcessingError::ImageReadError(source.display().to_string()))?
+        .decode()
+        .map_err(|_| ProcessingError::ImageReadError(source.display().to_string()))?;
+
+    // Resize to screen dimensions
+    let resized = resize_to_screen(&img, screen);
+
+    // Apply processing (blur, rounded corners)
+    let processed = apply_effects(resized, config.radius, config.blur);
+
+    // Save as JPEG with high quality (much faster than PNG)
+    let file = File::create(&cache_path)
+        .map_err(|_| ProcessingError::ImageSaveError(cache_path.display().to_string()))?;
+    let writer = BufWriter::new(file);
+    let encoder = JpegEncoder::new_with_quality(writer, 95);
+    processed
+        .to_rgb8()
+        .write_with_encoder(encoder)
+        .map_err(|_| ProcessingError::ImageSaveError(cache_path.display().to_string()))?;
+
+    Ok(cache_path)
+}
+
+/// Processes an image for a specific screen.
+///
+/// The image is resized to match the specified screen's dimensions, then
+/// effects (blur, rounded corners) are applied.
+///
+/// # Arguments
+///
+/// * `source` - Path to the source image
+/// * `config` - Wallpaper configuration containing radius and blur settings
+/// * `screen_index` - The 0-based index of the target screen
+///
+/// # Returns
+///
+/// The path to the processed image in the cache directory.
+pub fn process_image_for_screen(
+    source: &Path,
+    config: &WallpaperConfig,
+    screen_index: usize,
+) -> Result<PathBuf, ProcessingError> {
+    ensure_cache_dir()?;
+
+    let screen = get_screen_size(screen_index);
+    let cache_path = cached_path_for_screen(source, config, screen_index);
 
     // Return cached version if it exists
     if cache_path.exists() {

@@ -6,9 +6,12 @@
 //! - Caching processed images to avoid redundant processing
 //! - Automatic wallpaper cycling based on interval settings
 //! - Manual wallpaper control via CLI commands
+//! - Multi-screen support with per-screen wallpapers
 
 mod macos;
 mod manager;
 mod processing;
 
-pub use manager::{WallpaperAction, generate_all, init, parse_action, perform_action, start};
+pub use manager::{
+    WallpaperAction, WallpaperManagerError, generate_all, init, perform_action, start,
+};

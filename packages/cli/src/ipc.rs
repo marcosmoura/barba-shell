@@ -14,8 +14,11 @@ use crate::error::CliError;
 /// Socket file name for IPC.
 const SOCKET_NAME: &str = "barba.sock";
 
-/// Connection timeout in milliseconds.
-const CONNECT_TIMEOUT_MS: u64 = 1000;
+/// Default timeout in milliseconds for quick commands.
+const DEFAULT_TIMEOUT_MS: u64 = 1000;
+
+/// Extended timeout in milliseconds for long-running operations.
+const EXTENDED_TIMEOUT_MS: u64 = 120_000; // 2 minutes
 
 /// Gets the path to the IPC socket.
 fn get_socket_path() -> PathBuf {
@@ -31,8 +34,23 @@ fn get_socket_path() -> PathBuf {
     )
 }
 
-/// Sends a payload to the desktop app via Unix socket.
+/// Sends a payload to the desktop app via Unix socket with the default timeout.
 pub fn send_to_desktop_app(payload: &CliEventPayload) -> Result<(), CliError> {
+    send_to_desktop_app_with_timeout(payload, DEFAULT_TIMEOUT_MS)
+}
+
+/// Sends a payload to the desktop app via Unix socket with an extended timeout.
+///
+/// Use this for long-running operations like wallpaper generation.
+pub fn send_to_desktop_app_extended(payload: &CliEventPayload) -> Result<(), CliError> {
+    send_to_desktop_app_with_timeout(payload, EXTENDED_TIMEOUT_MS)
+}
+
+/// Sends a payload to the desktop app via Unix socket with a custom timeout.
+fn send_to_desktop_app_with_timeout(
+    payload: &CliEventPayload,
+    timeout_ms: u64,
+) -> Result<(), CliError> {
     let socket_path = get_socket_path();
 
     // Check if socket exists
@@ -52,8 +70,8 @@ pub fn send_to_desktop_app(payload: &CliEventPayload) -> Result<(), CliError> {
     })?;
 
     // Set timeouts
-    stream.set_read_timeout(Some(Duration::from_millis(CONNECT_TIMEOUT_MS))).ok();
-    stream.set_write_timeout(Some(Duration::from_millis(CONNECT_TIMEOUT_MS))).ok();
+    stream.set_read_timeout(Some(Duration::from_millis(timeout_ms))).ok();
+    stream.set_write_timeout(Some(Duration::from_millis(DEFAULT_TIMEOUT_MS))).ok();
 
     send_message(&stream, payload)?;
 
@@ -139,8 +157,13 @@ mod tests {
     }
 
     #[test]
-    fn test_connection_timeout_constant() {
-        assert_eq!(CONNECT_TIMEOUT_MS, 1000);
+    fn test_default_timeout_constant() {
+        assert_eq!(DEFAULT_TIMEOUT_MS, 1000);
+    }
+
+    #[test]
+    fn test_extended_timeout_constant() {
+        assert_eq!(EXTENDED_TIMEOUT_MS, 120_000);
     }
 
     #[test]

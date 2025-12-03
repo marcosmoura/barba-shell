@@ -411,7 +411,9 @@ pub fn generate_schema() -> schemars::Schema {
     if let Some(obj) = schema.as_object_mut() {
         obj.insert(
             "$id".to_string(),
-            serde_json::json!("https://raw.githubusercontent.com/marcosmoura/barba-shell/main/barba.schema.json"),
+            serde_json::json!(
+                "https://raw.githubusercontent.com/marcosmoura/barba-shell/main/barba.schema.json"
+            ),
         );
     }
 

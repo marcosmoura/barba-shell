@@ -11,8 +11,6 @@ pub enum CliError {
     ConnectionFailed(String),
     /// Failed to send message to the desktop app.
     SendFailed(String),
-    /// Invalid wallpaper action.
-    InvalidWallpaperAction(String),
     /// IO error.
     Io(std::io::Error),
 }
@@ -28,12 +26,6 @@ impl fmt::Display for CliError {
             }
             Self::SendFailed(msg) => {
                 write!(f, "Failed to send command to Barba desktop app: {msg}")
-            }
-            Self::InvalidWallpaperAction(action) => {
-                write!(
-                    f,
-                    "Invalid wallpaper action: '{action}'. Expected: next, previous, random, or an index number"
-                )
             }
             Self::Io(err) => write!(f, "IO error: {err}"),
         }
@@ -71,14 +63,6 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("network error"));
         assert!(msg.contains("send"));
-    }
-
-    #[test]
-    fn test_invalid_wallpaper_action_display() {
-        let err = CliError::InvalidWallpaperAction("bad-action".to_string());
-        let msg = err.to_string();
-        assert!(msg.contains("bad-action"));
-        assert!(msg.contains("Invalid wallpaper action"));
     }
 
     #[test]

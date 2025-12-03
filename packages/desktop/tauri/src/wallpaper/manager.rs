@@ -29,7 +29,7 @@ fn expand_tilde(path: &str) -> PathBuf {
 }
 
 /// Actions that can be performed on the wallpaper.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WallpaperAction {
     /// Set the next wallpaper in sequence.
     Next,
@@ -37,8 +37,8 @@ pub enum WallpaperAction {
     Previous,
     /// Set a random wallpaper.
     Random,
-    /// Set a specific wallpaper by index (0-based).
-    Index(usize),
+    /// Set a specific wallpaper by filename.
+    File(String),
 }
 
 /// Errors that can occur in wallpaper management.
@@ -46,8 +46,8 @@ pub enum WallpaperAction {
 pub enum WallpaperManagerError {
     /// No wallpapers available.
     NoWallpapers,
-    /// Invalid wallpaper index.
-    InvalidIndex(usize),
+    /// Wallpaper file not found.
+    FileNotFound(String),
     /// Processing error.
     Processing(ProcessingError),
     /// macOS API error.
@@ -62,7 +62,7 @@ impl std::fmt::Display for WallpaperManagerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NoWallpapers => write!(f, "No wallpapers available"),
-            Self::InvalidIndex(idx) => write!(f, "Invalid wallpaper index: {idx}"),
+            Self::FileNotFound(name) => write!(f, "Wallpaper not found: {name}"),
             Self::Processing(err) => write!(f, "Image processing error: {err}"),
             Self::MacOS(err) => write!(f, "macOS wallpaper error: {err}"),
             Self::InvalidPath(path) => write!(f, "Invalid wallpaper path: {path}"),
@@ -186,10 +186,6 @@ impl WallpaperManager {
 
     /// Sets the wallpaper at the given index.
     fn set_wallpaper_at_index(&self, index: usize) -> Result<(), WallpaperManagerError> {
-        if index >= self.wallpapers.len() {
-            return Err(WallpaperManagerError::InvalidIndex(index));
-        }
-
         let _lock = self.change_lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
         let source = &self.wallpapers[index];
@@ -232,10 +228,35 @@ impl WallpaperManager {
                 let mut rng = rand::rng();
                 rng.random_range(0..self.wallpapers.len())
             }
-            WallpaperAction::Index(idx) => idx,
+            WallpaperAction::File(ref filename) => self.find_wallpaper_index(filename)?,
         };
 
         self.set_wallpaper_at_index(index)
+    }
+
+    /// Finds the index of a wallpaper by filename.
+    ///
+    /// The search is case-insensitive and matches against the file name
+    /// (with or without extension).
+    fn find_wallpaper_index(&self, filename: &str) -> Result<usize, WallpaperManagerError> {
+        let filename_lower = filename.to_lowercase();
+
+        for (i, path) in self.wallpapers.iter().enumerate() {
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                // Match full filename (with extension)
+                if name.to_lowercase() == filename_lower {
+                    return Ok(i);
+                }
+                // Match filename without extension
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    if stem.to_lowercase() == filename_lower {
+                        return Ok(i);
+                    }
+                }
+            }
+        }
+
+        Err(WallpaperManagerError::FileNotFound(filename.to_string()))
     }
 
     /// Starts the automatic wallpaper cycling timer.
@@ -358,42 +379,48 @@ pub fn perform_action(action: WallpaperAction) -> Result<(), WallpaperManagerErr
 /// This pre-processes all wallpapers so they're ready for instant switching.
 /// Useful for pre-caching wallpapers to avoid delays when cycling.
 ///
+/// # Returns
+///
+/// A tuple of (output_string, success) where output_string contains the
+/// generation log and success indicates if all wallpapers were processed.
+///
 /// # Errors
 ///
-/// Returns an error if the manager is not initialized or processing fails.
-pub fn generate_all() -> Result<(), WallpaperManagerError> {
+/// Returns an error if the manager is not initialized.
+pub fn generate_all() -> Result<String, WallpaperManagerError> {
+    // ANSI color codes
+    const GREEN: &str = "\x1b[32m";
+    const RED: &str = "\x1b[31m";
+    const RESET: &str = "\x1b[0m";
+
     let manager = get_manager().ok_or(WallpaperManagerError::NotInitialized)?;
 
     let total = manager.wallpapers.len();
-    println!("Generating {total} wallpapers...");
+    let mut output = format!("Generating a total of {total} wallpapers.\n\n");
 
-    for (i, wallpaper) in manager.wallpapers.iter().enumerate() {
+    for wallpaper in &manager.wallpapers {
         let name = wallpaper.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
-
-        print!("[{}/{}] Processing {}... ", i + 1, total, name);
 
         match processing::process_image(wallpaper, &manager.config) {
             Ok(cached_path) => {
-                println!(
-                    "done ({})",
-                    cached_path.file_name().and_then(|n| n.to_str()).unwrap_or("cached")
-                );
+                let cached_name =
+                    cached_path.file_name().and_then(|n| n.to_str()).unwrap_or("cached");
+                output.push_str(&format!("{GREEN}✓{RESET} {name} -> {cached_name}\n"));
             }
             Err(err) => {
-                println!("error: {err}");
+                output.push_str(&format!("{RED}⨉{RESET} {name} -> error: {err}\n"));
             }
         }
     }
 
-    println!("Wallpaper generation complete.");
-    Ok(())
+    Ok(output)
 }
 
 /// Parses a CLI argument into a wallpaper action.
 ///
 /// # Arguments
 ///
-/// * `arg` - The CLI argument: "next", "previous", "random", or an index number
+/// * `arg` - The CLI argument: "next", "previous", "random", or a filename
 ///
 /// # Returns
 ///
@@ -403,7 +430,7 @@ pub fn parse_action(arg: &str) -> Option<WallpaperAction> {
         "next" => Some(WallpaperAction::Next),
         "previous" | "prev" => Some(WallpaperAction::Previous),
         "random" => Some(WallpaperAction::Random),
-        _ => arg.parse::<usize>().ok().map(WallpaperAction::Index),
+        _ => Some(WallpaperAction::File(arg.to_string())),
     }
 }
 
@@ -418,8 +445,13 @@ mod tests {
         assert_eq!(parse_action("previous"), Some(WallpaperAction::Previous));
         assert_eq!(parse_action("prev"), Some(WallpaperAction::Previous));
         assert_eq!(parse_action("random"), Some(WallpaperAction::Random));
-        assert_eq!(parse_action("0"), Some(WallpaperAction::Index(0)));
-        assert_eq!(parse_action("5"), Some(WallpaperAction::Index(5)));
-        assert_eq!(parse_action("invalid"), None);
+        assert_eq!(
+            parse_action("wallpaper.png"),
+            Some(WallpaperAction::File("wallpaper.png".to_string()))
+        );
+        assert_eq!(
+            parse_action("my-image.jpg"),
+            Some(WallpaperAction::File("my-image.jpg".to_string()))
+        );
     }
 }

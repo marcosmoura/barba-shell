@@ -66,9 +66,9 @@ pub enum WallpaperCommands {
     ///
     /// Manually change the wallpaper. Supports: 'next' (next in sequence),
     /// 'previous' (previous in sequence), 'random' (random selection),
-    /// or a numeric index.
+    /// or a filename (e.g., 'sunset.jpg' or 'sunset').
     Set {
-        /// Wallpaper action: next, previous, random, or index number.
+        /// Wallpaper action: next, previous, random, or a filename.
         action: String,
     },
 
@@ -112,11 +112,6 @@ impl Cli {
 
             Commands::Wallpaper(wallpaper_cmd) => match wallpaper_cmd {
                 WallpaperCommands::Set { action } => {
-                    // Validate the action
-                    if !is_valid_wallpaper_action(action) {
-                        return Err(CliError::InvalidWallpaperAction(action.clone()));
-                    }
-
                     let payload = CliEventPayload {
                         name: "wallpaper-set".to_string(),
                         data: Some(action.clone()),
@@ -152,30 +147,9 @@ impl Cli {
     }
 }
 
-/// Validates a wallpaper action string.
-fn is_valid_wallpaper_action(action: &str) -> bool {
-    matches!(action, "next" | "previous" | "random") || action.parse::<usize>().is_ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_valid_wallpaper_actions() {
-        assert!(is_valid_wallpaper_action("next"));
-        assert!(is_valid_wallpaper_action("previous"));
-        assert!(is_valid_wallpaper_action("random"));
-        assert!(is_valid_wallpaper_action("0"));
-        assert!(is_valid_wallpaper_action("42"));
-    }
-
-    #[test]
-    fn test_invalid_wallpaper_actions() {
-        assert!(!is_valid_wallpaper_action("invalid"));
-        assert!(!is_valid_wallpaper_action(""));
-        assert!(!is_valid_wallpaper_action("-1"));
-    }
 
     #[test]
     fn test_cli_event_payload_serialization() {
@@ -197,22 +171,5 @@ mod tests {
         let json = serde_json::to_string(&payload).unwrap();
         assert!(json.contains("test-event"));
         assert!(json.contains("null"));
-    }
-
-    #[test]
-    fn test_wallpaper_action_numeric_index() {
-        assert!(is_valid_wallpaper_action("0"));
-        assert!(is_valid_wallpaper_action("1"));
-        assert!(is_valid_wallpaper_action("100"));
-        assert!(is_valid_wallpaper_action("999"));
-    }
-
-    #[test]
-    fn test_wallpaper_action_case_sensitive() {
-        // Actions are case-sensitive
-        assert!(!is_valid_wallpaper_action("Next"));
-        assert!(!is_valid_wallpaper_action("NEXT"));
-        assert!(!is_valid_wallpaper_action("Previous"));
-        assert!(!is_valid_wallpaper_action("Random"));
     }
 }

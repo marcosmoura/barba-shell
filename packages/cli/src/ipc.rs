@@ -80,18 +80,27 @@ fn send_message(mut stream: &UnixStream, payload: &CliEventPayload) -> Result<()
         .flush()
         .map_err(|err| CliError::SendFailed(format!("Failed to flush stream: {err}")))?;
 
-    // Read acknowledgment (optional, for confirmation)
-    let mut ack = [0u8; 1];
-    match stream.read_exact(&mut ack) {
-        Ok(()) if ack[0] == b'1' => Ok(()),
-        Ok(()) => Err(CliError::SendFailed("Command was not acknowledged".to_string())),
+    // Read response - could be simple ack or output with 'O' prefix
+    let mut response = Vec::new();
+    match stream.read_to_end(&mut response) {
+        Ok(_) if response.is_empty() => Ok(()),
+        Ok(_) => {
+            if response[0] == b'O' {
+                // Output follows - print it
+                let output = String::from_utf8_lossy(&response[1..]);
+                println!("{output}");
+                Ok(())
+            } else if response[0] == b'1' {
+                Ok(())
+            } else {
+                Err(CliError::SendFailed("Command was not acknowledged".to_string()))
+            }
+        }
         Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
             // Timeout is OK, command was likely processed
             Ok(())
         }
-        Err(err) => Err(CliError::SendFailed(format!(
-            "Failed to read acknowledgment: {err}"
-        ))),
+        Err(err) => Err(CliError::SendFailed(format!("Failed to read response: {err}"))),
     }
 }
 

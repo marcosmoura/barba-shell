@@ -59,17 +59,44 @@ pub enum Commands {
     GenerateSchema,
 }
 
+/// Wallpaper action for the set command.
+#[derive(Debug, Clone, clap::ValueEnum, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WallpaperAction {
+    /// Set the next wallpaper in sequence.
+    Next,
+    /// Set the previous wallpaper in sequence.
+    Previous,
+    /// Set a random wallpaper.
+    Random,
+}
+
+/// Data sent for the wallpaper set command.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct WallpaperSetData {
+    /// The action to perform (next, previous, random), if specified.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<WallpaperAction>,
+    /// The filename to set, if specified.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+}
+
 /// Wallpaper subcommands.
 #[derive(Subcommand, Debug)]
 pub enum WallpaperCommands {
     /// Change the desktop wallpaper.
     ///
-    /// Manually change the wallpaper. Supports: 'next' (next in sequence),
-    /// 'previous' (previous in sequence), 'random' (random selection),
-    /// or a filename (e.g., 'sunset.jpg' or 'sunset').
+    /// Use 'next', 'previous', or 'random' to cycle through wallpapers,
+    /// or use --file to set a specific wallpaper by filename.
     Set {
-        /// Wallpaper action: next, previous, random, or a filename.
-        action: String,
+        /// Wallpaper action: next, previous, or random.
+        #[arg(value_enum, required_unless_present = "file", conflicts_with = "file")]
+        action: Option<WallpaperAction>,
+
+        /// Set a specific wallpaper by filename (e.g., 'sunset.jpg' or 'sunset').
+        #[arg(short, long)]
+        file: Option<String>,
     },
 
     /// Pre-generate all wallpapers.
@@ -111,10 +138,14 @@ impl Cli {
             }
 
             Commands::Wallpaper(wallpaper_cmd) => match wallpaper_cmd {
-                WallpaperCommands::Set { action } => {
+                WallpaperCommands::Set { action, file } => {
+                    let data = WallpaperSetData {
+                        action: action.clone(),
+                        file: file.clone(),
+                    };
                     let payload = CliEventPayload {
                         name: "wallpaper-set".to_string(),
-                        data: Some(action.clone()),
+                        data: Some(serde_json::to_string(&data).unwrap()),
                     };
                     ipc::send_to_desktop_app(&payload)?;
                 }

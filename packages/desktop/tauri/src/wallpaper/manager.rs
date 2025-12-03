@@ -249,9 +249,10 @@ impl WallpaperManager {
                 }
                 // Match filename without extension
                 if let Some(stem) = path.file_stem().and_then(|s| s.to_str())
-                    && stem.to_lowercase() == filename_lower {
-                        return Ok(i);
-                    }
+                    && stem.to_lowercase() == filename_lower
+                {
+                    return Ok(i);
+                }
             }
         }
 
@@ -415,11 +416,11 @@ pub fn generate_all() -> Result<String, WallpaperManagerError> {
     Ok(output)
 }
 
-/// Parses a CLI argument into a wallpaper action.
+/// Parses a CLI argument into a `WallpaperAction`.
 ///
 /// # Arguments
 ///
-/// * `arg` - The CLI argument: "next", "previous", "random", or a filename
+/// * `arg` - The CLI argument: "next", "previous", or "random"
 ///
 /// # Returns
 ///
@@ -429,7 +430,7 @@ pub fn parse_action(arg: &str) -> Option<WallpaperAction> {
         "next" => Some(WallpaperAction::Next),
         "previous" | "prev" => Some(WallpaperAction::Previous),
         "random" => Some(WallpaperAction::Random),
-        _ => Some(WallpaperAction::File(arg.to_string())),
+        _ => None,
     }
 }
 
@@ -444,13 +445,7 @@ mod tests {
         assert_eq!(parse_action("previous"), Some(WallpaperAction::Previous));
         assert_eq!(parse_action("prev"), Some(WallpaperAction::Previous));
         assert_eq!(parse_action("random"), Some(WallpaperAction::Random));
-        assert_eq!(
-            parse_action("wallpaper.png"),
-            Some(WallpaperAction::File("wallpaper.png".to_string()))
-        );
-        assert_eq!(
-            parse_action("my-image.jpg"),
-            Some(WallpaperAction::File("my-image.jpg".to_string()))
-        );
+        assert_eq!(parse_action("wallpaper.png"), None);
+        assert_eq!(parse_action("my-image.jpg"), None);
     }
 }

@@ -146,11 +146,35 @@ fn handle_client(mut stream: UnixStream, app_handle: &AppHandle) {
     // Handle special commands that don't need to be forwarded
     match payload.name.as_str() {
         "wallpaper-set" => {
-            if let Some(action) = &payload.data
-                && let Some(parsed_action) = crate::wallpaper::parse_action(action)
-                && let Err(err) = crate::wallpaper::perform_action(parsed_action)
-            {
-                eprintln!("barba: wallpaper error: {err}");
+            if let Some(data) = &payload.data {
+                // Parse the JSON data
+                #[derive(serde::Deserialize)]
+                struct WallpaperSetData {
+                    action: Option<String>,
+                    file: Option<String>,
+                }
+
+                match serde_json::from_str::<WallpaperSetData>(data) {
+                    Ok(set_data) => {
+                        // Determine the action to perform
+                        let wallpaper_action = if let Some(filename) = set_data.file {
+                            Some(crate::wallpaper::WallpaperAction::File(filename))
+                        } else if let Some(action_str) = set_data.action {
+                            crate::wallpaper::parse_action(&action_str)
+                        } else {
+                            None
+                        };
+
+                        if let Some(action) = wallpaper_action {
+                            if let Err(err) = crate::wallpaper::perform_action(action) {
+                                eprintln!("barba: wallpaper error: {err}");
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        eprintln!("barba: failed to parse wallpaper data: {err}");
+                    }
+                }
             }
             stream.write_all(b"1").ok();
             return;

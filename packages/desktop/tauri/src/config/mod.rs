@@ -8,7 +8,7 @@ use std::sync::OnceLock;
 
 // Re-export shared types for use throughout the desktop app
 pub use barba_shared::{
-    BarbaConfig, ConfigError, ShortcutCommands, WallpaperConfig, WallpaperMode,
+    BarbaConfig, ConfigError, ShortcutCommands, WallpaperConfig, WallpaperMode, WeatherConfig,
     generate_schema_json, load_config as load_config_with_path,
 };
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};

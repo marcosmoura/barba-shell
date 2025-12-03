@@ -74,6 +74,37 @@ impl WallpaperConfig {
     pub const fn is_enabled(&self) -> bool { !self.path.is_empty() || !self.list.is_empty() }
 }
 
+/// Weather configuration for the status bar.
+///
+/// Example:
+/// ```json
+/// {
+///   "weather": {
+///     "visualCrossingApiKey": "YOUR_API_KEY",
+///     "defaultLocation": "Prague"
+///   }
+/// }
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default, rename_all = "camelCase")]
+pub struct WeatherConfig {
+    /// API key for Visual Crossing Weather API.
+    /// Get one at <https://www.visualcrossing.com/>
+    pub visual_crossing_api_key: String,
+
+    /// Default location for weather data when geolocation fails.
+    /// Can be a city name, address, or coordinates.
+    pub default_location: String,
+}
+
+impl WeatherConfig {
+    /// Returns whether weather functionality is enabled.
+    ///
+    /// Weather is considered enabled if an API key is configured.
+    #[must_use]
+    pub const fn is_enabled(&self) -> bool { !self.visual_crossing_api_key.is_empty() }
+}
+
 /// Root configuration structure for Barba Shell.
 ///
 /// This structure is designed to be extended with additional sections
@@ -113,6 +144,19 @@ pub struct BarbaConfig {
     /// }
     /// ```
     pub wallpapers: WallpaperConfig,
+
+    /// Weather status bar configuration.
+    ///
+    /// Example:
+    /// ```json
+    /// {
+    ///   "weather": {
+    ///     "visualCrossingApiKey": "YOUR_API_KEY",
+    ///     "defaultLocation": "Prague"
+    ///   }
+    /// }
+    /// ```
+    pub weather: WeatherConfig,
 }
 
 /// Commands to execute for a keyboard shortcut.
@@ -356,6 +400,7 @@ mod tests {
         let config = BarbaConfig {
             shortcuts,
             wallpapers: WallpaperConfig::default(),
+            weather: WeatherConfig::default(),
         };
 
         let json = serde_json::to_string_pretty(&config).unwrap();

@@ -37,6 +37,7 @@ pub fn run() {
             bar::components::keepawake::is_system_awake,
             bar::components::keepawake::toggle_system_awake,
             bar::components::media::get_current_media_info,
+            bar::components::weather::get_weather_config,
         ])
         .setup(move |app| {
             // Start watching the config file for changes

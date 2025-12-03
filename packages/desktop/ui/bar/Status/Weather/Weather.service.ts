@@ -22,15 +22,13 @@ import type {
   CurrentConditions,
   IpApiResponse,
   IpInfoResponse,
+  WeatherConfig,
   WeatherData,
 } from './Weather.types';
 
-const API_KEY = import.meta.env.API_KEY_VISUAL_CROSSING;
 const API_URL = 'https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services';
 const API_ELEMENTS = 'name,address,resolvedAddress,feelslike,moonphase,conditions,description,icon';
 const API_INCLUDE = 'alerts,current,fcst,days';
-
-const FALLBACK_LOCATION = import.meta.env.API_DEFAULT_LOCATION;
 
 const iconMap: Record<string, IconSvgElement> = {
   snow: SnowIcon,
@@ -49,6 +47,10 @@ const iconMap: Record<string, IconSvgElement> = {
   'partly-cloudy-night': MoonCloudIcon,
   'clear-day': SunIcon,
   'clear-night': MoonIcon,
+};
+
+export const getWeatherConfig = (): Promise<WeatherConfig> => {
+  return invoke<WeatherConfig>('get_weather_config');
 };
 
 const buildLocationString = (parts: Array<string | undefined>): string =>
@@ -90,16 +92,20 @@ const fetchIpInfoLocation = async (): Promise<string | undefined> => {
   }
 };
 
-export const fetchLocation = async (): Promise<string> => {
+export const fetchLocation = async (defaultLocation: string): Promise<string> => {
   const location = (await fetchIpApiLocation()) ?? (await fetchIpInfoLocation());
 
-  return location || FALLBACK_LOCATION;
+  return location || defaultLocation;
 };
 
-export const fetchWeather = async (location?: string): Promise<WeatherData> => {
-  const encodedLoc = encodeURIComponent(location || FALLBACK_LOCATION);
+export const fetchWeather = async (
+  apiKey: string,
+  location: string,
+  defaultLocation: string,
+): Promise<WeatherData> => {
+  const encodedLoc = encodeURIComponent(location || defaultLocation);
   const params = new URLSearchParams({
-    key: API_KEY,
+    key: apiKey,
     unitGroup: 'metric',
     elements: API_ELEMENTS,
     include: API_INCLUDE,

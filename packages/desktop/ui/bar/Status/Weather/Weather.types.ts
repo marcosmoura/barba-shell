@@ -42,3 +42,8 @@ export interface IpInfoResponse {
   region?: string;
   country?: string;
 }
+
+export interface WeatherConfig {
+  visualCrossingApiKey: string;
+  defaultLocation: string;
+}

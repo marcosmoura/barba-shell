@@ -12,6 +12,7 @@ import { LAPTOP_MEDIA_QUERY } from '@/utils/media-query';
 import {
   fetchLocation,
   fetchWeather,
+  getWeatherConfig,
   getWeatherIcon,
   getWeatherLabel,
   openWeatherApp,
@@ -24,16 +25,22 @@ const queryOptions = {
 
 export const Weather = () => {
   const isLaptopScreen = useMediaQuery(LAPTOP_MEDIA_QUERY);
+  const { data: config } = useQuery({
+    queryKey: ['weatherConfig'],
+    queryFn: getWeatherConfig,
+    staleTime: Infinity, // Config doesn't change during runtime
+  });
   const { data: location } = useQuery({
     ...queryOptions,
-    queryKey: ['location'],
-    queryFn: fetchLocation,
+    queryKey: ['location', config?.defaultLocation],
+    queryFn: () => fetchLocation(config!.defaultLocation),
+    enabled: !!config,
   });
   const { data: weather } = useQuery({
     ...queryOptions,
-    queryKey: ['weather', location],
-    queryFn: () => fetchWeather(location),
-    enabled: !!location,
+    queryKey: ['weather', location, config?.visualCrossingApiKey],
+    queryFn: () => fetchWeather(config!.visualCrossingApiKey, location!, config!.defaultLocation),
+    enabled: !!config?.visualCrossingApiKey && !!location,
   });
 
   const onWeatherClick = useCallback(() => openWeatherApp(), []);

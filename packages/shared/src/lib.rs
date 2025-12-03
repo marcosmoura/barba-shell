@@ -6,6 +6,7 @@ pub mod config;
 pub mod schema;
 
 pub use config::{
-    BarbaConfig, ConfigError, ShortcutCommands, WallpaperConfig, WallpaperMode, load_config,
+    BarbaConfig, ConfigError, ShortcutCommands, WallpaperConfig, WallpaperMode, WeatherConfig,
+    load_config,
 };
 pub use schema::{generate_schema, generate_schema_json};

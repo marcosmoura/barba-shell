@@ -1,3 +1,4 @@
+mod audio;
 mod bar;
 mod config;
 mod constants;
@@ -51,6 +52,9 @@ pub fn run() {
 
             // Start wallpaper manager (set initial wallpaper and start timer)
             wallpaper::start();
+
+            // Initialize audio device manager
+            audio::init();
 
             Ok(())
         })

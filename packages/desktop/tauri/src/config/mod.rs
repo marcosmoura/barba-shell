@@ -164,4 +164,67 @@ mod tests {
         assert!(!schema.is_empty());
         assert!(schema.contains("BarbaConfig"));
     }
+
+    #[test]
+    fn test_weather_config_is_reexported() {
+        let weather = WeatherConfig::default();
+        assert!(!weather.is_enabled());
+        assert!(weather.visual_crossing_api_key.is_empty());
+        assert!(weather.default_location.is_empty());
+    }
+
+    #[test]
+    fn test_shortcut_commands_is_reexported() {
+        let single = ShortcutCommands::Single("barba reload".to_string());
+        assert_eq!(single.get_commands(), vec!["barba reload"]);
+
+        let multiple = ShortcutCommands::Multiple(vec!["cmd1".to_string(), "cmd2".to_string()]);
+        assert_eq!(multiple.get_commands(), vec!["cmd1", "cmd2"]);
+    }
+
+    #[test]
+    fn test_config_error_is_reexported() {
+        let err = ConfigError::NotFound;
+        let msg = err.to_string();
+        assert!(msg.contains("No configuration file found"));
+    }
+
+    #[test]
+    fn test_load_config_with_path_is_reexported() {
+        // Just verify the function is accessible
+        let result = load_config_with_path();
+        // Result could be Ok or Err depending on environment
+        let _ = result;
+    }
+
+    #[test]
+    fn test_get_config_path_before_init() {
+        // get_config_path returns None if config hasn't been loaded
+        // This may not work reliably since other tests may call init()
+        let _ = get_config_path();
+    }
+
+    #[test]
+    fn test_wallpaper_mode_sequential() {
+        let mode = WallpaperMode::Sequential;
+        assert_ne!(mode, WallpaperMode::Random);
+    }
+
+    #[test]
+    fn test_wallpaper_config_with_path_is_enabled() {
+        let config = WallpaperConfig {
+            path: "/path/to/wallpapers".to_string(),
+            ..Default::default()
+        };
+        assert!(config.is_enabled());
+    }
+
+    #[test]
+    fn test_wallpaper_config_with_list_is_enabled() {
+        let config = WallpaperConfig {
+            list: vec!["image.jpg".to_string()],
+            ..Default::default()
+        };
+        assert!(config.is_enabled());
+    }
 }

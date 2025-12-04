@@ -357,4 +357,54 @@ mod tests {
         let json = serde_json::to_string(&payload).unwrap();
         assert!(json.contains("focus-changed"));
     }
+
+    #[test]
+    fn test_cli_event_payload_with_data_serialization() {
+        let payload = CliEventPayload {
+            name: "workspace-changed".to_string(),
+            data: Some("coding".to_string()),
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(json.contains("workspace-changed"));
+        assert!(json.contains("coding"));
+    }
+
+    #[test]
+    fn test_screen_target_all_deserialization() {
+        let json = r#""all""#;
+        let target: ScreenTarget = serde_json::from_str(json).unwrap();
+        assert!(matches!(target, ScreenTarget::All));
+    }
+
+    #[test]
+    fn test_screen_target_main_deserialization() {
+        let json = r#""main""#;
+        let target: ScreenTarget = serde_json::from_str(json).unwrap();
+        assert!(matches!(target, ScreenTarget::Main));
+    }
+
+    #[test]
+    fn test_screen_target_index_deserialization() {
+        let json = r#"{"index":2}"#;
+        let target: ScreenTarget = serde_json::from_str(json).unwrap();
+        assert!(matches!(target, ScreenTarget::Index(2)));
+    }
+
+    #[test]
+    fn test_wallpaper_set_data_deserialization() {
+        let json = r#"{"path":"/path/to/image.jpg","random":false,"screen":"all"}"#;
+        let data: WallpaperSetData = serde_json::from_str(json).unwrap();
+        assert_eq!(data.path, Some("/path/to/image.jpg".to_string()));
+        assert!(!data.random);
+        assert!(matches!(data.screen, ScreenTarget::All));
+    }
+
+    #[test]
+    fn test_wallpaper_set_data_random_deserialization() {
+        let json = r#"{"random":true,"screen":"main"}"#;
+        let data: WallpaperSetData = serde_json::from_str(json).unwrap();
+        assert!(data.path.is_none());
+        assert!(data.random);
+        assert!(matches!(data.screen, ScreenTarget::Main));
+    }
 }

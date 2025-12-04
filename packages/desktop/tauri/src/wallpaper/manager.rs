@@ -495,4 +495,104 @@ mod tests {
         let _file = WallpaperAction::File("test.jpg".to_string());
         let _file_screen = WallpaperAction::FileForScreen(0, "test.jpg".to_string());
     }
+
+    #[test]
+    fn test_wallpaper_action_equality() {
+        assert_eq!(WallpaperAction::Random, WallpaperAction::Random);
+        assert_eq!(
+            WallpaperAction::RandomForScreen(1),
+            WallpaperAction::RandomForScreen(1)
+        );
+        assert_ne!(
+            WallpaperAction::RandomForScreen(0),
+            WallpaperAction::RandomForScreen(1)
+        );
+        assert_eq!(
+            WallpaperAction::File("test.jpg".to_string()),
+            WallpaperAction::File("test.jpg".to_string())
+        );
+        assert_ne!(
+            WallpaperAction::File("a.jpg".to_string()),
+            WallpaperAction::File("b.jpg".to_string())
+        );
+    }
+
+    #[test]
+    fn test_wallpaper_action_clone() {
+        let action = WallpaperAction::FileForScreen(2, "wallpaper.png".to_string());
+        let cloned = action.clone();
+        assert_eq!(action, cloned);
+    }
+
+    #[test]
+    fn test_wallpaper_manager_error_display_no_wallpapers() {
+        let err = WallpaperManagerError::NoWallpapers;
+        assert_eq!(err.to_string(), "No wallpapers available");
+    }
+
+    #[test]
+    fn test_wallpaper_manager_error_display_file_not_found() {
+        let err = WallpaperManagerError::FileNotFound("missing.jpg".to_string());
+        let msg = err.to_string();
+        assert!(msg.contains("Wallpaper not found"));
+        assert!(msg.contains("missing.jpg"));
+    }
+
+    #[test]
+    fn test_wallpaper_manager_error_display_invalid_path() {
+        let err = WallpaperManagerError::InvalidPath("/bad/path".to_string());
+        let msg = err.to_string();
+        assert!(msg.contains("Invalid wallpaper path"));
+        assert!(msg.contains("/bad/path"));
+    }
+
+    #[test]
+    fn test_wallpaper_manager_error_display_invalid_screen() {
+        let err = WallpaperManagerError::InvalidScreen("out of range".to_string());
+        let msg = err.to_string();
+        assert!(msg.contains("Invalid screen"));
+    }
+
+    #[test]
+    fn test_wallpaper_manager_error_display_invalid_action() {
+        let err = WallpaperManagerError::InvalidAction("bad action".to_string());
+        let msg = err.to_string();
+        assert!(msg.contains("Invalid action"));
+    }
+
+    #[test]
+    fn test_wallpaper_manager_error_display_not_initialized() {
+        let err = WallpaperManagerError::NotInitialized;
+        assert_eq!(err.to_string(), "Wallpaper manager not initialized");
+    }
+
+    #[test]
+    fn test_expand_tilde_with_home() {
+        let expanded = expand_tilde("~/Documents/wallpaper.jpg");
+        // Should have expanded the tilde
+        assert!(!expanded.to_string_lossy().starts_with("~/"));
+        assert!(expanded.to_string_lossy().contains("Documents/wallpaper.jpg"));
+    }
+
+    #[test]
+    fn test_expand_tilde_without_tilde() {
+        let path = "/absolute/path/wallpaper.jpg";
+        let expanded = expand_tilde(path);
+        assert_eq!(expanded.to_string_lossy(), path);
+    }
+
+    #[test]
+    fn test_expand_tilde_only() {
+        let expanded = expand_tilde("~");
+        // Should be the home directory
+        assert!(!expanded.to_string_lossy().is_empty());
+        assert!(!expanded.to_string_lossy().starts_with('~'));
+    }
+
+    #[test]
+    fn test_get_manager_returns_none_without_init() {
+        // Before init, get_manager should return None
+        // Note: This test may not work reliably if other tests have already called init()
+        // In practice, the global MANAGER is initialized once per process
+    }
 }

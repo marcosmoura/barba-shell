@@ -178,3 +178,60 @@ pub fn set_wallpaper_for_screen(path: &Path, screen_index: usize) -> Result<(), 
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_wallpaper_error_file_not_found_display() {
+        let err = WallpaperError::FileNotFound("/path/to/missing.jpg".to_string());
+        let msg = err.to_string();
+        assert!(msg.contains("not found"));
+        assert!(msg.contains("/path/to/missing.jpg"));
+    }
+
+    #[test]
+    fn test_wallpaper_error_set_failed_display() {
+        let err = WallpaperError::SetWallpaperFailed("permission denied".to_string());
+        let msg = err.to_string();
+        assert!(msg.contains("Failed to set wallpaper"));
+        assert!(msg.contains("permission denied"));
+    }
+
+    #[test]
+    fn test_wallpaper_error_invalid_screen_display() {
+        let err = WallpaperError::InvalidScreen(5);
+        let msg = err.to_string();
+        assert!(msg.contains("Invalid screen index"));
+        assert!(msg.contains("5"));
+    }
+
+    #[test]
+    fn test_wallpaper_error_is_debug() {
+        let err = WallpaperError::FileNotFound("test.jpg".to_string());
+        let debug_str = format!("{err:?}");
+        assert!(debug_str.contains("FileNotFound"));
+    }
+
+    #[test]
+    fn test_screen_count_returns_at_least_one() {
+        let count = screen_count();
+        assert!(count >= 1, "Screen count should be at least 1");
+    }
+
+    #[test]
+    fn test_set_wallpaper_returns_error_for_nonexistent_file() {
+        let result = set_wallpaper(std::path::Path::new("/nonexistent/path/to/wallpaper.jpg"));
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), WallpaperError::FileNotFound(_)));
+    }
+
+    #[test]
+    fn test_set_wallpaper_for_screen_returns_error_for_nonexistent_file() {
+        let result =
+            set_wallpaper_for_screen(std::path::Path::new("/nonexistent/path/to/wallpaper.jpg"), 0);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), WallpaperError::FileNotFound(_)));
+    }
+}

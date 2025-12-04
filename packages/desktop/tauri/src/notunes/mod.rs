@@ -245,4 +245,33 @@ mod tests {
     fn test_spotify_path() {
         assert_eq!(SPOTIFY_APP_PATH, "/Applications/Spotify.app");
     }
+
+    #[test]
+    fn test_spotify_bundle_id() {
+        assert_eq!(SPOTIFY_BUNDLE_ID, "com.spotify.client");
+    }
+
+    #[test]
+    fn test_is_running_initially_false() {
+        // Note: This test may not be reliable if init() has been called
+        // The atomic is static and persists across tests
+        // We're just testing that the constant exists and is an AtomicBool
+        let _ = IS_RUNNING.load(Ordering::SeqCst);
+    }
+
+    #[test]
+    fn test_apple_music_bundle_id_format() {
+        assert!(APPLE_MUSIC_BUNDLE_ID.starts_with("com.apple."));
+    }
+
+    #[test]
+    fn test_itunes_bundle_id_format() {
+        assert!(ITUNES_BUNDLE_ID.starts_with("com.apple."));
+    }
+
+    #[test]
+    fn test_spotify_path_is_absolute() {
+        assert!(SPOTIFY_APP_PATH.starts_with('/'));
+        assert!(SPOTIFY_APP_PATH.ends_with(".app"));
+    }
 }

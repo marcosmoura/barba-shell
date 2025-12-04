@@ -387,4 +387,31 @@ mod tests {
         assert!(state.press_start.is_none());
         assert!(!state.quit_triggered);
     }
+
+    #[test]
+    fn test_hold_state_can_track_time() {
+        let mut state = HoldState::default();
+        state.press_start = Some(Instant::now());
+        assert!(state.press_start.is_some());
+    }
+
+    #[test]
+    fn test_hold_state_quit_triggered_flag() {
+        let mut state = HoldState::default();
+        assert!(!state.quit_triggered);
+        state.quit_triggered = true;
+        assert!(state.quit_triggered);
+    }
+
+    #[test]
+    fn test_is_running_atomic() {
+        // Test that IS_RUNNING is an atomic that can be read
+        let _ = IS_RUNNING.load(Ordering::SeqCst);
+    }
+
+    #[test]
+    fn test_check_quit_atomic() {
+        // Test that CHECK_QUIT is an atomic that can be read
+        let _ = CHECK_QUIT.load(Ordering::SeqCst);
+    }
 }

@@ -31,8 +31,8 @@
     "@tanstack/react-query": "^5.90.11",
     "@tauri-apps/api": "^2.9.1",
     "@tauri-apps/plugin-process": "~2.3.1",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
@@ -44,7 +44,7 @@
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "@typescript-eslint/parser": "^8.48.1",
-    "@typescript/native-preview": "7.0.0-dev.20251202.1",
+    "@typescript/native-preview": "7.0.0-dev.20251203.1",
     "@vitejs/plugin-react": "^5.1.1",
     "@vitest/browser": "^4.0.15",
     "@vitest/browser-playwright": "^4.0.15",
@@ -74,7 +74,7 @@
     "stylelint-prettier": "^5.0.3",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.48.1",
-    "vite": "npm:rolldown-vite@7.2.9",
+    "vite": "npm:rolldown-vite@7.2.10",
     "vitest": "^4.0.15",
     "vitest-browser-react": "^2.0.2"
   },
@@ -88,7 +88,7 @@
       "postcss": "^8.5.6",
       "trim": "^1.0.1",
       "trim-newlines": "^5.0.0",
-      "vite": "npm:rolldown-vite@7.2.9",
+      "vite": "npm:rolldown-vite@7.2.10",
       "yargs-parser": "^22.0.0"
     }
   }

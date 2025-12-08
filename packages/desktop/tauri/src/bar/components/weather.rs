@@ -27,7 +27,9 @@ impl From<&WeatherConfig> for WeatherConfigInfo {
 
 /// Get the weather configuration from the config file.
 #[tauri::command]
-pub fn get_weather_config() -> WeatherConfigInfo { WeatherConfigInfo::from(&get_config().weather) }
+pub fn get_weather_config() -> WeatherConfigInfo {
+    WeatherConfigInfo::from(&get_config().bar.weather)
+}
 
 #[cfg(test)]
 mod tests {

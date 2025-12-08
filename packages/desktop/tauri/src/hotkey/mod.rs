@@ -11,7 +11,7 @@ use std::process::Command;
 use std::sync::Arc;
 
 use tauri::Runtime;
-use tauri_plugin_global_shortcut::{Builder, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_global_shortcut::{Builder, Shortcut, ShortcutState};
 
 use crate::config::{ShortcutCommands, get_config};
 use crate::utils::command::resolve_binary;
@@ -31,10 +31,10 @@ type ShortcutCommandMap = Arc<HashMap<Shortcut, ShortcutCommands>>;
 /// Returns a configured `TauriPlugin` that can be added to the Tauri app builder.
 pub fn create_hotkey_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
     let config = get_config();
-    let shortcuts = &config.shortcuts;
+    let keybindings = &config.keybindings;
 
-    if shortcuts.is_empty() {
-        // No shortcuts configured, return a no-op plugin
+    if keybindings.is_empty() {
+        // No keybindings configured, return a no-op plugin
         return Builder::<R>::new().build();
     }
 
@@ -42,7 +42,7 @@ pub fn create_hotkey_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
     let mut shortcut_map: HashMap<Shortcut, ShortcutCommands> = HashMap::new();
     let mut valid_shortcuts: Vec<Shortcut> = Vec::new();
 
-    for (shortcut_key, commands) in shortcuts {
+    for (shortcut_key, commands) in keybindings {
         // Normalize the shortcut string for consistency
         let shortcut_str = normalize_shortcut(shortcut_key);
 
@@ -95,6 +95,7 @@ pub fn create_hotkey_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
 /// - "Cmd" is normalized to "Command" (macOS Command key)
 /// - "Alt" and "Opt" are normalized to "Option" (macOS Option key)
 /// - "Super" and "Meta" are normalized to "Command"
+/// - "`" (backtick) is normalized to "Backquote"
 fn normalize_shortcut(shortcut: &str) -> String {
     shortcut
         .replace("Ctrl+", "Control+")
@@ -103,33 +104,8 @@ fn normalize_shortcut(shortcut: &str) -> String {
         .replace("Opt+", "Option+")
         .replace("Super+", "Command+")
         .replace("Meta+", "Command+")
-}
-
-/// Formats a `Shortcut` struct into a human-readable string using macOS terminology.
-#[allow(dead_code)]
-fn format_shortcut(shortcut: &Shortcut) -> String {
-    let mut parts = Vec::new();
-
-    let mods = shortcut.mods;
-
-    // Use macOS keyboard terminology
-    if mods.contains(Modifiers::CONTROL) {
-        parts.push("Control".to_string());
-    }
-    if mods.contains(Modifiers::ALT) {
-        parts.push("Option".to_string());
-    }
-    if mods.contains(Modifiers::SHIFT) {
-        parts.push("Shift".to_string());
-    }
-    if mods.contains(Modifiers::SUPER) || mods.contains(Modifiers::META) {
-        parts.push("Command".to_string());
-    }
-
-    // Add the key code
-    parts.push(format!("{:?}", shortcut.key));
-
-    parts.join("+")
+        // Normalize backtick/grave accent to Backquote (must be at the end of shortcut)
+        .replace("+`", "+Backquote")
 }
 
 /// Executes all commands associated with a shortcut sequentially.
@@ -250,23 +226,5 @@ mod tests {
     fn test_normalize_shortcut_super_and_meta() {
         assert_eq!(normalize_shortcut("Super+K"), "Command+K");
         assert_eq!(normalize_shortcut("Meta+K"), "Command+K");
-    }
-
-    #[test]
-    fn test_format_shortcut() {
-        // Test basic key parsing
-        let shortcut: Shortcut = "Control+S".parse().unwrap();
-        let formatted = format_shortcut(&shortcut);
-        assert!(formatted.contains("Control"));
-        assert!(formatted.contains("KeyS"));
-    }
-
-    #[test]
-    fn test_format_shortcut_with_modifiers() {
-        let shortcut: Shortcut = "Control+Shift+Option+K".parse().unwrap();
-        let formatted = format_shortcut(&shortcut);
-        assert!(formatted.contains("Control"));
-        assert!(formatted.contains("Shift"));
-        assert!(formatted.contains("Option"));
     }
 }

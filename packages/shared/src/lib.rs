@@ -4,9 +4,16 @@
 
 pub mod config;
 pub mod schema;
+pub mod tiling;
 
 pub use config::{
-    BarbaConfig, ConfigError, ShortcutCommands, WallpaperConfig, WallpaperMode, WeatherConfig,
-    load_config,
+    BarConfig, BarbaConfig, ConfigError, ShortcutCommands, WallpaperConfig, WallpaperMode,
+    WeatherConfig, load_config,
 };
 pub use schema::{generate_schema, generate_schema_json};
+pub use tiling::{
+    AnimationConfig, AnimationSettings, DimensionValue, EasingFunction, FloatingConfig,
+    FloatingDefaultPosition, FloatingPreset, GapsConfig, InnerGaps, LayoutMode, MasterConfig,
+    OuterGaps, ScreenGaps, ScreenInfo, ScreenTarget, TilingConfig, WindowInfo, WindowRule,
+    WorkspaceConfig, WorkspaceInfo,
+};

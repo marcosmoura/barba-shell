@@ -1,0 +1,257 @@
+//! Tiling manager module.
+//!
+//! This module provides the core `TilingManager` struct and its initialization.
+//! Implementation is split across submodules for clarity:
+//!
+//! - `discovery`: Window and app discovery, rule matching
+//! - `layout_ops`: Layout application and management
+//! - `workspace_ops`: Workspace switching, visibility, screen operations
+//! - `window_ops`: Window focus, move, and send operations
+
+mod discovery;
+mod layout_ops;
+mod window_ops;
+mod workspace_ops;
+
+use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
+
+use barba_shared::TilingConfig;
+use parking_lot::RwLock;
+use tauri::AppHandle;
+
+use super::error::TilingError;
+use super::observer::{is_in_switch_cooldown, mark_layout_applied, mark_switch_completed};
+use super::{accessibility, window, workspace};
+use crate::config;
+
+/// The main tiling manager that coordinates all tiling operations.
+pub struct TilingManager {
+    /// Workspace manager.
+    pub workspace_manager: workspace::WorkspaceManager,
+
+    /// The configuration.
+    config: TilingConfig,
+
+    /// Persistent mapping of workspace name → PIDs.
+    /// This survives across workspace switches even when window IDs change.
+    workspace_pids: HashMap<String, HashSet<i32>>,
+}
+
+impl TilingManager {
+    /// Creates a new tiling manager.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if initialization fails.
+    pub fn new(config: &TilingConfig) -> Result<Self, TilingError> {
+        let mut workspace_manager = workspace::WorkspaceManager::new(config.clone());
+        workspace_manager.initialize()?;
+
+        let mut manager = Self {
+            workspace_manager,
+            config: config.clone(),
+            workspace_pids: HashMap::new(),
+        };
+
+        // Discover existing windows and assign them to workspaces
+        manager.discover_and_assign_windows();
+
+        // Update focused workspace per screen to match where windows actually are
+        manager.sync_focused_workspaces_with_windows();
+
+        // Hide windows on non-focused workspaces
+        manager.hide_non_focused_workspaces();
+
+        // Apply layouts to all workspaces
+        manager.apply_all_layouts();
+
+        Ok(manager)
+    }
+
+    /// Handles a new window appearing.
+    /// Only processes truly new windows - windows that reappear after being hidden
+    /// during workspace switches are ignored since they're managed by `switch_workspace`.
+    pub fn handle_new_window(&mut self, window_id: u64) {
+        // If we already know about this window, ignore it completely.
+        if self.workspace_manager.state().windows.contains_key(&window_id) {
+            return;
+        }
+
+        // During a workspace switch cooldown, don't process "new" windows.
+        // These are likely windows reappearing after being unhidden, not truly new windows.
+        if is_in_switch_cooldown() {
+            return;
+        }
+
+        // Get the window info
+        let win = match window::get_window_by_id(window_id) {
+            Ok(w) => w,
+            Err(_) => return,
+        };
+
+        // Skip dialogs, sheets, and other non-tileable window types
+        if window::is_dialog_or_sheet(&win) {
+            return;
+        }
+
+        // Find which workspace this window belongs to
+        let workspace_name = match self.find_workspace_for_window(&win) {
+            Some(name) => name,
+            None => return,
+        };
+
+        // Track PID for this workspace (persists even when window IDs change)
+        self.workspace_pids.entry(workspace_name.clone()).or_default().insert(win.pid);
+
+        // Check if this workspace is focused on its screen, get layout mode, and preset_on_open
+        let (is_workspace_focused, is_floating_layout, preset_on_open) = {
+            if let Some(ws) = self.workspace_manager.state().get_workspace(&workspace_name) {
+                let focused_on_screen =
+                    self.workspace_manager.state().focused_workspace_per_screen.get(&ws.screen);
+                let is_focused = focused_on_screen == Some(&workspace_name);
+                let is_floating = ws.layout == barba_shared::LayoutMode::Floating;
+
+                // Get preset_on_open from workspace config
+                let preset = self
+                    .config
+                    .workspaces
+                    .iter()
+                    .find(|wc| wc.name == workspace_name)
+                    .and_then(|wc| wc.preset_on_open.clone());
+
+                (is_focused, is_floating, preset)
+            } else {
+                (false, false, None)
+            }
+        };
+
+        // Add window to state (with workspace assignment)
+        let mut win = win;
+        win.workspace = workspace_name.clone();
+        self.workspace_manager.state_mut().windows.insert(window_id, win);
+
+        // Add to workspace
+        if let Some(ws) = self.workspace_manager.state_mut().get_workspace_mut(&workspace_name)
+            && !ws.windows.contains(&window_id)
+        {
+            ws.windows.push(window_id);
+        }
+
+        // If this is a floating workspace with preset-on-open, apply the preset
+        if is_floating_layout && let Some(preset_name) = preset_on_open {
+            // Apply preset to the new window
+            if let Err(e) = self.apply_preset_to_window(window_id, &preset_name) {
+                eprintln!("barba: failed to apply preset-on-open: {e}");
+            }
+        }
+
+        // Only apply layout for truly new windows on the focused workspace
+        if is_workspace_focused {
+            let _ = self.apply_layout(&workspace_name);
+        }
+    }
+
+    /// Handles a window being destroyed.
+    pub fn handle_window_destroyed(&mut self, window_id: u64) {
+        // During cooldown, windows "disappearing" are likely just being hidden
+        // as part of a workspace switch, not actually destroyed
+        if is_in_switch_cooldown() {
+            return;
+        }
+
+        // Find which workspace had this window
+        let workspace_name: Option<String> = self
+            .workspace_manager
+            .state()
+            .workspaces
+            .iter()
+            .find(|ws| ws.windows.contains(&window_id))
+            .map(|ws| ws.name.clone());
+
+        // Remove from workspace
+        if let Some(ref ws_name) = workspace_name
+            && let Some(ws) = self.workspace_manager.state_mut().get_workspace_mut(ws_name)
+        {
+            ws.windows.retain(|&id| id != window_id);
+        }
+
+        // Remove from state
+        self.workspace_manager.state_mut().windows.remove(&window_id);
+
+        // Re-apply layout if we found the workspace
+        if let Some(ws_name) = workspace_name {
+            let _ = self.apply_layout(&ws_name);
+        }
+    }
+
+    /// Handles a screen configuration change (display added/removed/changed).
+    ///
+    /// This reinitializes screens and workspaces while preserving window state,
+    /// then reapplies layouts to all visible workspaces.
+    pub fn handle_screen_change(&mut self) {
+        if let Err(e) = self.workspace_manager.reinitialize_screens() {
+            eprintln!("barba: failed to reinitialize screens: {e}");
+            return;
+        }
+
+        // Hide windows on non-focused workspaces
+        self.hide_non_focused_workspaces();
+
+        // Apply layouts to all focused workspaces
+        self.apply_all_layouts();
+    }
+}
+
+/// Global tiling manager instance.
+static TILING_MANAGER: OnceLock<RwLock<TilingManager>> = OnceLock::new();
+
+/// Initializes the tiling window manager.
+///
+/// This should be called during app setup. It will:
+/// 1. Check if tiling is enabled in config
+/// 2. Request accessibility permissions if needed
+/// 3. Enumerate screens and create default workspaces
+/// 4. Start watching for window events
+/// 5. Initialize the animation system
+///
+/// Errors are logged but not propagated - tiling is non-critical functionality.
+pub fn init(app_handle: &AppHandle) {
+    let config = config::get_config();
+
+    if !config.tiling.enabled {
+        return;
+    }
+
+    // Validate configuration and log any warnings/errors
+    config.tiling.validate_and_log();
+
+    // Check accessibility permissions
+    if !accessibility::is_accessibility_enabled() {
+        eprintln!("barba: accessibility permissions not granted, tiling will be limited");
+    }
+
+    // Initialize the animation system
+    super::animation::init(&config.tiling.animations);
+
+    // Initialize the manager
+    let manager = match TilingManager::new(&config.tiling) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("barba: failed to initialize tiling window manager: {e}");
+            return;
+        }
+    };
+
+    // Store globally
+    let _ = TILING_MANAGER.set(RwLock::new(manager));
+
+    // Start screen configuration change watcher
+    super::screen::start_screen_watcher();
+
+    // Start AXObserver-based window event observer
+    super::observer::start_observing(app_handle.clone());
+}
+
+/// Returns a reference to the global tiling manager if initialized.
+pub fn try_get_manager() -> Option<&'static RwLock<TilingManager>> { TILING_MANAGER.get() }

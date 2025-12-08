@@ -155,18 +155,7 @@ impl WallpaperManager {
         Ok(wallpapers)
     }
 
-    /// Returns the number of available wallpapers.
-    #[must_use]
-    #[allow(dead_code)]
-    pub const fn count(&self) -> usize { self.wallpapers.len() }
-
-    /// Returns the current wallpaper index.
-    #[must_use]
-    #[allow(dead_code)]
-    pub fn current_index(&self) -> usize { self.current_index.load(Ordering::SeqCst) }
-
     /// Selects the initial wallpaper based on mode.
-    #[cfg_attr(debug_assertions, allow(dead_code))]
     fn select_initial_index(&self) -> usize {
         match self.config.mode {
             WallpaperMode::Random => {
@@ -251,6 +240,12 @@ impl WallpaperManager {
     pub fn set_initial_wallpaper(&self) -> Result<(), WallpaperManagerError> {
         let index = self.select_initial_index();
         self.set_wallpaper_at_index(index)
+    }
+
+    /// Returns a list of all available wallpaper paths.
+    #[must_use]
+    pub fn list_wallpapers(&self) -> Vec<String> {
+        self.wallpapers.iter().map(|p| p.display().to_string()).collect()
     }
 
     /// Performs a wallpaper action.
@@ -366,7 +361,7 @@ impl WallpaperManager {
 ///
 /// If wallpapers are disabled or initialization fails, logs a warning and returns.
 pub fn init() {
-    let config = &crate::config::get_config().wallpapers;
+    let config = &crate::config::get_config().bar.wallpapers;
 
     if !config.is_enabled() {
         return;
@@ -425,6 +420,16 @@ pub fn perform_action(action: &WallpaperAction) -> Result<(), WallpaperManagerEr
     }
 
     Ok(())
+}
+
+/// Returns a list of all available wallpaper paths.
+///
+/// # Errors
+///
+/// Returns an error if the manager is not initialized.
+pub fn list_wallpapers() -> Result<Vec<String>, WallpaperManagerError> {
+    let manager = get_manager().ok_or(WallpaperManagerError::NotInitialized)?;
+    Ok(manager.list_wallpapers())
 }
 
 /// Generates all wallpapers and streams output to the provided writer.

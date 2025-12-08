@@ -13,6 +13,8 @@ use std::path::PathBuf;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::tiling::TilingConfig;
+
 /// Wallpaper cycling mode.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "lowercase")]
@@ -105,6 +107,35 @@ impl WeatherConfig {
     pub const fn is_enabled(&self) -> bool { !self.visual_crossing_api_key.is_empty() }
 }
 
+/// Bar configuration for the status bar UI components.
+///
+/// Contains settings for bar-specific features like wallpapers and weather.
+///
+/// Example:
+/// ```json
+/// {
+///   "bar": {
+///     "wallpapers": {
+///       "path": "/path/to/wallpapers",
+///       "mode": "random"
+///     },
+///     "weather": {
+///       "visualCrossingApiKey": "YOUR_API_KEY",
+///       "defaultLocation": "Prague"
+///     }
+///   }
+/// }
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct BarConfig {
+    /// Dynamic wallpaper configuration.
+    pub wallpapers: WallpaperConfig,
+
+    /// Weather status bar configuration.
+    pub weather: WeatherConfig,
+}
+
 /// Root configuration structure for Barba Shell.
 ///
 /// This structure is designed to be extended with additional sections
@@ -112,7 +143,27 @@ impl WeatherConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct BarbaConfig {
-    /// Global keyboard shortcuts configuration.
+    /// Bar configuration for status bar UI components.
+    ///
+    /// Contains settings for wallpapers and weather.
+    ///
+    /// Example:
+    /// ```json
+    /// {
+    ///   "bar": {
+    ///     "wallpapers": {
+    ///       "path": "/path/to/wallpapers",
+    ///       "mode": "random"
+    ///     },
+    ///     "weather": {
+    ///       "visualCrossingApiKey": "YOUR_API_KEY"
+    ///     }
+    ///   }
+    /// }
+    /// ```
+    pub bar: BarConfig,
+
+    /// Global keyboard keybindings configuration.
     ///
     /// The key is the shortcut string (e.g., "Command+Control+R").
     /// The value is either a single command string or an array of commands.
@@ -120,43 +171,30 @@ pub struct BarbaConfig {
     /// Example:
     /// ```json
     /// {
-    ///   "shortcuts": {
+    ///   "keybindings": {
     ///     "Command+Control+R": ["barba reload", "hyprspace reload-config"],
     ///     "Command+Option+Control+1": "barba workspace-changed terminal"
     ///   }
     /// }
     /// ```
-    pub shortcuts: HashMap<String, ShortcutCommands>,
+    pub keybindings: HashMap<String, ShortcutCommands>,
 
-    /// Dynamic wallpaper configuration.
+    /// Tiling window manager configuration.
     ///
     /// Example:
     /// ```json
     /// {
-    ///   "wallpapers": {
-    ///     "path": "/path/to/wallpapers",
-    ///     "list": ["wallpaper1.jpg", "wallpaper2.png"],
-    ///     "interval": 300,
-    ///     "mode": "random",
-    ///     "radius": 10,
-    ///     "blur": 5
+    ///   "tiling": {
+    ///     "enabled": true,
+    ///     "defaultLayout": "tiling",
+    ///     "gaps": { "inner": 10, "outer": 15 },
+    ///     "workspaces": [
+    ///       { "name": "1", "layout": "tiling", "screen": "main" }
+    ///     ]
     ///   }
     /// }
     /// ```
-    pub wallpapers: WallpaperConfig,
-
-    /// Weather status bar configuration.
-    ///
-    /// Example:
-    /// ```json
-    /// {
-    ///   "weather": {
-    ///     "visualCrossingApiKey": "YOUR_API_KEY",
-    ///     "defaultLocation": "Prague"
-    ///   }
-    /// }
-    /// ```
-    pub weather: WeatherConfig,
+    pub tiling: TilingConfig,
 }
 
 /// Commands to execute for a keyboard shortcut.
@@ -329,28 +367,28 @@ mod tests {
     #[test]
     fn test_default_config_is_empty() {
         let config = BarbaConfig::default();
-        assert!(config.shortcuts.is_empty());
+        assert!(config.keybindings.is_empty());
     }
 
     #[test]
     fn test_config_deserializes_single_command() {
         let json = r#"{
-            "shortcuts": {
+            "keybindings": {
                 "Ctrl+Shift+S": "barba workspace-changed coding"
             }
         }"#;
 
         let config: BarbaConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.shortcuts.len(), 1);
+        assert_eq!(config.keybindings.len(), 1);
 
-        let commands = config.shortcuts.get("Ctrl+Shift+S").unwrap();
+        let commands = config.keybindings.get("Ctrl+Shift+S").unwrap();
         assert_eq!(commands.get_commands(), vec!["barba workspace-changed coding"]);
     }
 
     #[test]
     fn test_config_deserializes_multiple_commands() {
         let json = r#"{
-            "shortcuts": {
+            "keybindings": {
                 "Command+Control+R": [
                     "barba reload",
                     "hyprspace reload-config"
@@ -359,9 +397,9 @@ mod tests {
         }"#;
 
         let config: BarbaConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.shortcuts.len(), 1);
+        assert_eq!(config.keybindings.len(), 1);
 
-        let commands = config.shortcuts.get("Command+Control+R").unwrap();
+        let commands = config.keybindings.get("Command+Control+R").unwrap();
         assert_eq!(commands.get_commands(), vec![
             "barba reload",
             "hyprspace reload-config"
@@ -371,19 +409,19 @@ mod tests {
     #[test]
     fn test_config_deserializes_mixed_format() {
         let json = r#"{
-            "shortcuts": {
+            "keybindings": {
                 "Command+Control+R": ["barba reload", "hyprspace reload-config"],
                 "Command+Option+Control+1": "barba workspace-changed terminal"
             }
         }"#;
 
         let config: BarbaConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.shortcuts.len(), 2);
+        assert_eq!(config.keybindings.len(), 2);
 
-        let multi_commands = config.shortcuts.get("Command+Control+R").unwrap();
+        let multi_commands = config.keybindings.get("Command+Control+R").unwrap();
         assert_eq!(multi_commands.commands_display(), "[2 commands]");
 
-        let single_command = config.shortcuts.get("Command+Option+Control+1").unwrap();
+        let single_command = config.keybindings.get("Command+Option+Control+1").unwrap();
         assert_eq!(
             single_command.commands_display(),
             "barba workspace-changed terminal"
@@ -392,15 +430,15 @@ mod tests {
 
     #[test]
     fn test_config_serializes_correctly() {
-        let mut shortcuts = HashMap::new();
-        shortcuts.insert(
+        let mut keybindings = HashMap::new();
+        keybindings.insert(
             "Ctrl+Alt+T".to_string(),
             ShortcutCommands::Single("barba test".to_string()),
         );
         let config = BarbaConfig {
-            shortcuts,
-            wallpapers: WallpaperConfig::default(),
-            weather: WeatherConfig::default(),
+            bar: BarConfig::default(),
+            keybindings,
+            tiling: TilingConfig::default(),
         };
 
         let json = serde_json::to_string_pretty(&config).unwrap();
@@ -412,7 +450,7 @@ mod tests {
     fn test_empty_json_produces_default() {
         let json = "{}";
         let config: BarbaConfig = serde_json::from_str(json).unwrap();
-        assert!(config.shortcuts.is_empty());
+        assert!(config.keybindings.is_empty());
     }
 
     #[test]
@@ -439,19 +477,19 @@ mod tests {
     #[test]
     fn test_config_deserializes_empty_commands_for_shortcut_capture() {
         let json = r#"{
-            "shortcuts": {
+            "keybindings": {
                 "Command+H": "",
                 "Command+M": []
             }
         }"#;
 
         let config: BarbaConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.shortcuts.len(), 2);
+        assert_eq!(config.keybindings.len(), 2);
 
-        let cmd_h = config.shortcuts.get("Command+H").unwrap();
+        let cmd_h = config.keybindings.get("Command+H").unwrap();
         assert!(cmd_h.get_commands().is_empty());
 
-        let cmd_m = config.shortcuts.get("Command+M").unwrap();
+        let cmd_m = config.keybindings.get("Command+M").unwrap();
         assert!(cmd_m.get_commands().is_empty());
     }
 
@@ -459,7 +497,7 @@ mod tests {
     fn test_config_parses_jsonc_with_comments() {
         let jsonc = r#"{
             // This is a single-line comment
-            "shortcuts": {
+            "keybindings": {
                 /* Multi-line comment */
                 "Command+R": "barba reload", // inline comment
                 "Command+H": ""
@@ -469,11 +507,12 @@ mod tests {
         let reader = json_comments::StripComments::new(jsonc.as_bytes());
         let config: BarbaConfig = serde_json::from_reader(reader).unwrap();
 
-        assert_eq!(config.shortcuts.len(), 2);
-        assert_eq!(config.shortcuts.get("Command+R").unwrap().get_commands(), vec![
-            "barba reload"
-        ]);
-        assert!(config.shortcuts.get("Command+H").unwrap().get_commands().is_empty());
+        assert_eq!(config.keybindings.len(), 2);
+        assert_eq!(
+            config.keybindings.get("Command+R").unwrap().get_commands(),
+            vec!["barba reload"]
+        );
+        assert!(config.keybindings.get("Command+H").unwrap().get_commands().is_empty());
     }
 
     #[test]

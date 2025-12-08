@@ -46,6 +46,76 @@ pub fn send_to_desktop_app_extended(payload: &CliEventPayload) -> Result<(), Cli
     send_to_desktop_app_with_timeout(payload, EXTENDED_TIMEOUT_MS)
 }
 
+/// Sends a payload to the desktop app and returns the JSON response.
+///
+/// Use this for query commands that need to receive data back from the desktop app.
+pub fn send_to_desktop_app_with_response(payload: &CliEventPayload) -> Result<String, CliError> {
+    let socket_path = get_socket_path();
+
+    // Check if socket exists
+    if !socket_path.exists() {
+        return Err(CliError::DesktopAppNotRunning);
+    }
+
+    // Connect to the socket
+    let stream = UnixStream::connect(&socket_path).map_err(|err| {
+        if err.kind() == std::io::ErrorKind::ConnectionRefused
+            || err.kind() == std::io::ErrorKind::NotFound
+        {
+            CliError::DesktopAppNotRunning
+        } else {
+            CliError::ConnectionFailed(err.to_string())
+        }
+    })?;
+
+    // Set timeouts
+    stream.set_read_timeout(Some(Duration::from_millis(DEFAULT_TIMEOUT_MS))).ok();
+    stream.set_write_timeout(Some(Duration::from_millis(DEFAULT_TIMEOUT_MS))).ok();
+
+    send_message_and_read_response(&stream, payload)
+}
+
+/// Sends a JSON message over the stream and reads a JSON response.
+fn send_message_and_read_response(
+    mut stream: &UnixStream,
+    payload: &CliEventPayload,
+) -> Result<String, CliError> {
+    let json = serde_json::to_string(payload)
+        .map_err(|err| CliError::SendFailed(format!("Failed to serialize payload: {err}")))?;
+
+    // Write length-prefixed message
+    #[allow(clippy::cast_possible_truncation)]
+    let len = json.len() as u32;
+    stream
+        .write_all(&len.to_le_bytes())
+        .map_err(|err| CliError::SendFailed(format!("Failed to write message length: {err}")))?;
+
+    stream
+        .write_all(json.as_bytes())
+        .map_err(|err| CliError::SendFailed(format!("Failed to write message: {err}")))?;
+
+    stream
+        .flush()
+        .map_err(|err| CliError::SendFailed(format!("Failed to flush stream: {err}")))?;
+
+    // Read the response length (4 bytes, little-endian u32)
+    let mut len_bytes = [0u8; 4];
+    stream
+        .read_exact(&mut len_bytes)
+        .map_err(|err| CliError::SendFailed(format!("Failed to read response length: {err}")))?;
+
+    let response_len = u32::from_le_bytes(len_bytes) as usize;
+
+    // Read the response body
+    let mut response_bytes = vec![0u8; response_len];
+    stream
+        .read_exact(&mut response_bytes)
+        .map_err(|err| CliError::SendFailed(format!("Failed to read response: {err}")))?;
+
+    String::from_utf8(response_bytes)
+        .map_err(|err| CliError::SendFailed(format!("Invalid UTF-8 in response: {err}")))
+}
+
 /// Sends a payload to the desktop app via Unix socket with a custom timeout.
 fn send_to_desktop_app_with_timeout(
     payload: &CliEventPayload,

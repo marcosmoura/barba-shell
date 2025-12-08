@@ -3,7 +3,7 @@
 //! This module prevents iTunes or Apple Music from launching automatically on macOS.
 //! When media keys are pressed or Bluetooth headphones reconnect, macOS may try to
 //! launch Apple Music - this module intercepts those launches and optionally opens
-//! a preferred music player (Spotify) instead.
+//! a preferred music player (Tidal) instead.
 //!
 //! Inspired by <https://github.com/tombonez/noTunes> (MIT License, Tom Taylor 2017).
 
@@ -23,11 +23,11 @@ const APPLE_MUSIC_BUNDLE_ID: &str = "com.apple.Music";
 /// Bundle identifier for iTunes (legacy).
 const ITUNES_BUNDLE_ID: &str = "com.apple.iTunes";
 
-/// Path to the Spotify application.
-const SPOTIFY_APP_PATH: &str = "/Applications/Spotify.app";
+/// Path to the Tidal application.
+const TIDAL_APP_PATH: &str = "/Applications/Tidal.app";
 
-/// Spotify bundle identifier.
-const SPOTIFY_BUNDLE_ID: &str = "com.spotify.client";
+/// Tidal bundle identifier.
+const TIDAL_BUNDLE_ID: &str = "com.tidal.desktop";
 
 /// Flag indicating if the module is running.
 static IS_RUNNING: AtomicBool = AtomicBool::new(false);
@@ -36,7 +36,7 @@ static IS_RUNNING: AtomicBool = AtomicBool::new(false);
 ///
 /// This sets up an observer for `NSWorkspace.willLaunchApplicationNotification`
 /// to intercept and terminate Apple Music/iTunes launches, optionally starting
-/// Spotify instead.
+/// Tidal instead.
 pub fn init() {
     if IS_RUNNING.swap(true, Ordering::SeqCst) {
         eprintln!("barba: notunes: module is already running");
@@ -160,22 +160,22 @@ extern "C" fn handle_app_launch(_self: &Object, _cmd: Sel, notification: *mut Ob
             // Force terminate the app
             let _: () = msg_send![app, forceTerminate];
 
-            // Launch Spotify as replacement
-            launch_spotify();
+            // Launch Tidal as replacement
+            launch_tidal();
         }
     }
 }
 
-/// Launches Spotify as the replacement music player.
-fn launch_spotify() {
-    // Check if Spotify is installed
-    let spotify_path = std::path::Path::new(SPOTIFY_APP_PATH);
-    if !spotify_path.exists() {
-        eprintln!("barba: notunes: Spotify not found at {SPOTIFY_APP_PATH}");
+/// Launches Tidal as the replacement music player.
+fn launch_tidal() {
+    // Check if Tidal is installed
+    let tidal_path = std::path::Path::new(TIDAL_APP_PATH);
+    if !tidal_path.exists() {
+        eprintln!("barba: notunes: Tidal not found at {TIDAL_APP_PATH}");
         return;
     }
 
-    // Check if Spotify is already running
+    // Check if Tidal is already running
     unsafe {
         let workspace: *mut Object = msg_send![class!(NSWorkspace), sharedWorkspace];
         let running_apps: *mut Object = msg_send![workspace, runningApplications];
@@ -187,18 +187,18 @@ fn launch_spotify() {
 
             if !bundle_id.is_null() {
                 let bundle_id_str = nsstring_to_string(bundle_id);
-                if bundle_id_str == SPOTIFY_BUNDLE_ID {
-                    // Spotify is already running, no need to launch
+                if bundle_id_str == TIDAL_BUNDLE_ID {
+                    // Tidal is already running, no need to launch
                     return;
                 }
             }
         }
     }
 
-    // Launch Spotify using /usr/bin/open
-    match std::process::Command::new("/usr/bin/open").arg(SPOTIFY_APP_PATH).spawn() {
-        Ok(_) => eprintln!("barba: notunes: launched Spotify as replacement"),
-        Err(e) => eprintln!("barba: notunes: failed to launch Spotify: {e}"),
+    // Launch Tidal using /usr/bin/open
+    match std::process::Command::new("/usr/bin/open").arg(TIDAL_APP_PATH).spawn() {
+        Ok(_) => eprintln!("barba: notunes: launched Tidal as replacement"),
+        Err(e) => eprintln!("barba: notunes: failed to launch Tidal: {e}"),
     }
 }
 
@@ -242,13 +242,13 @@ mod tests {
     }
 
     #[test]
-    fn test_spotify_path() {
-        assert_eq!(SPOTIFY_APP_PATH, "/Applications/Spotify.app");
+    fn test_tidal_path() {
+        assert_eq!(TIDAL_APP_PATH, "/Applications/Tidal.app");
     }
 
     #[test]
-    fn test_spotify_bundle_id() {
-        assert_eq!(SPOTIFY_BUNDLE_ID, "com.spotify.client");
+    fn test_tidal_bundle_id() {
+        assert_eq!(TIDAL_BUNDLE_ID, "com.tidal.desktop");
     }
 
     #[test]
@@ -270,8 +270,8 @@ mod tests {
     }
 
     #[test]
-    fn test_spotify_path_is_absolute() {
-        assert!(SPOTIFY_APP_PATH.starts_with('/'));
-        assert!(SPOTIFY_APP_PATH.ends_with(".app"));
+    fn test_tidal_path_is_absolute() {
+        assert!(TIDAL_APP_PATH.starts_with('/'));
+        assert!(TIDAL_APP_PATH.ends_with(".app"));
     }
 }

@@ -5,36 +5,428 @@
   "description": "Root configuration structure for Barba Shell.\n\nThis structure is designed to be extended with additional sections\nas new features are added to the application.",
   "type": "object",
   "properties": {
-    "shortcuts": {
-      "description": "Global keyboard shortcuts configuration.\n\nThe key is the shortcut string (e.g., \"Command+Control+R\").\nThe value is either a single command string or an array of commands.\n\nExample:\n```json\n{\n  \"shortcuts\": {\n    \"Command+Control+R\": [\"barba reload\", \"hyprspace reload-config\"],\n    \"Command+Option+Control+1\": \"barba workspace-changed terminal\"\n  }\n}\n```",
+    "bar": {
+      "description": "Bar configuration for status bar UI components.\n\nContains settings for wallpapers and weather.\n\nExample:\n```json\n{\n  \"bar\": {\n    \"wallpapers\": {\n      \"path\": \"/path/to/wallpapers\",\n      \"mode\": \"random\"\n    },\n    \"weather\": {\n      \"visualCrossingApiKey\": \"YOUR_API_KEY\"\n    }\n  }\n}\n```",
+      "$ref": "#/$defs/BarConfig",
+      "default": {
+        "wallpapers": {
+          "blur": 0,
+          "interval": 0,
+          "list": [],
+          "mode": "random",
+          "path": "",
+          "radius": 0
+        },
+        "weather": {
+          "defaultLocation": "",
+          "visualCrossingApiKey": ""
+        }
+      }
+    },
+    "keybindings": {
+      "description": "Global keyboard keybindings configuration.\n\nThe key is the shortcut string (e.g., \"Command+Control+R\").\nThe value is either a single command string or an array of commands.\n\nExample:\n```json\n{\n  \"keybindings\": {\n    \"Command+Control+R\": [\"barba reload\", \"hyprspace reload-config\"],\n    \"Command+Option+Control+1\": \"barba workspace-changed terminal\"\n  }\n}\n```",
       "type": "object",
       "additionalProperties": {
         "$ref": "#/$defs/ShortcutCommands"
       },
       "default": {}
     },
-    "wallpapers": {
-      "description": "Dynamic wallpaper configuration.\n\nExample:\n```json\n{\n  \"wallpapers\": {\n    \"path\": \"/path/to/wallpapers\",\n    \"list\": [\"wallpaper1.jpg\", \"wallpaper2.png\"],\n    \"interval\": 300,\n    \"mode\": \"random\",\n    \"radius\": 10,\n    \"blur\": 5\n  }\n}\n```",
-      "$ref": "#/$defs/WallpaperConfig",
+    "tiling": {
+      "description": "Tiling window manager configuration.\n\nExample:\n```json\n{\n  \"tiling\": {\n    \"enabled\": true,\n    \"defaultLayout\": \"tiling\",\n    \"gaps\": { \"inner\": 10, \"outer\": 15 },\n    \"workspaces\": [\n      { \"name\": \"1\", \"layout\": \"tiling\", \"screen\": \"main\" }\n    ]\n  }\n}\n```",
+      "$ref": "#/$defs/TilingConfig",
       "default": {
-        "blur": 0,
-        "interval": 0,
-        "list": [],
-        "mode": "random",
-        "path": "",
-        "radius": 0
-      }
-    },
-    "weather": {
-      "description": "Weather status bar configuration.\n\nExample:\n```json\n{\n  \"weather\": {\n    \"visualCrossingApiKey\": \"YOUR_API_KEY\",\n    \"defaultLocation\": \"Prague\"\n  }\n}\n```",
-      "$ref": "#/$defs/WeatherConfig",
-      "default": {
-        "defaultLocation": "",
-        "visualCrossingApiKey": ""
+        "animations": false,
+        "defaultLayout": "tiling",
+        "enabled": true,
+        "floating": {
+          "default-position": "center"
+        },
+        "gaps": {
+          "inner": 0,
+          "outer": 0
+        },
+        "master": {
+          "max-masters": 1,
+          "ratio": 60
+        }
       }
     }
   },
   "$defs": {
+    "AnimationConfig": {
+      "description": "Animation configuration that can be enabled with settings or disabled.\n\nExamples:\n```json\n// Disabled (default)\n{ \"animations\": false }\n\n// Enabled with default settings\n{ \"animations\": true }\n\n// Enabled with custom settings\n{ \"animations\": { \"duration\": 200, \"easing\": \"spring\" } }\n```",
+      "anyOf": [
+        {
+          "description": "Simple boolean to enable/disable with defaults.",
+          "type": "boolean"
+        },
+        {
+          "description": "Custom animation settings (implies enabled).",
+          "$ref": "#/$defs/AnimationSettings"
+        }
+      ]
+    },
+    "AnimationSettings": {
+      "description": "Animation settings when enabled.",
+      "type": "object",
+      "properties": {
+        "duration": {
+          "description": "Duration of animations in milliseconds.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 200,
+          "minimum": 0
+        },
+        "easing": {
+          "description": "Easing function to use for animations.",
+          "$ref": "#/$defs/EasingFunction",
+          "default": "ease-out"
+        }
+      }
+    },
+    "BarConfig": {
+      "description": "Bar configuration for the status bar UI components.\n\nContains settings for bar-specific features like wallpapers and weather.\n\nExample:\n```json\n{\n  \"bar\": {\n    \"wallpapers\": {\n      \"path\": \"/path/to/wallpapers\",\n      \"mode\": \"random\"\n    },\n    \"weather\": {\n      \"visualCrossingApiKey\": \"YOUR_API_KEY\",\n      \"defaultLocation\": \"Prague\"\n    }\n  }\n}\n```",
+      "type": "object",
+      "properties": {
+        "wallpapers": {
+          "description": "Dynamic wallpaper configuration.",
+          "$ref": "#/$defs/WallpaperConfig",
+          "default": {
+            "blur": 0,
+            "interval": 0,
+            "list": [],
+            "mode": "random",
+            "path": "",
+            "radius": 0
+          }
+        },
+        "weather": {
+          "description": "Weather status bar configuration.",
+          "$ref": "#/$defs/WeatherConfig",
+          "default": {
+            "defaultLocation": "",
+            "visualCrossingApiKey": ""
+          }
+        }
+      }
+    },
+    "DimensionValue": {
+      "description": "A dimension value that can be either pixels or a percentage.\n\nExamples:\n- `800` - 800 pixels\n- `\"50%\"` - 50% of the available space",
+      "anyOf": [
+        {
+          "description": "Absolute value in pixels.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        {
+          "description": "Percentage of the available space (e.g., \"50%\").",
+          "type": "string"
+        }
+      ]
+    },
+    "EasingFunction": {
+      "description": "Easing functions for animations.",
+      "oneOf": [
+        {
+          "description": "Linear interpolation (no easing).",
+          "type": "string",
+          "const": "linear"
+        },
+        {
+          "description": "Slow start, fast end.",
+          "type": "string",
+          "const": "ease-in"
+        },
+        {
+          "description": "Fast start, slow end.",
+          "type": "string",
+          "const": "ease-out"
+        },
+        {
+          "description": "Slow start and end, fast middle.",
+          "type": "string",
+          "const": "ease-in-out"
+        },
+        {
+          "description": "Spring physics-based animation.",
+          "type": "string",
+          "const": "spring"
+        }
+      ]
+    },
+    "FloatingConfig": {
+      "description": "Configuration for floating window behavior.",
+      "type": "object",
+      "properties": {
+        "default-position": {
+          "description": "Default position for new floating windows.",
+          "$ref": "#/$defs/FloatingDefaultPosition",
+          "default": "center"
+        },
+        "presets": {
+          "description": "Predefined position/size presets for floating windows.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FloatingPreset"
+          }
+        }
+      }
+    },
+    "FloatingDefaultPosition": {
+      "description": "Default position for floating windows.",
+      "oneOf": [
+        {
+          "description": "Center the window on the screen.",
+          "type": "string",
+          "const": "center"
+        },
+        {
+          "description": "Use the last known position (or system default for new windows).",
+          "type": "string",
+          "const": "default"
+        }
+      ]
+    },
+    "FloatingPreset": {
+      "description": "A preset configuration for floating window position and size.",
+      "type": "object",
+      "properties": {
+        "center": {
+          "description": "If true, center the window on the screen (x and y are ignored).",
+          "type": "boolean"
+        },
+        "height": {
+          "description": "Height of the window (pixels or percentage).",
+          "$ref": "#/$defs/DimensionValue",
+          "default": 0
+        },
+        "name": {
+          "description": "Unique name for this preset (used in CLI commands).",
+          "type": "string",
+          "default": ""
+        },
+        "width": {
+          "description": "Width of the window (pixels or percentage).",
+          "$ref": "#/$defs/DimensionValue",
+          "default": 0
+        },
+        "x": {
+          "description": "X position from the left edge (pixels or percentage).\nIgnored if `center` is true.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DimensionValue"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "y": {
+          "description": "Y position from the top edge (pixels or percentage).\nIgnored if `center` is true.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DimensionValue"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "GapsConfig": {
+      "description": "Gap configuration that supports both global and per-screen settings.\n\nExamples:\n```json\n// Global settings\n{ \"inner\": 10, \"outer\": 15 }\n\n// Per-screen settings\n[\n  { \"screen\": \"main\", \"inner\": 10, \"outer\": 15 },\n  { \"screen\": \"DP-1\", \"inner\": 8, \"outer\": 12 }\n]\n```",
+      "anyOf": [
+        {
+          "description": "Global gap settings applied to all screens.",
+          "$ref": "#/$defs/ScreenGaps"
+        },
+        {
+          "description": "Per-screen gap settings.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ScreenGaps"
+          }
+        }
+      ]
+    },
+    "InnerGaps": {
+      "description": "Inner gap configuration (between windows).\n\nCan be a uniform value or separate horizontal/vertical values.",
+      "anyOf": [
+        {
+          "description": "Same gap for both horizontal and vertical.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        {
+          "description": "Different gaps for horizontal and vertical.",
+          "type": "object",
+          "properties": {
+            "horizontal": {
+              "description": "Horizontal gap between windows (left/right neighbors).",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "vertical": {
+              "description": "Vertical gap between windows (top/bottom neighbors).",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "required": ["horizontal", "vertical"]
+        }
+      ]
+    },
+    "LayoutMode": {
+      "description": "Available layout modes for workspaces.",
+      "oneOf": [
+        {
+          "description": "Windows are arranged in a binary space partitioning pattern (dwindle algorithm).",
+          "type": "string",
+          "const": "tiling"
+        },
+        {
+          "description": "All windows are maximized and stacked, only the focused one is visible.",
+          "type": "string",
+          "const": "monocle"
+        },
+        {
+          "description": "One master window on the left, remaining windows stacked on the right.",
+          "type": "string",
+          "const": "master"
+        },
+        {
+          "description": "Two windows split based on screen orientation.",
+          "type": "string",
+          "const": "split"
+        },
+        {
+          "description": "Two windows split vertically (side by side).",
+          "type": "string",
+          "const": "split-vertical"
+        },
+        {
+          "description": "Two windows split horizontally (stacked top/bottom).",
+          "type": "string",
+          "const": "split-horizontal"
+        },
+        {
+          "description": "Windows can be freely positioned and resized.",
+          "type": "string",
+          "const": "floating"
+        },
+        {
+          "description": "Niri-style scrolling workspace layout.",
+          "type": "string",
+          "const": "scrolling"
+        }
+      ]
+    },
+    "MasterConfig": {
+      "description": "Configuration for the master layout.",
+      "type": "object",
+      "properties": {
+        "max-masters": {
+          "description": "Maximum number of windows in the master area.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 1,
+          "minimum": 0
+        },
+        "ratio": {
+          "description": "The percentage of screen width the master window takes (0-100).",
+          "type": "integer",
+          "format": "uint32",
+          "default": 60,
+          "minimum": 0
+        }
+      }
+    },
+    "OuterGaps": {
+      "description": "Outer gap configuration (between windows and screen edges).\n\nCan be a uniform value or separate values per side.",
+      "anyOf": [
+        {
+          "description": "Same gap for all sides.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        {
+          "description": "Different gaps for each side.",
+          "type": "object",
+          "properties": {
+            "bottom": {
+              "description": "Gap from the bottom edge of the screen.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "left": {
+              "description": "Gap from the left edge of the screen.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "right": {
+              "description": "Gap from the right edge of the screen.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "top": {
+              "description": "Gap from the top edge of the screen.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "required": ["top", "right", "bottom", "left"]
+        }
+      ]
+    },
+    "ScreenGaps": {
+      "description": "Gap settings for a specific screen or all screens.",
+      "type": "object",
+      "properties": {
+        "inner": {
+          "description": "Gap between windows.",
+          "$ref": "#/$defs/InnerGaps",
+          "default": 0
+        },
+        "outer": {
+          "description": "Gap between windows and screen edges.",
+          "$ref": "#/$defs/OuterGaps",
+          "default": 0
+        },
+        "screen": {
+          "description": "The screen this configuration applies to.\nUse \"main\" for the primary screen, or the screen name/identifier.\nIf not specified, applies to all screens.",
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "ScreenTarget": {
+      "description": "Screen target for workspace assignment.",
+      "anyOf": [
+        {
+          "description": "The primary/main display.",
+          "type": "string",
+          "const": "main"
+        },
+        {
+          "description": "The secondary display (if available).",
+          "type": "string",
+          "const": "secondary"
+        },
+        {
+          "description": "A specific display by name or identifier.",
+          "type": "string"
+        }
+      ]
+    },
     "ShortcutCommands": {
       "description": "Commands to execute for a keyboard shortcut.\n\nCan be either a single command string or an array of commands\nthat will be executed sequentially.",
       "anyOf": [
@@ -50,6 +442,64 @@
           }
         }
       ]
+    },
+    "TilingConfig": {
+      "description": "Root configuration for the tiling window manager.\n\nExample:\n```json\n{\n  \"tiling\": {\n    \"enabled\": true,\n    \"defaultLayout\": \"tiling\",\n    \"gaps\": { \"inner\": 10, \"outer\": 15 },\n    \"workspaces\": [\n      { \"name\": \"1\", \"layout\": \"tiling\", \"screen\": \"main\" }\n    ],\n    \"animations\": false\n  }\n}\n```",
+      "type": "object",
+      "properties": {
+        "animations": {
+          "description": "Animation configuration.",
+          "$ref": "#/$defs/AnimationConfig",
+          "default": false
+        },
+        "defaultLayout": {
+          "description": "Default layout mode for new workspaces.",
+          "$ref": "#/$defs/LayoutMode",
+          "default": "tiling"
+        },
+        "enabled": {
+          "description": "Whether the tiling window manager is enabled.",
+          "type": "boolean",
+          "default": true
+        },
+        "floating": {
+          "description": "Floating window behavior configuration.",
+          "$ref": "#/$defs/FloatingConfig",
+          "default": {
+            "default-position": "center"
+          }
+        },
+        "gaps": {
+          "description": "Gap configuration between windows and screen edges.",
+          "$ref": "#/$defs/GapsConfig",
+          "default": {
+            "inner": 0,
+            "outer": 0
+          }
+        },
+        "master": {
+          "description": "Master layout configuration.",
+          "$ref": "#/$defs/MasterConfig",
+          "default": {
+            "max-masters": 1,
+            "ratio": 60
+          }
+        },
+        "rules": {
+          "description": "Window rules for all workspaces (in addition to per-workspace rules).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WindowRule"
+          }
+        },
+        "workspaces": {
+          "description": "Workspace configurations.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WorkspaceConfig"
+          }
+        }
+      }
     },
     "WallpaperConfig": {
       "description": "Wallpaper configuration for dynamic wallpaper management.\n\nExample:\n```json\n{\n  \"wallpapers\": {\n    \"path\": \"/path/to/wallpapers\",\n    \"list\": [\"wallpaper1.jpg\", \"wallpaper2.png\"],\n    \"interval\": 300,\n    \"mode\": \"random\",\n    \"radius\": 10,\n    \"blur\": 5\n  }\n}\n```",
@@ -124,6 +574,56 @@
           "description": "API key for Visual Crossing Weather API.\nGet one at <https://www.visualcrossing.com/>",
           "type": "string",
           "default": ""
+        }
+      }
+    },
+    "WindowRule": {
+      "description": "A rule for matching windows to workspaces.\n\nAt least one matching criterion should be specified.\nMultiple criteria are combined with AND logic.\n\nWhen used as a global rule (in `TilingConfig.rules`), the `workspace` field\nspecifies which workspace matched windows should be assigned to.\nWhen used as a per-workspace rule (in `WorkspaceConfig.rules`), the `workspace`\nfield is ignored and the window is assigned to the containing workspace.",
+      "type": "object",
+      "properties": {
+        "app-id": {
+          "description": "Match by application bundle identifier (e.g., \"com.apple.Safari\").\nSupports both exact match and substring match.",
+          "type": ["string", "null"]
+        },
+        "class": {
+          "description": "Match by window class name (substring match).",
+          "type": ["string", "null"]
+        },
+        "title": {
+          "description": "Match by window title (substring match, case-insensitive).",
+          "type": ["string", "null"]
+        },
+        "workspace": {
+          "description": "Target workspace for global rules.\nThis field is only used when the rule is defined in `TilingConfig.rules`.\nFor per-workspace rules, this field is ignored.",
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "WorkspaceConfig": {
+      "description": "Configuration for a workspace.",
+      "type": "object",
+      "properties": {
+        "layout": {
+          "description": "The layout mode for this workspace.",
+          "$ref": "#/$defs/LayoutMode",
+          "default": "tiling"
+        },
+        "name": {
+          "description": "Unique name/identifier for the workspace.",
+          "type": "string",
+          "default": ""
+        },
+        "rules": {
+          "description": "Window rules for automatically assigning windows to this workspace.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WindowRule"
+          }
+        },
+        "screen": {
+          "description": "The screen this workspace is assigned to.",
+          "$ref": "#/$defs/ScreenTarget",
+          "default": "main"
         }
       }
     }

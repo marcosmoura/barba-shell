@@ -15,6 +15,10 @@ const mediaApps = {
     bundleIdentifier: 'com.microsoft.edgemac.Dev',
     name: 'Microsoft Edge Dev',
   },
+  tidal: {
+    bundleIdentifier: 'com.tidal.desktop',
+    name: 'Tidal',
+  },
 };
 
 const mediaAppsByBundleId = Object.values(mediaApps).reduce<Record<string, MediaApp>>(

@@ -5,9 +5,10 @@ use std::path::{Path, PathBuf};
 ///
 /// This helper first checks if the provided command name is already an absolute path.
 /// If not, it searches for the executable in a priority-ordered list of directories:
-/// 1. Any directory specified via the `BARBA_EXTRA_PATHS` env var (colon-separated).
-/// 2. The current process `PATH`.
-/// 3. A curated list of fallback directories commonly used on macOS for user-installed tools.
+/// 1. For "barba" binary in debug mode: the `./target/debug` directory relative to the app.
+/// 2. Any directory specified via the `BARBA_EXTRA_PATHS` env var (colon-separated).
+/// 3. The current process `PATH`.
+/// 4. A curated list of fallback directories commonly used on macOS for user-installed tools.
 ///
 /// # Arguments
 ///
@@ -31,6 +32,15 @@ pub fn resolve_binary(binary: &str) -> Result<PathBuf, String> {
     }
 
     let mut search_paths = Vec::new();
+
+    // In debug builds, prioritize the debug binary for "barba" commands
+    // This allows testing config hotkeys with the locally-built CLI
+    #[cfg(debug_assertions)]
+    if binary == "barba"
+        && let Some(debug_path) = get_debug_binary_path()
+    {
+        search_paths.push(debug_path);
+    }
 
     if let Ok(extra) = env::var("BARBA_EXTRA_PATHS") {
         search_paths.extend(extra.split(':').map(PathBuf::from));
@@ -66,6 +76,44 @@ pub fn resolve_binary(binary: &str) -> Result<PathBuf, String> {
     Err(format!(
         "Unable to locate executable '{binary}' in known search paths"
     ))
+}
+
+/// Gets the path to the debug binary directory.
+///
+/// In debug builds, this returns the `target/debug` directory relative to the
+/// current executable or the `CARGO_MANIFEST_DIR` if available.
+#[cfg(debug_assertions)]
+fn get_debug_binary_path() -> Option<PathBuf> {
+    // First, try using CARGO_MANIFEST_DIR (available when running via `cargo run`)
+    if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
+        // CARGO_MANIFEST_DIR points to packages/desktop/tauri, we need to go up to workspace root
+        let workspace_root = Path::new(&manifest_dir)
+            .parent()? // desktop
+            .parent()? // packages
+            .parent()?; // workspace root
+        let debug_dir = workspace_root.join("target/debug");
+        if debug_dir.exists() {
+            return Some(debug_dir);
+        }
+    }
+
+    // Fallback: try to find target/debug relative to the current executable
+    if let Ok(exe_path) = env::current_exe() {
+        // The executable might be in target/debug/barba-app or similar
+        // Walk up looking for a target/debug directory
+        let mut current = exe_path.parent();
+        while let Some(dir) = current {
+            if dir.file_name().and_then(|n| n.to_str()) == Some("debug")
+                && let Some(target) = dir.parent()
+                && target.file_name().and_then(|n| n.to_str()) == Some("target")
+            {
+                return Some(dir.to_path_buf());
+            }
+            current = dir.parent();
+        }
+    }
+
+    None
 }
 
 fn home_dir_from_env() -> Option<PathBuf> { env::var_os("HOME").map(PathBuf::from) }

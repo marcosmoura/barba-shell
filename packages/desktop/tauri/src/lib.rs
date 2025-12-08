@@ -6,6 +6,7 @@ mod constants;
 mod hotkey;
 mod ipc;
 mod notunes;
+mod tiling;
 mod utils;
 mod wallpaper;
 
@@ -48,6 +49,9 @@ pub fn run() {
 
             // Start IPC server for CLI communication
             ipc::start_ipc_server(app.handle().clone());
+
+            // Initialize tiling window manager
+            tiling::init(app.handle());
 
             // Initialize Bar components
             bar::init(app);

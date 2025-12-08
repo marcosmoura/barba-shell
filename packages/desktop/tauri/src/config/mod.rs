@@ -49,10 +49,6 @@ pub fn get_config() -> &'static BarbaConfig {
     CONFIG.get().expect("Configuration not initialized. Call init() first.")
 }
 
-/// Returns the global configuration instance if it has been initialized.
-#[allow(dead_code)]
-pub fn try_get_config() -> Option<&'static BarbaConfig> { CONFIG.get() }
-
 /// Returns the path to the loaded configuration file, if any.
 pub fn get_config_path() -> Option<&'static PathBuf> { CONFIG_PATH.get() }
 
@@ -149,7 +145,7 @@ mod tests {
     fn test_shared_types_are_reexported() {
         // Verify that shared types are accessible
         let config = BarbaConfig::default();
-        assert!(config.shortcuts.is_empty());
+        assert!(config.keybindings.is_empty());
 
         let wallpaper = WallpaperConfig::default();
         assert!(!wallpaper.is_enabled());

@@ -20,14 +20,11 @@ const SUPPORTED_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png"];
 
 /// Errors that can occur during image processing.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub enum ProcessingError {
     /// Failed to read the source image.
     ImageReadError(String),
     /// Failed to save the processed image.
     ImageSaveError(String),
-    /// The specified path is not a valid image file.
-    InvalidImagePath(String),
     /// Failed to create the cache directory.
     CacheDirectoryError(String),
 }
@@ -37,7 +34,6 @@ impl std::fmt::Display for ProcessingError {
         match self {
             Self::ImageReadError(path) => write!(f, "Failed to read image: {path}"),
             Self::ImageSaveError(path) => write!(f, "Failed to save processed image: {path}"),
-            Self::InvalidImagePath(path) => write!(f, "Invalid image path: {path}"),
             Self::CacheDirectoryError(path) => {
                 write!(f, "Failed to create cache directory: {path}")
             }
@@ -208,13 +204,6 @@ pub fn cached_path_for_screen(
 ) -> PathBuf {
     let screen = get_screen_size(screen_index);
     cache_dir().join(cache_filename_for_screen(source, config, screen, screen_index))
-}
-
-/// Checks if a cached processed image exists and is valid.
-#[allow(dead_code)]
-pub fn is_cached(source: &Path, config: &WallpaperConfig) -> bool {
-    let cache_path = cached_path(source, config);
-    cache_path.exists()
 }
 
 /// Ensures the cache directory exists.

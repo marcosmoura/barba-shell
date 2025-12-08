@@ -36,11 +36,12 @@ impl AppEntry {
 }
 
 /// Allowed macOS application display names that can be opened via the Tauri command.
-const ALLOWED_APPS: [AppEntry; 6] = [
+const ALLOWED_APPS: [AppEntry; 7] = [
     AppEntry::app("Activity Monitor"),
     AppEntry::app("Clock"),
     AppEntry::app("Microsoft Edge Dev"),
     AppEntry::app("Spotify"),
+    AppEntry::app("Tidal"),
     AppEntry::app("Weather"),
     AppEntry::url(
         "Battery",

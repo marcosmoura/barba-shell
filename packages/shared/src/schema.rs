@@ -45,8 +45,8 @@ mod tests {
         assert!(parsed["$id"].as_str().unwrap().contains("barba.schema.json"));
         assert_eq!(parsed["$schema"], "https://json-schema.org/draft/2020-12/schema");
         assert_eq!(parsed["title"], "BarbaConfig");
-        assert!(parsed["properties"]["shortcuts"].is_object());
-        assert!(parsed["properties"]["wallpapers"].is_object());
+        assert!(parsed["properties"]["keybindings"].is_object());
+        assert!(parsed["properties"]["bar"].is_object());
     }
 
     #[test]
@@ -79,8 +79,9 @@ mod tests {
         let schema_json = generate_schema_json();
         let parsed: serde_json::Value = serde_json::from_str(&schema_json).unwrap();
 
-        let wallpapers = &parsed["properties"]["wallpapers"];
-        assert!(wallpapers.is_object());
+        // Wallpapers is now under BarConfig, referenced in $defs
+        let bar_config = &parsed["$defs"]["BarConfig"];
+        assert!(bar_config.is_object());
     }
 
     #[test]
@@ -88,8 +89,9 @@ mod tests {
         let schema_json = generate_schema_json();
         let parsed: serde_json::Value = serde_json::from_str(&schema_json).unwrap();
 
-        let weather = &parsed["properties"]["weather"];
-        assert!(weather.is_object());
+        // Weather is now under BarConfig, referenced in $defs
+        let weather_config = &parsed["$defs"]["WeatherConfig"];
+        assert!(weather_config.is_object());
     }
 
     #[test]

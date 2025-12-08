@@ -1,0 +1,401 @@
+//! Workspace switching, visibility, and screen operations.
+//!
+//! This module handles workspace switching, showing/hiding apps,
+//! and moving workspaces between screens.
+
+use std::collections::HashSet;
+
+use super::{TilingManager, mark_switch_completed};
+use crate::tiling::error::TilingError;
+use crate::tiling::window;
+
+impl TilingManager {
+    /// Updates the focused workspace on each screen to be the first one that has windows.
+    /// This ensures that at startup, we don't hide windows that are currently visible.
+    pub(super) fn sync_focused_workspaces_with_windows(&mut self) {
+        let state = self.workspace_manager.state();
+
+        // For each screen, find the first workspace that has windows
+        let updates: Vec<(String, String)> = state
+            .screens
+            .iter()
+            .filter_map(|screen| {
+                // Get all workspaces on this screen
+                let workspaces_on_screen = state.get_workspaces_on_screen(&screen.id);
+
+                // Find the first workspace that has windows
+                let ws_with_windows = workspaces_on_screen.iter().find(|ws| !ws.windows.is_empty());
+
+                ws_with_windows.map(|ws| (screen.id.clone(), ws.name.clone()))
+            })
+            .collect();
+
+        // Apply the updates
+        for (screen_id, workspace_name) in updates {
+            self.workspace_manager
+                .state_mut()
+                .focused_workspace_per_screen
+                .insert(screen_id, workspace_name);
+        }
+    }
+
+    /// Hides all windows on workspaces that are not currently focused on their screen.
+    pub(super) fn hide_non_focused_workspaces(&mut self) {
+        let state = self.workspace_manager.state();
+
+        // Collect workspaces that need their windows hidden
+        let workspaces_to_hide: Vec<String> = state
+            .workspaces
+            .iter()
+            .filter(|ws| {
+                // Check if this workspace is the focused one on its screen
+                let focused_on_screen = state.focused_workspace_per_screen.get(&ws.screen);
+                focused_on_screen != Some(&ws.name)
+            })
+            .map(|ws| ws.name.clone())
+            .collect();
+
+        for workspace_name in workspaces_to_hide {
+            if let Err(e) = self.hide_workspace_apps(&workspace_name) {
+                eprintln!("barba: tiling: failed to hide workspace {workspace_name}: {e}");
+            }
+        }
+    }
+
+    /// Sends the current workspace to a different screen.
+    ///
+    /// This moves all windows from the current workspace to the target screen,
+    /// swapping workspaces if the target screen already has a focused workspace.
+    pub fn send_workspace_to_screen(&mut self, target: &str) -> Result<(), TilingError> {
+        // Get the current focused workspace
+        let current_workspace_name = self
+            .workspace_manager
+            .state()
+            .focused_workspace
+            .clone()
+            .ok_or_else(|| TilingError::WorkspaceNotFound("current".to_string()))?;
+
+        // Get the current workspace's screen
+        let current_screen_id = {
+            let workspace = self
+                .workspace_manager
+                .state()
+                .get_workspace(&current_workspace_name)
+                .ok_or_else(|| {
+                TilingError::WorkspaceNotFound(current_workspace_name.clone())
+            })?;
+            workspace.screen.clone()
+        };
+
+        // Resolve the target screen
+        let target_screen_id = self
+            .workspace_manager
+            .state()
+            .resolve_screen_target(target, Some(&current_screen_id))
+            .ok_or_else(|| TilingError::ScreenNotFound(target.to_string()))?;
+
+        // If already on the target screen, do nothing
+        if current_screen_id == target_screen_id {
+            return Ok(());
+        }
+
+        // Get the focused workspace on the target screen (if any)
+        let target_workspace_name = self
+            .workspace_manager
+            .state()
+            .focused_workspace_per_screen
+            .get(&target_screen_id)
+            .cloned();
+
+        // Swap the workspaces between screens
+        // Update current workspace to target screen
+        if let Some(ws) =
+            self.workspace_manager.state_mut().get_workspace_mut(&current_workspace_name)
+        {
+            ws.screen = target_screen_id.clone();
+        }
+
+        // Update target workspace to current screen (if exists)
+        if let Some(ref target_ws_name) = target_workspace_name {
+            if let Some(ws) = self.workspace_manager.state_mut().get_workspace_mut(target_ws_name) {
+                ws.screen = current_screen_id.clone();
+            }
+
+            // Update focused workspace per screen for the old screen
+            self.workspace_manager
+                .state_mut()
+                .focused_workspace_per_screen
+                .insert(current_screen_id, target_ws_name.clone());
+        }
+
+        // Update focused workspace per screen for the target screen
+        self.workspace_manager
+            .state_mut()
+            .focused_workspace_per_screen
+            .insert(target_screen_id, current_workspace_name.clone());
+
+        // Re-apply layouts for both workspaces
+        let _ = self.apply_layout(&current_workspace_name);
+        if let Some(ref target_ws_name) = target_workspace_name {
+            let _ = self.apply_layout(target_ws_name);
+        }
+
+        Ok(())
+    }
+
+    /// Focuses a workspace on an adjacent screen (directional focus).
+    ///
+    /// This switches focus to the focused workspace on the screen in the given direction.
+    pub fn focus_workspace_on_screen(&mut self, direction: &str) -> Result<(), TilingError> {
+        // Get the current workspace and its screen
+        let current_workspace_name = self
+            .workspace_manager
+            .state()
+            .focused_workspace
+            .clone()
+            .ok_or_else(|| TilingError::WorkspaceNotFound("current".to_string()))?;
+
+        let current_screen_id = {
+            let workspace = self
+                .workspace_manager
+                .state()
+                .get_workspace(&current_workspace_name)
+                .ok_or_else(|| {
+                TilingError::WorkspaceNotFound(current_workspace_name.clone())
+            })?;
+            workspace.screen.clone()
+        };
+
+        // Find the screen in the given direction
+        let target_screen_id = self
+            .workspace_manager
+            .state()
+            .resolve_screen_target(direction, Some(&current_screen_id))
+            .ok_or_else(|| TilingError::ScreenNotFound(direction.to_string()))?;
+
+        // Get the focused workspace on that screen
+        let target_workspace_name = self
+            .workspace_manager
+            .state()
+            .focused_workspace_per_screen
+            .get(&target_screen_id)
+            .cloned()
+            .ok_or_else(|| {
+                TilingError::WorkspaceNotFound(format!("no workspace on screen {target_screen_id}"))
+            })?;
+
+        // Switch to that workspace
+        self.switch_workspace(&target_workspace_name)
+    }
+
+    /// Switches to a workspace, hiding windows from the old workspace and showing windows from the new one.
+    ///
+    /// This only affects workspaces on the same screen - each screen has its own focused workspace.
+    pub fn switch_workspace(&mut self, workspace_name: &str) -> Result<(), TilingError> {
+        self.switch_workspace_focusing(workspace_name, None)
+    }
+
+    /// Switches to a workspace, optionally focusing a specific window.
+    ///
+    /// If `focus_window_id` is Some, that window will be focused instead of the first window.
+    /// This is used when switching workspaces due to Cmd+Tab, where we want to focus the
+    /// window that was Cmd+Tab'd to, not the first window in layout order.
+    pub fn switch_workspace_focusing(
+        &mut self,
+        workspace_name: &str,
+        focus_window_id: Option<u64>,
+    ) -> Result<(), TilingError> {
+        let result = self.switch_workspace_internal(workspace_name, focus_window_id);
+
+        // Mark the switch as completed to start the cooldown period
+        mark_switch_completed();
+
+        result
+    }
+
+    /// Internal implementation of workspace switching.
+    fn switch_workspace_internal(
+        &mut self,
+        workspace_name: &str,
+        focus_window_id: Option<u64>,
+    ) -> Result<(), TilingError> {
+        // Get the target workspace's screen
+        let target_screen_id = {
+            let workspace = self
+                .workspace_manager
+                .state()
+                .get_workspace(workspace_name)
+                .ok_or_else(|| TilingError::WorkspaceNotFound(workspace_name.to_string()))?;
+            workspace.screen.clone()
+        };
+
+        // Get PIDs for the new workspace from our persistent tracking
+        // This is more reliable than deriving from window IDs which may be stale
+        let new_workspace_pids =
+            self.workspace_pids.get(workspace_name).cloned().unwrap_or_default();
+
+        // Get the currently focused workspace on this screen
+        let current_workspace_name = self
+            .workspace_manager
+            .state()
+            .focused_workspace_per_screen
+            .get(&target_screen_id)
+            .cloned();
+
+        // Note: We intentionally don't skip when switching to the same workspace.
+        // This ensures windows are always visible and focused, handling cases where
+        // the state may be out of sync with reality (e.g., after app restart).
+
+        // Get PIDs from the old workspace from our persistent tracking
+        let old_workspace_pids: HashSet<i32> =
+            if let Some(ref current_ws_name) = current_workspace_name {
+                self.workspace_pids
+                    .get(current_ws_name)
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|pid| !new_workspace_pids.contains(pid))
+                    .collect()
+            } else {
+                HashSet::new()
+            };
+
+        // Update focus state
+        self.workspace_manager.state_mut().focused_workspace = Some(workspace_name.to_string());
+        self.workspace_manager
+            .state_mut()
+            .focused_workspace_per_screen
+            .insert(target_screen_id, workspace_name.to_string());
+
+        // First: unhide all new workspace apps, then hide old workspace apps
+        // Wait for all to complete before proceeding
+        std::thread::scope(|s| {
+            for pid in &new_workspace_pids {
+                let pid = *pid;
+                s.spawn(move || {
+                    let _ = window::unhide_app(pid);
+                });
+            }
+
+            for pid in &old_workspace_pids {
+                let pid = *pid;
+                s.spawn(move || {
+                    let _ = window::hide_app(pid);
+                });
+            }
+        });
+
+        // After unhiding apps, give macOS a moment to register windows, then discover them
+        std::thread::sleep(std::time::Duration::from_millis(20));
+
+        // Discover windows from newly unhidden apps and add them to this workspace
+        // Use get_all_windows_including_hidden because the windows may not yet be marked "on screen"
+        if let Ok(all_windows) = window::get_all_windows_including_hidden() {
+            for win in all_windows {
+                // Only process windows from apps that belong to this workspace
+                if new_workspace_pids.contains(&win.pid) {
+                    let window_id = win.id;
+
+                    // Add window to state if not already tracked
+                    if !self.workspace_manager.state().windows.contains_key(&window_id) {
+                        self.workspace_manager.state_mut().windows.insert(window_id, win);
+                    }
+
+                    // Add window to workspace if not already in the list
+                    if let Some(ws) =
+                        self.workspace_manager.state_mut().get_workspace_mut(workspace_name)
+                        && !ws.windows.contains(&window_id)
+                    {
+                        ws.windows.push(window_id);
+                    }
+                }
+            }
+        }
+
+        // Apply layout now that we have discovered windows
+        let _ = self.apply_layout(workspace_name);
+
+        // Focus the requested window, or fall back to the first window in the workspace
+        // When switching due to Cmd+Tab, focus_window_id contains the window the user
+        // actually Cmd+Tab'd to, so we focus that instead of the first in layout order
+        let window_to_focus = focus_window_id.or_else(|| {
+            self.workspace_manager
+                .state()
+                .get_workspace(workspace_name)
+                .and_then(|ws| ws.windows.first().copied())
+        });
+
+        if let Some(window_id) = window_to_focus {
+            let _ = window::focus_window(window_id);
+        }
+
+        Ok(())
+    }
+
+    /// Hides all applications that have windows in a workspace.
+    /// Uses the `AXHidden` attribute (same as Cmd+H).
+    pub(super) fn hide_workspace_apps(&mut self, workspace_name: &str) -> Result<(), TilingError> {
+        // Collect unique PIDs from windows in this workspace
+        let pids_to_hide: HashSet<i32> = {
+            let workspace = self
+                .workspace_manager
+                .state()
+                .get_workspace(workspace_name)
+                .ok_or_else(|| TilingError::WorkspaceNotFound(workspace_name.to_string()))?;
+
+            workspace
+                .windows
+                .iter()
+                .filter_map(|window_id| {
+                    self.workspace_manager.state().get_window(*window_id).map(|w| w.pid)
+                })
+                .collect()
+        };
+
+        // Hide each app (silently ignore apps that don't support AXHidden)
+        for pid in pids_to_hide {
+            let _ = window::hide_app(pid);
+        }
+
+        // Mark windows as hidden in state
+        let window_ids: Vec<u64> = {
+            self.workspace_manager
+                .state()
+                .get_workspace(workspace_name)
+                .map(|ws| ws.windows.clone())
+                .unwrap_or_default()
+        };
+
+        for window_id in window_ids {
+            if let Some(win) = self.workspace_manager.state_mut().get_window_mut(window_id) {
+                win.is_hidden = true;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Balances window sizes in a workspace.
+    ///
+    /// This resets all split ratios to their default values (equal splits)
+    /// and re-applies the layout, restoring windows to their balanced sizes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the workspace is not found.
+    pub fn balance_workspace(&mut self, workspace_name: &str) -> Result<(), TilingError> {
+        // Clear split ratios to reset to equal splits
+        {
+            let workspace = self
+                .workspace_manager
+                .state_mut()
+                .get_workspace_mut(workspace_name)
+                .ok_or_else(|| TilingError::WorkspaceNotFound(workspace_name.to_string()))?;
+
+            workspace.split_ratios.clear();
+        }
+
+        // Re-apply the layout with default (equal) ratios
+        self.apply_layout(workspace_name)
+    }
+}

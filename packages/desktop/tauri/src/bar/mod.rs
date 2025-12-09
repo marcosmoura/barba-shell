@@ -23,7 +23,6 @@ pub fn init(app: &App) {
     components::init(&webview_window);
 
     // Make the app not appear in the dock
-    #[cfg(not(debug_assertions))]
     let _ = app_handle.set_activation_policy(tauri::ActivationPolicy::Prohibited);
     let _ = webview_window.show();
 

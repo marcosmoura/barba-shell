@@ -878,6 +878,11 @@ impl ObserverManager {
             if let Some(manager) = try_get_manager() {
                 let mut guard = manager.write();
 
+                // Skip windows that match ignore rules (higher priority than workspace rules)
+                if guard.should_ignore_window(&window) {
+                    return;
+                }
+
                 // Check if this window is already in a workspace
                 let is_tracked = guard
                     .workspace_manager
@@ -1056,6 +1061,11 @@ impl ObserverManager {
         if let Some(manager) = try_get_manager() {
             let mut guard = manager.write();
 
+            // Skip windows that match ignore rules (higher priority than workspace rules)
+            if guard.should_ignore_window(&window) {
+                return;
+            }
+
             if let Some(workspace_name) = guard.find_workspace_for_window(&window) {
                 // Adding synthetic window to workspace
 
@@ -1084,6 +1094,11 @@ impl ObserverManager {
     fn ensure_window_tracked(&self, window_id: u64, window: crate::tiling::state::ManagedWindow) {
         if let Some(manager) = try_get_manager() {
             let mut guard = manager.write();
+
+            // Skip windows that match ignore rules (higher priority than workspace rules)
+            if guard.should_ignore_window(&window) {
+                return;
+            }
 
             // Check if this window is already in a workspace
             let is_tracked = guard

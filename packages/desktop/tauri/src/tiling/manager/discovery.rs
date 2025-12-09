@@ -5,6 +5,8 @@
 
 #![allow(clippy::cast_possible_wrap)]
 
+use std::collections::HashSet;
+
 use barba_shared::WindowRule;
 
 use super::TilingManager;
@@ -13,9 +15,43 @@ use crate::tiling::window;
 
 impl TilingManager {
     /// Discovers existing windows and assigns them to workspaces based on rules.
+    ///
+    /// This method performs the following steps:
+    /// 1. Unhides ALL running applications to ensure all windows are discoverable
+    /// 2. Waits briefly for macOS to register the unhidden windows
+    /// 3. Discovers all windows and assigns them to workspaces based on rules
+    /// 4. Tracks PIDs for each workspace
+    ///
+    /// Note: After this method completes, `hide_non_focused_workspaces` should be
+    /// called to hide windows that don't belong to the focused workspace.
     pub(super) fn discover_and_assign_windows(&mut self) {
-        // First, discover visible windows
-        let windows = match window::get_all_windows() {
+        // First, get ALL running apps and unhide them to ensure all windows are discoverable
+        let running_apps = window::get_all_running_apps();
+        let all_pids: HashSet<i32> = running_apps.iter().map(|app| app.pid).collect();
+
+        // Unhide all apps in parallel
+        std::thread::scope(|s| {
+            for pid in &all_pids {
+                let pid = *pid;
+                s.spawn(move || {
+                    let _ = window::unhide_app(pid);
+                });
+            }
+        });
+
+        // Wait for macOS to register the unhidden windows
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // Track PIDs for apps based on rules (do this before window discovery
+        // so we know which workspaces have apps even if their windows aren't visible yet)
+        for app in &running_apps {
+            if let Some(workspace_name) = self.find_workspace_for_app(app) {
+                self.workspace_pids.entry(workspace_name).or_default().insert(app.pid);
+            }
+        }
+
+        // Now discover ALL windows (including ones that were just unhidden)
+        let windows = match window::get_all_windows_including_hidden() {
             Ok(w) => w,
             Err(e) => {
                 eprintln!("barba: failed to discover windows: {e}");
@@ -26,6 +62,11 @@ impl TilingManager {
         for win in windows {
             // Skip dialogs, sheets, and other non-tileable window types
             if window::is_dialog_or_sheet(&win) {
+                continue;
+            }
+
+            // Skip windows that match ignore rules (higher priority than workspace rules)
+            if self.should_ignore_window(&win) {
                 continue;
             }
 
@@ -46,15 +87,6 @@ impl TilingManager {
                 {
                     ws.windows.push(window_id);
                 }
-            }
-        }
-
-        // Second, scan ALL running apps (including hidden ones) and match against rules
-        // This ensures we track PIDs for apps that were hidden at startup
-        let running_apps = window::get_all_running_apps();
-        for app in running_apps {
-            if let Some(workspace_name) = self.find_workspace_for_app(&app) {
-                self.workspace_pids.entry(workspace_name).or_default().insert(app.pid);
             }
         }
     }
@@ -185,6 +217,67 @@ impl TilingManager {
     /// Checks if a window matches a rule.
     #[allow(clippy::unused_self)]
     pub(super) fn window_matches_rule(&self, win: &ManagedWindow, rule: &WindowRule) -> bool {
+        // All specified criteria must match (AND logic)
+        if let Some(ref app_id) = rule.app_id {
+            if let Some(ref bundle_id) = win.bundle_id {
+                let matches = bundle_id.contains(app_id) || bundle_id == app_id;
+                if !matches {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+
+        if let Some(ref name) = rule.name {
+            let name_lower = name.to_lowercase();
+            let app_name_lower = win.app_name.to_lowercase();
+            if !app_name_lower.contains(&name_lower) && app_name_lower != name_lower {
+                return false;
+            }
+        }
+
+        if let Some(ref title) = rule.title
+            && !win.title.to_lowercase().contains(&title.to_lowercase())
+        {
+            return false;
+        }
+
+        if let Some(ref class) = rule.class {
+            if let Some(ref window_class) = win.class {
+                if !window_class.contains(class) && window_class != class {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+
+        // If no criteria specified, the rule doesn't match anything
+        !rule.is_empty()
+    }
+
+    /// Checks if a window should be ignored based on the ignore rules.
+    ///
+    /// Returns `true` if the window matches any ignore rule and should not be tracked.
+    /// Ignore rules have higher priority than workspace rules.
+    #[allow(clippy::unused_self)]
+    pub fn should_ignore_window(&self, win: &ManagedWindow) -> bool {
+        for rule in &self.config.ignore {
+            if self.window_matches_ignore_rule(win, rule) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Checks if a window matches an ignore rule.
+    #[allow(clippy::unused_self)]
+    fn window_matches_ignore_rule(
+        &self,
+        win: &ManagedWindow,
+        rule: &barba_shared::IgnoreRule,
+    ) -> bool {
         // All specified criteria must match (AND logic)
         if let Some(ref app_id) = rule.app_id {
             if let Some(ref bundle_id) = win.bundle_id {

@@ -41,6 +41,85 @@ impl TilingManager {
         }
     }
 
+    /// Initializes the focus state based on a pre-captured focused app PID.
+    ///
+    /// This is used during startup when we capture the focused app's PID BEFORE
+    /// unhiding all apps (which can change focus). We then use this PID to find
+    /// which workspace should be focused.
+    pub(super) fn initialize_focus_state_from_pid(&mut self, focused_pid: Option<i32>) {
+        if let Some(pid) = focused_pid {
+            // Find a workspace that has a window with this PID
+            let workspace_info: Option<(String, String, Option<u64>)> =
+                self.workspace_manager.state().workspaces.iter().find_map(|ws| {
+                    // Find first window in this workspace with the target PID
+                    let window_id = ws.windows.iter().find(|&&wid| {
+                        self.workspace_manager.state().get_window(wid).is_some_and(|w| w.pid == pid)
+                    });
+                    window_id.map(|&wid| (ws.name.clone(), ws.screen.clone(), Some(wid)))
+                });
+
+            if let Some((ws_name, screen_id, window_id)) = workspace_info {
+                // Set this workspace as the globally focused one
+                self.workspace_manager.state_mut().focused_workspace = Some(ws_name.clone());
+
+                // Set the focused window if we found one
+                if let Some(wid) = window_id {
+                    self.workspace_manager.state_mut().focused_window = Some(wid);
+                }
+
+                // Update the focused workspace for this screen
+                self.workspace_manager
+                    .state_mut()
+                    .focused_workspace_per_screen
+                    .insert(screen_id, ws_name);
+                return;
+            }
+        }
+
+        // Fallback: no focused PID or not found - use the first workspace on the main screen
+        let first_workspace = self.workspace_manager.state().get_main_screen().and_then(|screen| {
+            self.workspace_manager
+                .state()
+                .get_workspaces_on_screen(&screen.id)
+                .first()
+                .map(|ws| ws.name.clone())
+        });
+
+        if let Some(ws_name) = first_workspace {
+            self.workspace_manager.state_mut().focused_workspace = Some(ws_name);
+        }
+    }
+
+    /// Focuses the first window on the focused workspace after initialization.
+    ///
+    /// This ensures that when the app starts, there's always a focused window
+    /// if there are any windows in the focused workspace.
+    pub(super) fn focus_initial_window(&mut self) {
+        // Get the focused workspace
+        let focused_workspace = self.workspace_manager.state().focused_workspace.clone();
+
+        let Some(ws_name) = focused_workspace else {
+            return;
+        };
+
+        // Get the first window in this workspace
+        let window_to_focus = self
+            .workspace_manager
+            .state()
+            .get_workspace(&ws_name)
+            .and_then(|ws| ws.windows.first().copied())
+            .and_then(|wid| self.workspace_manager.state().get_window(wid).cloned());
+
+        // Focus the window
+        if let Some(ref win) = window_to_focus {
+            // Update the focused window in state
+            self.workspace_manager.state_mut().focused_window = Some(win.id);
+
+            // Focus the window using the fast path
+            let _ = window::focus_window_fast(win);
+        }
+    }
+
     /// Hides all windows on workspaces that are not currently focused on their screen.
     pub(super) fn hide_non_focused_workspaces(&mut self) {
         let state = self.workspace_manager.state();
@@ -340,6 +419,11 @@ impl TilingManager {
             for win in all_windows {
                 // Only process windows from apps that belong to this workspace
                 if new_workspace_pids.contains(&win.pid) {
+                    // Skip windows that match ignore rules
+                    if self.should_ignore_window(&win) {
+                        continue;
+                    }
+
                     let window_id = win.id;
 
                     // Add window to state if not already tracked
@@ -366,7 +450,35 @@ impl TilingManager {
 
     /// Hides all applications that have windows in a workspace.
     /// Uses the `AXHidden` attribute (same as Cmd+H).
+    ///
+    /// Note: This is careful not to hide apps that have windows on other focused workspaces
+    /// (i.e., on different screens), since hiding an app hides ALL its windows.
     pub(super) fn hide_workspace_apps(&mut self, workspace_name: &str) -> Result<(), TilingError> {
+        // Get the set of focused workspaces (one per screen)
+        let focused_workspaces: HashSet<String> = self
+            .workspace_manager
+            .state()
+            .focused_workspace_per_screen
+            .values()
+            .cloned()
+            .collect();
+
+        // Collect PIDs that have windows ONLY on non-focused workspaces
+        // If an app has windows on any focused workspace, we must NOT hide it
+        let pids_on_focused_workspaces: HashSet<i32> = {
+            self.workspace_manager
+                .state()
+                .workspaces
+                .iter()
+                .filter(|ws| focused_workspaces.contains(&ws.name))
+                .flat_map(|ws| {
+                    ws.windows.iter().filter_map(|window_id| {
+                        self.workspace_manager.state().get_window(*window_id).map(|w| w.pid)
+                    })
+                })
+                .collect()
+        };
+
         // Collect unique PIDs from windows in this workspace
         let pids_to_hide: HashSet<i32> = {
             let workspace = self
@@ -381,6 +493,8 @@ impl TilingManager {
                 .filter_map(|window_id| {
                     self.workspace_manager.state().get_window(*window_id).map(|w| w.pid)
                 })
+                // Only hide if this PID has no windows on any focused workspace
+                .filter(|pid| !pids_on_focused_workspaces.contains(pid))
                 .collect()
         };
 

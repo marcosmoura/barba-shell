@@ -333,6 +333,56 @@ impl WindowRule {
     }
 }
 
+/// A rule for excluding windows from being tracked by the tiling manager.
+///
+/// Windows matching any ignore rule will not be tracked, tiled, or included
+/// in window queries. Ignore rules have higher priority than workspace rules.
+///
+/// At least one matching criterion should be specified.
+/// Multiple criteria are combined with AND logic.
+///
+/// Example:
+/// ```json
+/// {
+///   "tiling": {
+///     "ignore": [
+///       { "app_id": "com.raycast.macos" },
+///       { "title": "Notes" },
+///       { "class": "SomeUntrackedClass" }
+///     ]
+///   }
+/// }
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct IgnoreRule {
+    /// Match by window title (substring match, case-insensitive).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+
+    /// Match by window class name (substring match).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub class: Option<String>,
+
+    /// Match by application bundle identifier (e.g., "com.raycast.macos").
+    /// Supports both exact match and substring match.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_id: Option<String>,
+
+    /// Match by application name (e.g., "Raycast").
+    /// Supports both exact match and substring match (case-insensitive).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+impl IgnoreRule {
+    /// Returns whether this rule has any matching criteria.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.title.is_none() && self.class.is_none() && self.app_id.is_none() && self.name.is_none()
+    }
+}
+
 // ============================================================================
 // Workspace Configuration
 // ============================================================================
@@ -598,6 +648,12 @@ pub struct TilingConfig {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub rules: Vec<WindowRule>,
 
+    /// Ignore rules for excluding windows from being tracked.
+    /// Windows matching any ignore rule will not be tracked, tiled, or included
+    /// in window queries. Ignore rules have higher priority than workspace rules.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ignore: Vec<IgnoreRule>,
+
     /// Animation configuration.
     pub animations: AnimationConfig,
 }
@@ -615,6 +671,7 @@ impl Default for TilingConfig {
             floating: FloatingConfig::default(),
             master: MasterConfig::default(),
             rules: Vec::new(),
+            ignore: Vec::new(),
             animations: AnimationConfig::default(),
         }
     }
@@ -1235,6 +1292,7 @@ mod tests {
             floating: FloatingConfig::default(),
             master: MasterConfig::default(),
             rules: Vec::new(),
+            ignore: Vec::new(),
             animations: AnimationConfig::Enabled(false),
         };
 

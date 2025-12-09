@@ -251,6 +251,28 @@
         }
       ]
     },
+    "IgnoreRule": {
+      "description": "A rule for excluding windows from being tracked by the tiling manager.\n\nWindows matching any ignore rule will not be tracked, tiled, or included\nin window queries. Ignore rules have higher priority than workspace rules.\n\nAt least one matching criterion should be specified.\nMultiple criteria are combined with AND logic.\n\nExample:\n```json\n{\n  \"tiling\": {\n    \"ignore\": [\n      { \"app_id\": \"com.raycast.macos\" },\n      { \"title\": \"Notes\" },\n      { \"class\": \"SomeUntrackedClass\" }\n    ]\n  }\n}\n```",
+      "type": "object",
+      "properties": {
+        "app-id": {
+          "description": "Match by application bundle identifier (e.g., \"com.raycast.macos\").\nSupports both exact match and substring match.",
+          "type": ["string", "null"]
+        },
+        "class": {
+          "description": "Match by window class name (substring match).",
+          "type": ["string", "null"]
+        },
+        "name": {
+          "description": "Match by application name (e.g., \"Raycast\").\nSupports both exact match and substring match (case-insensitive).",
+          "type": ["string", "null"]
+        },
+        "title": {
+          "description": "Match by window title (substring match, case-insensitive).",
+          "type": ["string", "null"]
+        }
+      }
+    },
     "InnerGaps": {
       "description": "Inner gap configuration (between windows).\n\nCan be a uniform value or separate horizontal/vertical values.",
       "anyOf": [
@@ -277,10 +299,7 @@
               "minimum": 0
             }
           },
-          "required": [
-            "horizontal",
-            "vertical"
-          ]
+          "required": ["horizontal", "vertical"]
         }
       ]
     },
@@ -387,12 +406,7 @@
               "minimum": 0
             }
           },
-          "required": [
-            "top",
-            "right",
-            "bottom",
-            "left"
-          ]
+          "required": ["top", "right", "bottom", "left"]
         }
       ]
     },
@@ -412,10 +426,7 @@
         },
         "screen": {
           "description": "The screen this configuration applies to.\nUse \"main\" for the primary screen, or the screen name/identifier.\nIf not specified, applies to all screens.",
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": ["string", "null"]
         }
       }
     },
@@ -486,6 +497,13 @@
           "default": {
             "inner": 0,
             "outer": 0
+          }
+        },
+        "ignore": {
+          "description": "Ignore rules for excluding windows from being tracked.\nWindows matching any ignore rule will not be tracked, tiled, or included\nin window queries. Ignore rules have higher priority than workspace rules.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/IgnoreRule"
           }
         },
         "master": {
@@ -594,38 +612,23 @@
       "properties": {
         "app-id": {
           "description": "Match by application bundle identifier (e.g., \"com.apple.Safari\").\nSupports both exact match and substring match.",
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": ["string", "null"]
         },
         "class": {
           "description": "Match by window class name (substring match).",
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": ["string", "null"]
         },
         "name": {
           "description": "Match by application name (e.g., \"Safari\").\nSupports both exact match and substring match (case-insensitive).",
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": ["string", "null"]
         },
         "title": {
           "description": "Match by window title (substring match, case-insensitive).",
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": ["string", "null"]
         },
         "workspace": {
           "description": "Target workspace for global rules.\nThis field is only used when the rule is defined in `TilingConfig.rules`.\nFor per-workspace rules, this field is ignored.",
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": ["string", "null"]
         }
       }
     },
@@ -645,10 +648,7 @@
         },
         "preset-on-open": {
           "description": "Name of a floating preset to automatically apply when a window is opened in this workspace.\nOnly applies when the workspace layout is set to floating.",
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": ["string", "null"]
         },
         "rules": {
           "description": "Window rules for automatically assigning windows to this workspace.",

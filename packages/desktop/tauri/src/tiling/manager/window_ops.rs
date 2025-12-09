@@ -143,6 +143,11 @@ impl TilingManager {
                 continue;
             }
 
+            // Skip windows that match ignore rules (higher priority than workspace rules)
+            if self.should_ignore_window(&win) {
+                continue;
+            }
+
             // Skip if already tracked
             if self.workspace_manager.state().windows.contains_key(&win.id) {
                 continue;

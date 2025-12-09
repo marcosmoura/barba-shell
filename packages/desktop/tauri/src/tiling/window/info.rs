@@ -52,6 +52,29 @@ const EXCLUDED_APPS: &[&str] = &[
 /// Gets all visible windows on screen.
 pub fn get_all_windows() -> WindowResult<Vec<ManagedWindow>> { get_windows_with_options(true) }
 
+/// Gets the PID of the frontmost (focused) application.
+/// This captures just the PID without needing to query window details,
+/// which is useful to capture focus state before operations that might change it.
+pub fn get_frontmost_app_pid() -> Option<i32> {
+    use objc2_app_kit::NSWorkspace;
+
+    use crate::tiling::accessibility::AccessibilityElement;
+
+    // Try using system-wide element to get the focused application
+    let system_element = AccessibilityElement::system_wide();
+    if let Ok(app_element) = system_element
+        .get_element_attribute(crate::tiling::accessibility::attributes::FOCUSED_APPLICATION)
+        && let Ok(pid) = app_element.pid()
+        && pid > 0
+    {
+        return Some(pid);
+    }
+
+    // Fallback to NSWorkspace
+    let workspace = NSWorkspace::sharedWorkspace();
+    workspace.frontmostApplication().map(|app| app.processIdentifier())
+}
+
 /// Gets all windows including hidden/off-screen ones.
 /// This is useful after unhiding apps when their windows may not yet be "on screen".
 pub fn get_all_windows_including_hidden() -> WindowResult<Vec<ManagedWindow>> {

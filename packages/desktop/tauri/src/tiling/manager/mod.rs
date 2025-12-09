@@ -52,6 +52,10 @@ impl TilingManager {
     ///
     /// Returns an error if initialization fails.
     pub fn new(config: &TilingConfig, app_handle: Option<AppHandle>) -> Result<Self, TilingError> {
+        // IMPORTANT: Capture the focused app BEFORE we do anything that might change focus
+        // (like unhiding apps). We'll use this to determine which workspace should be focused.
+        let initial_focused_pid = window::get_frontmost_app_pid();
+
         let mut workspace_manager = workspace::WorkspaceManager::new(config.clone());
         workspace_manager.initialize()?;
 
@@ -62,17 +66,26 @@ impl TilingManager {
             app_handle,
         };
 
-        // Discover existing windows and assign them to workspaces
+        // Discover existing windows and assign them to workspaces.
+        // This unhides all apps first, then discovers all their windows.
         manager.discover_and_assign_windows();
 
         // Update focused workspace per screen to match where windows actually are
         manager.sync_focused_workspaces_with_windows();
 
-        // Hide windows on non-focused workspaces
+        // Determine the initially focused workspace based on the captured focused app PID
+        manager.initialize_focus_state_from_pid(initial_focused_pid);
+
+        // Hide windows on non-focused workspaces (on each screen).
+        // This is safe because hide_workspace_apps is careful not to hide apps
+        // that also have windows on focused workspaces (e.g., on other screens).
         manager.hide_non_focused_workspaces();
 
-        // Apply layouts to all workspaces
+        // Apply layouts to all focused workspaces
         manager.apply_all_layouts();
+
+        // Focus the first window on the focused workspace
+        manager.focus_initial_window();
 
         Ok(manager)
     }
@@ -134,6 +147,11 @@ impl TilingManager {
 
         // Skip dialogs, sheets, and other non-tileable window types
         if window::is_dialog_or_sheet(&win) {
+            return;
+        }
+
+        // Skip windows that match ignore rules (higher priority than workspace rules)
+        if self.should_ignore_window(&win) {
             return;
         }
 

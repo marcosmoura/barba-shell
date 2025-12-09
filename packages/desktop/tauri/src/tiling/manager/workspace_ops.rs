@@ -303,8 +303,8 @@ impl TilingManager {
         });
 
         // Get the window info while we still have access to state
-        let focus_window_info = window_to_focus
-            .and_then(|wid| self.workspace_manager.state().get_window(wid).cloned());
+        let focus_window_info =
+            window_to_focus.and_then(|wid| self.workspace_manager.state().get_window(wid).cloned());
 
         // First: unhide all new workspace apps, then hide old workspace apps
         // Wait for all to complete before proceeding

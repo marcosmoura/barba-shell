@@ -4,6 +4,8 @@
 //! `CVDisplayLink` for display-synced updates, ensuring smooth 60Hz/120Hz
 //! animations without jank.
 
+#![allow(clippy::significant_drop_tightening)]
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -60,6 +62,7 @@ impl WindowAnimation {
 
     /// Returns the progress of the animation from 0.0 to 1.0.
     #[must_use]
+    #[allow(clippy::cast_precision_loss)]
     pub fn progress(&self) -> f64 {
         if self.duration_ms == 0 {
             return 1.0;
@@ -106,7 +109,7 @@ impl AnimationState {
     }
 }
 
-/// Manages all active window animations using CVDisplayLink.
+/// Manages all active window animations using `CVDisplayLink`.
 pub struct AnimationManager {
     /// Current animation configuration.
     config: AnimationConfig,
@@ -177,9 +180,7 @@ impl AnimationManager {
 
         // Get the starting frame: use previous animation's target if exists,
         // otherwise query the actual window position.
-        let start_frame = if let Some(frame) = self.get_start_frame_for_animation(window_id) {
-            frame
-        } else {
+        let Some(start_frame) = self.get_start_frame_for_animation(window_id) else {
             // Can't get current frame, apply immediately
             let _ = window::set_window_frame(window_id, &target_frame);
             return;
@@ -223,9 +224,7 @@ impl AnimationManager {
         for (window_id, target_frame) in targets {
             // Get the starting frame: use previous animation's target if exists,
             // otherwise query the actual window position.
-            let start_frame = if let Some(frame) = self.get_start_frame_for_animation(window_id) {
-                frame
-            } else {
+            let Some(start_frame) = self.get_start_frame_for_animation(window_id) else {
                 // Can't get current frame, apply immediately
                 let _ = window::set_window_frame(window_id, &target_frame);
                 continue;
@@ -256,7 +255,7 @@ impl AnimationManager {
         }
     }
 
-    /// Starts the animation loop using CVDisplayLink.
+    /// Starts the animation loop using `CVDisplayLink`.
     fn start_animation_loop(&mut self) {
         // Don't start if already running
         if self.running.swap(true, Ordering::SeqCst) {
@@ -329,8 +328,8 @@ impl AnimationManager {
         should_continue
     }
 
-    /// Fallback animation loop using thread sleep (if CVDisplayLink unavailable).
-    fn tick_animations_fallback(&mut self) {
+    /// Fallback animation loop using thread sleep (if `CVDisplayLink` unavailable).
+    fn tick_animations_fallback(&self) {
         use std::time::Duration;
 
         // Use a tight loop with short sleeps for smooth animation

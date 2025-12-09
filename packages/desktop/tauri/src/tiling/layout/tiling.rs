@@ -18,6 +18,9 @@
 //! +-------+---+---+
 //! ```
 
+#![allow(clippy::cast_possible_wrap)]
+#![allow(clippy::cast_possible_truncation)]
+
 use super::traits::{Layout, LayoutContext, LayoutResult, LayoutWindow, WindowLayout};
 use crate::tiling::state::WindowFrame;
 

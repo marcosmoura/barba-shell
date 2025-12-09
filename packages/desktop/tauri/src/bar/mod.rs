@@ -15,9 +15,7 @@ pub fn init(app: &App) {
     window::set_window_position(&webview_window);
 
     let webview_watcher_clone = webview_window.clone();
-    screen::init_screen_watcher(move || {
-        window::set_window_position(&webview_watcher_clone);
-    });
+    screen::init_screen_watcher(move || window::set_window_position(&webview_watcher_clone));
 
     menubar::start_menu_bar_visibility_watcher(&webview_window);
 
@@ -25,6 +23,7 @@ pub fn init(app: &App) {
     components::init(&webview_window);
 
     // Make the app not appear in the dock
+    #[cfg(not(debug_assertions))]
     let _ = app_handle.set_activation_policy(tauri::ActivationPolicy::Prohibited);
     let _ = webview_window.show();
 

@@ -3,6 +3,8 @@
 //! This module handles workspace switching, showing/hiding apps,
 //! and moving workspaces between screens.
 
+#![allow(clippy::assigning_clones)]
+
 use std::collections::HashSet;
 
 use super::{TilingManager, mark_switch_completed};
@@ -242,6 +244,15 @@ impl TilingManager {
             .get(&target_screen_id)
             .cloned();
 
+        // Track the previous global focus for screen change detection
+        let previous_global_workspace = self.workspace_manager.state().focused_workspace.clone();
+        let previous_screen_id = previous_global_workspace.as_ref().and_then(|ws_name| {
+            self.workspace_manager
+                .state()
+                .get_workspace(ws_name)
+                .map(|ws| ws.screen.clone())
+        });
+
         // Note: We intentionally don't skip when switching to the same workspace.
         // This ensures windows are always visible and focused, handling cases where
         // the state may be out of sync with reality (e.g., after app restart).
@@ -265,7 +276,35 @@ impl TilingManager {
         self.workspace_manager
             .state_mut()
             .focused_workspace_per_screen
-            .insert(target_screen_id, workspace_name.to_string());
+            .insert(target_screen_id.clone(), workspace_name.to_string());
+
+        // Emit workspace focused event
+        self.emit_workspaces_changed();
+
+        // Check if screen focus changed
+        if previous_screen_id.as_deref() != Some(&target_screen_id) {
+            let is_main = self
+                .workspace_manager
+                .state()
+                .screens
+                .iter()
+                .find(|s| s.id == target_screen_id)
+                .is_some_and(|s| s.is_main);
+            self.emit_screen_focused(&target_screen_id, is_main, previous_screen_id.as_deref());
+        }
+
+        // Determine which window to focus BEFORE doing any slow operations
+        // This allows us to focus immediately after unhiding
+        let window_to_focus = focus_window_id.or_else(|| {
+            self.workspace_manager
+                .state()
+                .get_workspace(workspace_name)
+                .and_then(|ws| ws.windows.first().copied())
+        });
+
+        // Get the window info while we still have access to state
+        let focus_window_info = window_to_focus
+            .and_then(|wid| self.workspace_manager.state().get_window(wid).cloned());
 
         // First: unhide all new workspace apps, then hide old workspace apps
         // Wait for all to complete before proceeding
@@ -285,6 +324,13 @@ impl TilingManager {
             }
         });
 
+        // Focus the window IMMEDIATELY after unhiding, before slow discovery operations
+        // This makes the workspace switch feel instant to the user
+        if let Some(ref window) = focus_window_info {
+            let _ = window::focus_window_fast(window);
+        }
+
+        // Now do the slower discovery work in the background-style (still blocking but less critical)
         // After unhiding apps, give macOS a moment to register windows, then discover them
         std::thread::sleep(std::time::Duration::from_millis(20));
 
@@ -314,20 +360,6 @@ impl TilingManager {
 
         // Apply layout now that we have discovered windows
         let _ = self.apply_layout(workspace_name);
-
-        // Focus the requested window, or fall back to the first window in the workspace
-        // When switching due to Cmd+Tab, focus_window_id contains the window the user
-        // actually Cmd+Tab'd to, so we focus that instead of the first in layout order
-        let window_to_focus = focus_window_id.or_else(|| {
-            self.workspace_manager
-                .state()
-                .get_workspace(workspace_name)
-                .and_then(|ws| ws.windows.first().copied())
-        });
-
-        if let Some(window_id) = window_to_focus {
-            let _ = window::focus_window(window_id);
-        }
 
         Ok(())
     }

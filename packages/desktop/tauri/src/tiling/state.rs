@@ -5,10 +5,11 @@
 
 use std::collections::HashMap;
 
-use barba_shared::{LayoutMode, ScreenInfo, WindowInfo, WorkspaceInfo};
+use barba_shared::{FocusedAppInfo, LayoutMode, ScreenInfo, WindowInfo, WorkspaceInfo};
 
 /// A managed window tracked by the tiling manager.
 #[derive(Debug, Clone)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct ManagedWindow {
     /// Unique window identifier (`CGWindowID`).
     pub id: u64,
@@ -154,9 +155,16 @@ impl Workspace {
 
     /// Converts to the shared `WorkspaceInfo` type for CLI output.
     ///
-    /// Takes the screens list to resolve screen ID to a human-readable name.
+    /// Takes the screens list to resolve screen ID to a human-readable name,
+    /// the windows map to find the focused app, and the focused window ID.
     #[must_use]
-    pub fn to_info(&self, is_focused: bool, screens: &[Screen]) -> WorkspaceInfo {
+    pub fn to_info(
+        &self,
+        is_focused: bool,
+        screens: &[Screen],
+        windows: &HashMap<u64, ManagedWindow>,
+        focused_window_id: Option<u64>,
+    ) -> WorkspaceInfo {
         // Look up the screen name from the screen ID
         let screen_name = screens.iter().find(|s| s.id == self.screen).map_or_else(
             || self.screen.clone(),
@@ -171,12 +179,39 @@ impl Workspace {
             },
         );
 
+        // Find the focused app in this workspace
+        // If the globally focused window is in this workspace, use that app.
+        // Otherwise, fall back to the first window in the workspace.
+        let focused_app = focused_window_id
+            .filter(|&wid| self.windows.contains(&wid))
+            .and_then(|wid| windows.get(&wid))
+            .or_else(|| {
+                // Fall back to first window in workspace if no focused window here
+                self.windows.first().and_then(|wid| windows.get(wid))
+            })
+            .map(|target_win| {
+                // Count windows from this app in the workspace
+                let window_count = self
+                    .windows
+                    .iter()
+                    .filter_map(|wid| windows.get(wid))
+                    .filter(|w| w.bundle_id == target_win.bundle_id)
+                    .count();
+
+                FocusedAppInfo {
+                    name: target_win.app_name.clone(),
+                    app_id: target_win.bundle_id.clone().unwrap_or_default(),
+                    window_count,
+                }
+            });
+
         WorkspaceInfo {
             name: self.name.clone(),
             layout: self.layout.clone(),
             screen: screen_name,
             is_focused,
             window_count: self.windows.len(),
+            focused_app,
         }
     }
 }
@@ -318,6 +353,7 @@ impl TilingState {
     /// - `up`: Screen with center above source center
     /// - `down`: Screen with center below source center
     #[must_use]
+    #[allow(clippy::cast_possible_wrap)]
     pub fn get_screen_in_direction(
         &self,
         source_screen_id: &str,
@@ -383,13 +419,9 @@ impl TilingState {
                     None
                 }
             }
-            "left" | "right" | "up" | "down" => {
-                if let Some(current_id) = current_screen_id {
-                    self.get_screen_in_direction(current_id, target).map(|s| s.id.clone())
-                } else {
-                    None
-                }
-            }
+            "left" | "right" | "up" | "down" => current_screen_id
+                .and_then(|current_id| self.get_screen_in_direction(current_id, target))
+                .map(|s| s.id.clone()),
             _ => {
                 // Try to find by name or ID
                 self.screens
@@ -456,7 +488,7 @@ mod tests {
         ws.windows.push(1);
         ws.windows.push(2);
 
-        let info = ws.to_info(true, &screens);
+        let info = ws.to_info(true, &screens, &std::collections::HashMap::new(), None);
         assert_eq!(info.name, "coding");
         assert_eq!(info.layout, LayoutMode::Master);
         assert_eq!(info.screen, "main");
@@ -484,7 +516,7 @@ mod tests {
         ];
 
         let ws = Workspace::new("2".to_string(), LayoutMode::Floating, "secondary-id".to_string());
-        let info = ws.to_info(false, &screens);
+        let info = ws.to_info(false, &screens, &std::collections::HashMap::new(), None);
         assert_eq!(info.screen, "secondary");
         assert!(!info.is_focused);
     }

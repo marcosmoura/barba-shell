@@ -5,6 +5,7 @@
 
 pub mod accessibility;
 pub mod animation;
+pub mod commands;
 pub mod error;
 pub mod layout;
 pub mod manager;

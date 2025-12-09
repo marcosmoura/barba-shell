@@ -87,7 +87,7 @@ struct DisplayLinkContext {
 /// Manages a `CVDisplayLink` for display-synced animation callbacks.
 pub struct DisplayLink {
     /// The native display link reference.
-    display_link: CVDisplayLinkRef,
+    link: CVDisplayLinkRef,
     /// Context holding the callback.
     context: *mut DisplayLinkContext,
     /// Whether the display link is running.
@@ -104,17 +104,17 @@ impl DisplayLink {
     /// Returns `None` if the display link cannot be created.
     #[must_use]
     pub fn new() -> Option<Self> {
-        let mut display_link: CVDisplayLinkRef = std::ptr::null_mut();
+        let mut link: CVDisplayLinkRef = std::ptr::null_mut();
 
         // Safety: We're calling a C function that initializes the pointer
-        let result = unsafe { CVDisplayLinkCreateWithActiveCGDisplays(&mut display_link) };
+        let result = unsafe { CVDisplayLinkCreateWithActiveCGDisplays(&raw mut link) };
 
-        if result != K_CV_RETURN_SUCCESS || display_link.is_null() {
+        if result != K_CV_RETURN_SUCCESS || link.is_null() {
             return None;
         }
 
         Some(Self {
-            display_link,
+            link,
             context: std::ptr::null_mut(),
             running: Arc::new(AtomicBool::new(false)),
         })
@@ -141,11 +141,7 @@ impl DisplayLink {
 
         // Safety: Setting up the callback with our context
         let result = unsafe {
-            CVDisplayLinkSetOutputCallback(
-                self.display_link,
-                display_link_callback,
-                self.context.cast(),
-            )
+            CVDisplayLinkSetOutputCallback(self.link, display_link_callback, self.context.cast())
         };
 
         if result != K_CV_RETURN_SUCCESS {
@@ -158,7 +154,7 @@ impl DisplayLink {
         }
 
         // Safety: Starting the display link
-        let result = unsafe { CVDisplayLinkStart(self.display_link) };
+        let result = unsafe { CVDisplayLinkStart(self.link) };
 
         if result != K_CV_RETURN_SUCCESS {
             // Clean up the context
@@ -189,7 +185,7 @@ impl DisplayLink {
 
         // Safety: Stopping the display link
         unsafe {
-            CVDisplayLinkStop(self.display_link);
+            CVDisplayLinkStop(self.link);
         }
 
         // Clean up the context
@@ -215,9 +211,9 @@ impl Drop for DisplayLink {
         self.stop();
 
         // Safety: Releasing the display link
-        if !self.display_link.is_null() {
+        if !self.link.is_null() {
             unsafe {
-                CVDisplayLinkRelease(self.display_link);
+                CVDisplayLinkRelease(self.link);
             }
         }
     }

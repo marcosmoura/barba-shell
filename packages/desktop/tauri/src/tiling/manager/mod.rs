@@ -8,6 +8,8 @@
 //! - `workspace_ops`: Workspace switching, visibility, screen operations
 //! - `window_ops`: Window focus, move, and send operations
 
+#![allow(clippy::assigning_clones)]
+
 mod discovery;
 mod layout_ops;
 mod window_ops;
@@ -18,10 +20,12 @@ use std::sync::OnceLock;
 
 use barba_shared::TilingConfig;
 use parking_lot::RwLock;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
 use super::error::TilingError;
-use super::observer::{is_in_switch_cooldown, mark_layout_applied, mark_switch_completed};
+use super::observer::{
+    ScreenFocusedPayload, events, is_in_switch_cooldown, mark_layout_applied, mark_switch_completed,
+};
 use super::{accessibility, window, workspace};
 use crate::config;
 
@@ -36,6 +40,9 @@ pub struct TilingManager {
     /// Persistent mapping of workspace name → PIDs.
     /// This survives across workspace switches even when window IDs change.
     workspace_pids: HashMap<String, HashSet<i32>>,
+
+    /// App handle for emitting events to the frontend.
+    app_handle: Option<AppHandle>,
 }
 
 impl TilingManager {
@@ -44,7 +51,7 @@ impl TilingManager {
     /// # Errors
     ///
     /// Returns an error if initialization fails.
-    pub fn new(config: &TilingConfig) -> Result<Self, TilingError> {
+    pub fn new(config: &TilingConfig, app_handle: Option<AppHandle>) -> Result<Self, TilingError> {
         let mut workspace_manager = workspace::WorkspaceManager::new(config.clone());
         workspace_manager.initialize()?;
 
@@ -52,6 +59,7 @@ impl TilingManager {
             workspace_manager,
             config: config.clone(),
             workspace_pids: HashMap::new(),
+            app_handle,
         };
 
         // Discover existing windows and assign them to workspaces
@@ -67,6 +75,41 @@ impl TilingManager {
         manager.apply_all_layouts();
 
         Ok(manager)
+    }
+
+    /// Emits a workspaces changed event to the frontend.
+    pub fn emit_workspaces_changed(&self) {
+        if let Some(ref app_handle) = self.app_handle {
+            let state = self.workspace_manager.state();
+            let focused_workspace = state.focused_workspace.as_deref();
+            let focused_window = state.focused_window;
+
+            let workspaces: Vec<barba_shared::WorkspaceInfo> = state
+                .workspaces
+                .iter()
+                .map(|ws| {
+                    ws.to_info(
+                        focused_workspace == Some(&ws.name),
+                        &state.screens,
+                        &state.windows,
+                        focused_window,
+                    )
+                })
+                .collect();
+
+            let _ = app_handle.emit(events::WORKSPACES_CHANGED, workspaces);
+        }
+    }
+
+    /// Emits a screen focused event to the frontend.
+    pub fn emit_screen_focused(&self, screen: &str, is_main: bool, previous_screen: Option<&str>) {
+        if let Some(ref app_handle) = self.app_handle {
+            let _ = app_handle.emit(events::SCREEN_FOCUSED, ScreenFocusedPayload {
+                screen: screen.to_string(),
+                is_main,
+                previous_screen: previous_screen.map(ToString::to_string),
+            });
+        }
     }
 
     /// Handles a new window appearing.
@@ -85,9 +128,8 @@ impl TilingManager {
         }
 
         // Get the window info
-        let win = match window::get_window_by_id(window_id) {
-            Ok(w) => w,
-            Err(_) => return,
+        let Ok(win) = window::get_window_by_id(window_id) else {
+            return;
         };
 
         // Skip dialogs, sheets, and other non-tileable window types
@@ -96,9 +138,8 @@ impl TilingManager {
         }
 
         // Find which workspace this window belongs to
-        let workspace_name = match self.find_workspace_for_window(&win) {
-            Some(name) => name,
-            None => return,
+        let Some(workspace_name) = self.find_workspace_for_window(&win) else {
+            return;
         };
 
         // Track PID for this workspace (persists even when window IDs change)
@@ -150,6 +191,9 @@ impl TilingManager {
         if is_workspace_focused {
             let _ = self.apply_layout(&workspace_name);
         }
+
+        // Notify frontend about the new window
+        self.emit_workspaces_changed();
     }
 
     /// Handles a window being destroyed.
@@ -183,6 +227,9 @@ impl TilingManager {
         if let Some(ws_name) = workspace_name {
             let _ = self.apply_layout(&ws_name);
         }
+
+        // Notify frontend about the window removal
+        self.emit_workspaces_changed();
     }
 
     /// Handles a screen configuration change (display added/removed/changed).
@@ -200,6 +247,8 @@ impl TilingManager {
 
         // Apply layouts to all focused workspaces
         self.apply_all_layouts();
+
+        self.emit_workspaces_changed();
     }
 }
 
@@ -224,7 +273,7 @@ pub fn init(app_handle: &AppHandle) {
     }
 
     // Validate configuration and log any warnings/errors
-    config.tiling.validate_and_log();
+    let _ = config.tiling.validate_and_log();
 
     // Check accessibility permissions
     if !accessibility::is_accessibility_enabled() {
@@ -235,7 +284,7 @@ pub fn init(app_handle: &AppHandle) {
     super::animation::init(&config.tiling.animations);
 
     // Initialize the manager
-    let manager = match TilingManager::new(&config.tiling) {
+    let manager = match TilingManager::new(&config.tiling, Some(app_handle.clone())) {
         Ok(m) => m,
         Err(e) => {
             eprintln!("barba: failed to initialize tiling window manager: {e}");

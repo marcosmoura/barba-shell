@@ -2,6 +2,8 @@
 //!
 //! This module defines the interface that all layout algorithms must implement.
 
+#![allow(clippy::cast_possible_wrap)]
+
 use barba_shared::{GapsConfig, InnerGaps, OuterGaps, ScreenGaps};
 
 use crate::tiling::error::TilingError;

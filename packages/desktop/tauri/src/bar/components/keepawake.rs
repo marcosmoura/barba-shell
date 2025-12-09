@@ -28,9 +28,7 @@ fn emit_keep_awake_changed(
     app_handle: &tauri::AppHandle,
     payload: KeepAwakeChangedPayload,
 ) -> Result<(), String> {
-    app_handle
-        .emit("tauri_keep_awake_changed", payload)
-        .map_err(|err| err.to_string())
+    app_handle.emit("keep_awake_changed", payload).map_err(|err| err.to_string())
 }
 
 #[derive(Default)]
@@ -183,7 +181,7 @@ fn apply_lock_state(app_handle: &tauri::AppHandle, locked: bool) {
     match payload {
         Ok(payload) => {
             if let Err(err) = emit_keep_awake_changed(app_handle, payload) {
-                eprintln!("Failed to emit tauri_keep_awake_changed: {err}");
+                eprintln!("Failed to emit keep_awake_changed: {err}");
             }
         }
         Err(err) => eprintln!("Failed to update keep awake state: {err}"),

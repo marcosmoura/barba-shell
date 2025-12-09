@@ -61,10 +61,7 @@ pub fn animate_windows(targets: Vec<(u64, WindowFrame)>) {
 /// Returns 0 if animations are disabled or not initialized.
 #[must_use]
 pub fn get_duration_ms() -> u64 {
-    ANIMATION_MANAGER
-        .get()
-        .map(|m| u64::from(m.read().settings().duration))
-        .unwrap_or(0)
+    ANIMATION_MANAGER.get().map_or(0, |m| u64::from(m.read().settings().duration))
 }
 
 /// Converts the shared easing function to the internal easing type.

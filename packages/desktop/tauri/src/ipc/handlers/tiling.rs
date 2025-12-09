@@ -88,9 +88,7 @@ struct WindowSendToWorkspaceData {
     focus: bool,
 }
 
-fn default_true() -> bool {
-    true
-}
+const fn default_true() -> bool { true }
 
 /// Data for window send to screen command.
 #[derive(Deserialize)]
@@ -136,6 +134,7 @@ pub fn handle_query_screens(stream: &mut UnixStream) {
 /// Handles the tiling-query-workspaces command.
 ///
 /// Returns JSON array of workspace information, optionally filtered.
+#[allow(clippy::significant_drop_tightening)]
 pub fn handle_query_workspaces(stream: &mut UnixStream, data: Option<&str>) {
     let Some(manager_lock) = tiling::try_get_manager() else {
         write_json_response(stream, "[]");
@@ -178,6 +177,8 @@ pub fn handle_query_workspaces(stream: &mut UnixStream, data: Option<&str>) {
             ws.to_info(
                 state.focused_workspace.as_ref() == Some(&ws.name),
                 &state.screens,
+                &state.windows,
+                state.focused_window,
             )
         })
         .collect();
@@ -189,6 +190,7 @@ pub fn handle_query_workspaces(stream: &mut UnixStream, data: Option<&str>) {
 /// Handles the tiling-query-windows command.
 ///
 /// Returns JSON array of window information, optionally filtered.
+#[allow(clippy::significant_drop_tightening)]
 pub fn handle_query_windows(stream: &mut UnixStream, data: Option<&str>) {
     let Some(manager_lock) = tiling::try_get_manager() else {
         write_json_response(stream, "[]");
@@ -457,7 +459,9 @@ pub fn handle_window_send_to_workspace(data: &str) {
     };
     let mut manager = manager_lock.write();
 
-    if let Err(err) = manager.send_window_to_workspace_with_options(&send_data.workspace, send_data.focus) {
+    if let Err(err) =
+        manager.send_window_to_workspace_with_options(&send_data.workspace, send_data.focus)
+    {
         eprintln!("barba: send window to workspace error: {err:?}");
     }
 }

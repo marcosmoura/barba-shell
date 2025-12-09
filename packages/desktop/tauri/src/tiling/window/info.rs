@@ -108,14 +108,13 @@ pub fn get_window_by_id(window_id: u64) -> WindowResult<ManagedWindow> {
 /// Gets the currently focused window using the Accessibility API.
 /// This uses the system-wide focused application and `AXFocusedWindow`
 /// to get the actual focused window.
-#[allow(deprecated)]
+#[allow(clippy::items_after_statements)]
 pub fn get_focused_window() -> WindowResult<ManagedWindow> {
     if !is_accessibility_enabled() {
         return Err(TilingError::AccessibilityNotAuthorized);
     }
 
-    use cocoa::base::nil;
-    use objc::{class, msg_send, sel, sel_impl};
+    use objc2_app_kit::NSWorkspace;
 
     use crate::tiling::accessibility::AccessibilityElement;
 
@@ -123,27 +122,20 @@ pub fn get_focused_window() -> WindowResult<ManagedWindow> {
     // This is more reliable for multi-monitor setups
     let frontmost_pid: i32 = {
         let system_element = AccessibilityElement::system_wide();
-        if let Ok(app_element) = system_element
+        system_element
             .get_element_attribute(crate::tiling::accessibility::attributes::FOCUSED_APPLICATION)
-        {
-            app_element.pid().unwrap_or(-1)
-        } else {
-            -1
-        }
+            .map_or(-1, |app_element| app_element.pid().unwrap_or(-1))
     };
 
     // Fallback to NSWorkspace if system-wide approach failed
     let frontmost_pid = if frontmost_pid > 0 {
         frontmost_pid
     } else {
-        unsafe {
-            let workspace: cocoa::base::id = msg_send![class!(NSWorkspace), sharedWorkspace];
-            let frontmost_app: cocoa::base::id = msg_send![workspace, frontmostApplication];
-            if frontmost_app == nil {
-                return Err(TilingError::WindowNotFound(0));
-            }
-            msg_send![frontmost_app, processIdentifier]
-        }
+        let workspace = NSWorkspace::sharedWorkspace();
+        let Some(frontmost_app) = workspace.frontmostApplication() else {
+            return Err(TilingError::WindowNotFound(0));
+        };
+        frontmost_app.processIdentifier()
     };
 
     // Use Accessibility API to get the actual focused window of this app
@@ -187,6 +179,7 @@ fn parse_window_dict(dict: &CFDictionary<CFString, CFType>) -> Option<ManagedWin
     let window_id = get_number_value(dict, keys::WINDOW_NUMBER)?;
 
     // Get PID
+    #[allow(clippy::cast_possible_truncation)]
     let pid = get_number_value(dict, keys::WINDOW_OWNER_PID)? as i32;
 
     // Get layer - include normal windows (layer 0) and floating panels (layer 3)
@@ -346,11 +339,8 @@ fn get_number_value(dict: &CFDictionary<CFString, CFType>, key: &str) -> Option<
 
     dict.find(&key_cf).and_then(|value| {
         // Try to cast to CFNumber
-        if let Some(num) = value.downcast::<CFNumber>() {
-            num.to_i64().map(|n| n as u64)
-        } else {
-            None
-        }
+        #[allow(clippy::cast_sign_loss)]
+        value.downcast::<CFNumber>().and_then(|num| num.to_i64().map(|n| n as u64))
     })
 }
 
@@ -387,7 +377,7 @@ fn get_bounds(dict: &CFDictionary<CFString, CFType>) -> Option<WindowFrame> {
             unsafe { CGRectMakeWithDictionaryRepresentation(dict_ref.cast(), &raw mut rect) };
 
         if success {
-            #[allow(clippy::cast_possible_truncation)]
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             Some(WindowFrame::new(
                 rect.origin.x as i32,
                 rect.origin.y as i32,
@@ -401,33 +391,14 @@ fn get_bounds(dict: &CFDictionary<CFString, CFType>) -> Option<WindowFrame> {
 }
 
 /// Gets the bundle identifier for a process.
-#[allow(deprecated)]
 pub fn get_bundle_id_for_pid(pid: i32) -> Option<String> {
     // Use NSRunningApplication to get bundle ID
     // This requires linking with AppKit, which Tauri already does
-    use cocoa::base::nil;
-    use objc::{class, msg_send, sel, sel_impl};
+    use objc2_app_kit::NSRunningApplication;
 
-    unsafe {
-        let app: cocoa::base::id =
-            msg_send![class!(NSRunningApplication), runningApplicationWithProcessIdentifier: pid];
-
-        if app == nil {
-            return None;
-        }
-
-        let bundle_id: cocoa::base::id = msg_send![app, bundleIdentifier];
-        if bundle_id == nil {
-            return None;
-        }
-
-        let bytes: *const std::os::raw::c_char = msg_send![bundle_id, UTF8String];
-        if bytes.is_null() {
-            return None;
-        }
-
-        Some(std::ffi::CStr::from_ptr(bytes).to_string_lossy().into_owned())
-    }
+    let app = NSRunningApplication::runningApplicationWithProcessIdentifier(pid)?;
+    let bundle_id = app.bundleIdentifier()?;
+    Some(bundle_id.to_string())
 }
 
 /// Represents a running application.
@@ -439,57 +410,30 @@ pub struct RunningApp {
 
 /// Gets all running applications (including hidden ones).
 /// This uses NSWorkspace.runningApplications which includes hidden apps.
-#[allow(deprecated)]
 pub fn get_all_running_apps() -> Vec<RunningApp> {
-    use cocoa::base::nil;
-    use objc::{class, msg_send, sel, sel_impl};
+    use objc2_app_kit::NSWorkspace;
 
     let mut apps = Vec::new();
 
-    unsafe {
-        let workspace: cocoa::base::id = msg_send![class!(NSWorkspace), sharedWorkspace];
-        let running_apps: cocoa::base::id = msg_send![workspace, runningApplications];
-        let count: usize = msg_send![running_apps, count];
+    let workspace = NSWorkspace::sharedWorkspace();
+    let running_apps = workspace.runningApplications();
 
-        for i in 0..count {
-            let app: cocoa::base::id = msg_send![running_apps, objectAtIndex: i];
+    for app in running_apps {
+        // Get PID
+        let pid = app.processIdentifier();
 
-            // Get PID
-            let pid: i32 = msg_send![app, processIdentifier];
+        // Get bundle ID
+        let bundle_id = app.bundleIdentifier().map(|s| s.to_string());
 
-            // Get bundle ID
-            let bundle_id_obj: cocoa::base::id = msg_send![app, bundleIdentifier];
-            let bundle_id = if bundle_id_obj == nil {
-                None
-            } else {
-                let bytes: *const std::os::raw::c_char = msg_send![bundle_id_obj, UTF8String];
-                if bytes.is_null() {
-                    None
-                } else {
-                    Some(std::ffi::CStr::from_ptr(bytes).to_string_lossy().into_owned())
-                }
-            };
+        // Get localized name
+        let name = app.localizedName().map_or(String::new(), |s| s.to_string());
 
-            // Get localized name
-            let name_obj: cocoa::base::id = msg_send![app, localizedName];
-            let name = if name_obj == nil {
-                String::new()
-            } else {
-                let bytes: *const std::os::raw::c_char = msg_send![name_obj, UTF8String];
-                if bytes.is_null() {
-                    String::new()
-                } else {
-                    std::ffi::CStr::from_ptr(bytes).to_string_lossy().into_owned()
-                }
-            };
-
-            // Skip excluded apps
-            if EXCLUDED_APPS.iter().any(|&excluded| name == excluded) {
-                continue;
-            }
-
-            apps.push(RunningApp { pid, bundle_id, name });
+        // Skip excluded apps
+        if EXCLUDED_APPS.iter().any(|&excluded| name == excluded) {
+            continue;
         }
+
+        apps.push(RunningApp { pid, bundle_id, name });
     }
 
     apps

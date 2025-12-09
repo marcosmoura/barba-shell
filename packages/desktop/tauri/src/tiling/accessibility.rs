@@ -270,7 +270,7 @@ impl AccessibilityElement {
         let (width, height) = self.get_size()?;
 
         // Convert to i32/u32, clamping to valid ranges
-        #[allow(clippy::cast_possible_truncation)]
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         Ok(WindowFrame {
             x: x as i32,
             y: y as i32,
@@ -422,6 +422,7 @@ impl AccessibilityElement {
         let array: core_foundation::array::CFArray<CFType> =
             unsafe { core_foundation::array::CFArray::wrap_under_get_rule(value.cast()) };
 
+        #[allow(clippy::cast_sign_loss)]
         let mut windows = Vec::with_capacity(array.len() as usize);
 
         for i in 0..array.len() {
@@ -436,7 +437,7 @@ impl AccessibilityElement {
         Ok(windows)
     }
 
-    /// Gets the subrole of this element (e.g., AXDialog, AXFloatingWindow, AXSheet).
+    /// Gets the subrole of this element (e.g., `AXDialog`, `AXFloatingWindow`, `AXSheet`).
     pub fn get_subrole(&self) -> Option<String> {
         self.get_string_attribute(attributes::SUBROLE).ok()
     }

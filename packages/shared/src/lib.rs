@@ -13,7 +13,7 @@ pub use config::{
 pub use schema::{generate_schema, generate_schema_json};
 pub use tiling::{
     AnimationConfig, AnimationSettings, DimensionValue, EasingFunction, FloatingConfig,
-    FloatingDefaultPosition, FloatingPreset, GapsConfig, InnerGaps, LayoutMode, MasterConfig,
-    OuterGaps, ScreenGaps, ScreenInfo, ScreenTarget, TilingConfig, WindowInfo, WindowRule,
-    WorkspaceConfig, WorkspaceInfo,
+    FloatingDefaultPosition, FloatingPreset, FocusedAppInfo, GapsConfig, InnerGaps, LayoutMode,
+    MasterConfig, OuterGaps, ScreenGaps, ScreenInfo, ScreenTarget, TilingConfig, WindowInfo,
+    WindowRule, WorkspaceConfig, WorkspaceInfo,
 };

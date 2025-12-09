@@ -31,6 +31,10 @@
 //! +------+------+------+
 //! ```
 
+#![allow(clippy::cast_sign_loss)]
+#![allow(clippy::cast_possible_wrap)]
+#![allow(clippy::cast_possible_truncation)]
+
 use barba_shared::MasterConfig;
 
 use super::traits::{Layout, LayoutContext, LayoutResult, LayoutWindow, WindowLayout};
@@ -64,12 +68,10 @@ impl MasterLayout {
     /// Computes the master area size (width for landscape, height for portrait).
     /// If a `split_ratio` is provided, it overrides the config ratio.
     fn master_size(&self, total_size: u32, inner_gap: u32, split_ratio: Option<f64>) -> u32 {
-        let ratio = if let Some(r) = split_ratio {
-            // Convert 0.0-1.0 ratio to 0-100 percentage
-            (r * 100.0).clamp(10.0, 90.0) as u32
-        } else {
-            self.config.ratio.min(100)
-        };
+        let ratio = split_ratio.map_or_else(
+            || self.config.ratio.min(100),
+            |r| (r * 100.0).clamp(10.0, 90.0) as u32,
+        );
         let available_size = total_size.saturating_sub(inner_gap);
         (available_size * ratio) / 100
     }

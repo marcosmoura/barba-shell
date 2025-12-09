@@ -589,6 +589,10 @@
           "description": "Match by window class name (substring match).",
           "type": ["string", "null"]
         },
+        "name": {
+          "description": "Match by application name (e.g., \"Safari\").\nSupports both exact match and substring match (case-insensitive).",
+          "type": ["string", "null"]
+        },
         "title": {
           "description": "Match by window title (substring match, case-insensitive).",
           "type": ["string", "null"]
@@ -612,6 +616,10 @@
           "description": "Unique name/identifier for the workspace.",
           "type": "string",
           "default": ""
+        },
+        "preset-on-open": {
+          "description": "Name of a floating preset to automatically apply when a window is opened in this workspace.\nOnly applies when the workspace layout is set to floating.",
+          "type": ["string", "null"]
         },
         "rules": {
           "description": "Window rules for automatically assigning windows to this workspace.",

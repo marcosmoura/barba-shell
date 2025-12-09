@@ -18,6 +18,9 @@
 //! +--------+--------+
 //! ```
 //!
+
+#![allow(clippy::cast_possible_truncation)]
+#![allow(clippy::cast_possible_wrap)]
 //! Example (horizontal split):
 //! ```text
 //! +----------------+
@@ -90,6 +93,7 @@ impl SplitLayout {
 
     /// Computes layouts for a vertical split (windows arranged in columns, side by side).
     /// All windows share the width equally.
+    #[allow(clippy::unused_self)]
     fn layout_vertical(
         &self,
         windows: &[&LayoutWindow],
@@ -139,6 +143,7 @@ impl SplitLayout {
 
     /// Computes layouts for a horizontal split (windows arranged in rows, stacked).
     /// All windows share the height equally.
+    #[allow(clippy::unused_self)]
     fn layout_horizontal(
         &self,
         windows: &[&LayoutWindow],

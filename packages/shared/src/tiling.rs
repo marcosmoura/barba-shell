@@ -653,6 +653,7 @@ impl TilingConfig {
     ///
     /// A tuple of (warnings, errors) where each is a vector of human-readable messages.
     #[must_use]
+    #[allow(clippy::too_many_lines)]
     pub fn validate(&self) -> (Vec<String>, Vec<String>) {
         let mut warnings = Vec::new();
         let mut errors = Vec::new();
@@ -750,14 +751,14 @@ impl TilingConfig {
         let preset_names: std::collections::HashSet<_> =
             self.floating.presets.iter().map(|p| &p.name).collect();
         for ws in &self.workspaces {
-            if let Some(ref preset_name) = ws.preset_on_open {
-                if !preset_names.contains(preset_name) {
-                    errors.push(format!(
-                        "Workspace '{}' references unknown floating preset '{}'. \
+            if let Some(ref preset_name) = ws.preset_on_open
+                && !preset_names.contains(preset_name)
+            {
+                errors.push(format!(
+                    "Workspace '{}' references unknown floating preset '{}'. \
                          Fix: define the preset in 'floating.presets' or remove 'preset-on-open'.",
-                        ws.name, preset_name
-                    ));
-                }
+                    ws.name, preset_name
+                ));
             }
         }
 
@@ -786,6 +787,7 @@ impl TilingConfig {
     /// # Returns
     ///
     /// `true` if no errors were found, `false` otherwise.
+    #[must_use]
     pub fn validate_and_log(&self) -> bool {
         let (warnings, errors) = self.validate();
 
@@ -850,6 +852,20 @@ pub struct ScreenInfo {
     pub usable_height: u32,
 }
 
+/// Information about the focused app in a workspace.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FocusedAppInfo {
+    /// Application name (e.g., "Visual Studio Code").
+    pub name: String,
+
+    /// Application bundle identifier (e.g., "com.microsoft.VSCode").
+    pub app_id: String,
+
+    /// Number of windows from this app in the workspace.
+    pub window_count: usize,
+}
+
 /// Information about a workspace.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -868,6 +884,10 @@ pub struct WorkspaceInfo {
 
     /// Number of windows in this workspace.
     pub window_count: usize,
+
+    /// Information about the focused app in this workspace (if any).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub focused_app: Option<FocusedAppInfo>,
 }
 
 /// Information about a managed window.

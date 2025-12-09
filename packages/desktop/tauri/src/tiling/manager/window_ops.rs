@@ -3,10 +3,22 @@
 //! This module handles operations on individual windows such as
 //! focusing in a direction, swapping positions, and sending to workspaces/screens.
 
+#![allow(clippy::assigning_clones)]
+#![allow(clippy::cast_possible_wrap)]
+
 use super::TilingManager;
 use crate::tiling::error::TilingError;
 use crate::tiling::state::ManagedWindow;
 use crate::tiling::window;
+
+/// Information needed for resize calculations.
+struct ResizeInfo {
+    layout_mode: barba_shared::LayoutMode,
+    window_index: usize,
+    window_count: usize,
+    screen_width: u32,
+    screen_height: u32,
+}
 
 impl TilingManager {
     /// Gets the focused window and ensures it's tracked in a workspace.
@@ -105,8 +117,12 @@ impl TilingManager {
             }
         };
 
-        // Focus the target window
-        window::focus_window(target_id)?;
+        // Focus the target window using cached state for speed
+        if let Some(target_window) = self.workspace_manager.state().get_window(target_id) {
+            window::focus_window_fast(target_window)?;
+        } else {
+            window::focus_window(target_id)?;
+        }
 
         Ok(())
     }
@@ -117,9 +133,8 @@ impl TilingManager {
     /// that haven't been focused since app startup.
     fn ensure_workspace_windows_tracked(&mut self, workspace_name: &str) {
         // Get all visible windows from the system
-        let all_windows = match window::get_all_windows() {
-            Ok(w) => w,
-            Err(_) => return,
+        let Ok(all_windows) = window::get_all_windows() else {
+            return;
         };
 
         for win in all_windows {
@@ -134,20 +149,20 @@ impl TilingManager {
             }
 
             // Check if this window belongs to the target workspace
-            if let Some(win_workspace) = self.find_workspace_for_window(&win) {
-                if win_workspace == workspace_name {
-                    // Add to state and workspace
-                    let window_id = win.id;
-                    let mut win = win;
-                    win.workspace = workspace_name.to_string();
-                    self.workspace_manager.state_mut().windows.insert(window_id, win);
+            if let Some(win_workspace) = self.find_workspace_for_window(&win)
+                && win_workspace == workspace_name
+            {
+                // Add to state and workspace
+                let window_id = win.id;
+                let mut win = win;
+                win.workspace = workspace_name.to_string();
+                self.workspace_manager.state_mut().windows.insert(window_id, win);
 
-                    if let Some(ws) =
-                        self.workspace_manager.state_mut().get_workspace_mut(workspace_name)
-                        && !ws.windows.contains(&window_id)
-                    {
-                        ws.windows.push(window_id);
-                    }
+                if let Some(ws) =
+                    self.workspace_manager.state_mut().get_workspace_mut(workspace_name)
+                    && !ws.windows.contains(&window_id)
+                {
+                    ws.windows.push(window_id);
                 }
             }
         }
@@ -283,7 +298,7 @@ impl TilingManager {
         self.apply_layout(&workspace_name)?;
 
         // Keep focus on the original window (which is now in the new position)
-        window::focus_window(focused_window.id)?;
+        window::focus_window_fast(&focused_window)?;
 
         Ok(())
     }
@@ -357,7 +372,7 @@ impl TilingManager {
         self.apply_layout(&target_workspace_name)?;
 
         // Keep focus on the moved window
-        window::focus_window(focused_window.id)?;
+        window::focus_window_fast(&focused_window)?;
 
         Ok(())
     }
@@ -444,7 +459,7 @@ impl TilingManager {
             self.switch_workspace(target_workspace)?;
 
             // Focus the window we just sent
-            window::focus_window(focused_window.id)?;
+            window::focus_window_fast(&focused_window)?;
         } else {
             // If target workspace is not focused, hide the window
             if !is_target_focused {
@@ -642,7 +657,11 @@ impl TilingManager {
     }
 
     /// Resizes a floating window directly by the given pixel amount.
-    #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
+    #[allow(
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap,
+        clippy::items_after_statements
+    )]
     fn resize_floating_window(
         &self,
         window_id: u64,
@@ -806,7 +825,7 @@ impl TilingManager {
     /// new size and updates the workspace's `split_ratios` accordingly.
     ///
     /// For floating and monocle layouts, this is a no-op.
-    #[allow(clippy::cast_precision_loss, clippy::too_many_lines)]
+    #[allow(clippy::cast_precision_loss)]
     pub fn handle_user_resize(
         &mut self,
         window_id: u64,
@@ -814,266 +833,234 @@ impl TilingManager {
         new_height: u32,
     ) -> Result<(), TilingError> {
         // Find the workspace containing this window
-        let workspace_name = {
-            let state = self.workspace_manager.state();
-            state
-                .workspaces
-                .iter()
-                .find(|ws| ws.windows.contains(&window_id))
-                .map(|ws| ws.name.clone())
-        };
-
-        let Some(workspace_name) = workspace_name else {
-            // Window not tracked - nothing to do
+        let Some(workspace_name) = self.find_workspace_for_window_id(window_id) else {
             return Ok(());
         };
 
-        // Get workspace info
-        let (layout_mode, window_index, window_count, screen_width, screen_height) = {
-            let state = self.workspace_manager.state();
-            let workspace = state
-                .get_workspace(&workspace_name)
-                .ok_or_else(|| TilingError::WorkspaceNotFound(workspace_name.clone()))?;
-
-            let index = workspace.windows.iter().position(|&id| id == window_id);
-
-            let Some(index) = index else {
-                return Ok(());
-            };
-
-            let screen = state
-                .get_screen(&workspace.screen)
-                .ok_or_else(|| TilingError::ScreenNotFound(workspace.screen.clone()))?;
-
-            (
-                workspace.layout.clone(),
-                index,
-                workspace.windows.len(),
-                screen.usable_frame.width,
-                screen.usable_frame.height,
-            )
+        // Get workspace info needed for resize handling
+        let Some(resize_info) = self.get_resize_info(&workspace_name, window_id)? else {
+            return Ok(());
         };
 
         // Skip for layouts that don't use split ratios
-        match layout_mode {
+        match resize_info.layout_mode {
             barba_shared::LayoutMode::Monocle | barba_shared::LayoutMode::Floating => {
-                // These layouts don't have split ratios to update
                 return Ok(());
             }
             barba_shared::LayoutMode::Master => {
-                // Master layout uses split_ratios[0] for master/stack ratio
                 return self.handle_user_resize_master(
                     &workspace_name,
                     window_id,
-                    window_index,
+                    resize_info.window_index,
                     new_width,
-                    screen_width,
+                    resize_info.screen_width,
                 );
             }
             barba_shared::LayoutMode::Tiling
             | barba_shared::LayoutMode::Split
             | barba_shared::LayoutMode::SplitVertical
             | barba_shared::LayoutMode::SplitHorizontal
-            | barba_shared::LayoutMode::Scrolling => {
-                // These layouts support split ratio updates
-            }
+            | barba_shared::LayoutMode::Scrolling => {}
         }
 
         // Can't have split ratios with only one window
-        if window_count < 2 {
+        if resize_info.window_count < 2 {
             return Ok(());
         }
 
-        // Get gaps to calculate usable area
+        // Calculate and apply the new split ratio
+        self.apply_dwindle_resize(&workspace_name, &resize_info, new_width, new_height)
+    }
+
+    /// Finds the workspace name containing a window by ID.
+    fn find_workspace_for_window_id(&self, window_id: u64) -> Option<String> {
+        self.workspace_manager
+            .state()
+            .workspaces
+            .iter()
+            .find(|ws| ws.windows.contains(&window_id))
+            .map(|ws| ws.name.clone())
+    }
+
+    /// Gets the resize information for a window in a workspace.
+    fn get_resize_info(
+        &self,
+        workspace_name: &str,
+        window_id: u64,
+    ) -> Result<Option<ResizeInfo>, TilingError> {
+        let state = self.workspace_manager.state();
+        let workspace = state
+            .get_workspace(workspace_name)
+            .ok_or_else(|| TilingError::WorkspaceNotFound(workspace_name.to_string()))?;
+
+        let Some(window_index) = workspace.windows.iter().position(|&id| id == window_id) else {
+            return Ok(None);
+        };
+
+        let screen = state
+            .get_screen(&workspace.screen)
+            .ok_or_else(|| TilingError::ScreenNotFound(workspace.screen.clone()))?;
+
+        Ok(Some(ResizeInfo {
+            layout_mode: workspace.layout.clone(),
+            window_index,
+            window_count: workspace.windows.len(),
+            screen_width: screen.usable_frame.width,
+            screen_height: screen.usable_frame.height,
+        }))
+    }
+
+    /// Applies resize for dwindle-style layouts (Tiling, Split, etc.).
+    #[allow(clippy::cast_precision_loss)]
+    fn apply_dwindle_resize(
+        &mut self,
+        workspace_name: &str,
+        info: &ResizeInfo,
+        new_width: u32,
+        new_height: u32,
+    ) -> Result<(), TilingError> {
+        // Get gaps
+        let gaps = self.get_workspace_gaps(workspace_name)?;
+
+        // Calculate usable dimensions
+        let usable_width = info.screen_width.saturating_sub(gaps.outer_left + gaps.outer_right);
+        let usable_height = info.screen_height.saturating_sub(gaps.outer_top + gaps.outer_bottom);
+        let is_landscape = info.screen_width >= info.screen_height;
+
+        // Determine split index and position
+        let ratio_index = Self::calculate_ratio_index(info.window_index);
+        let is_first_at_split = info.window_index == 0 || ratio_index > 0;
+
+        // Determine which dimension this split uses
+        let uses_width = Self::split_uses_width(&info.layout_mode, ratio_index, is_landscape);
+
+        // Calculate the new ratio
+        let new_ratio = Self::calculate_new_ratio(
+            uses_width,
+            usable_width,
+            usable_height,
+            gaps.inner,
+            new_width,
+            new_height,
+            is_first_at_split,
+        )?;
+
+        // Update the split ratio in workspace
+        self.update_split_ratio(workspace_name, ratio_index, new_ratio)?;
+
+        // Re-apply the layout
+        self.apply_layout(workspace_name)
+    }
+
+    /// Gets gaps for a workspace.
+    fn get_workspace_gaps(
+        &self,
+        workspace_name: &str,
+    ) -> Result<crate::tiling::layout::ResolvedGaps, TilingError> {
         let screen_count = self.workspace_manager.state().screens.len();
-        let screen = {
-            let state = self.workspace_manager.state();
-            let workspace = state
-                .get_workspace(&workspace_name)
-                .ok_or_else(|| TilingError::WorkspaceNotFound(workspace_name.clone()))?;
-            state
-                .get_screen(&workspace.screen)
-                .ok_or_else(|| TilingError::ScreenNotFound(workspace.screen.clone()))?
-                .clone()
-        };
+        let state = self.workspace_manager.state();
+        let workspace = state
+            .get_workspace(workspace_name)
+            .ok_or_else(|| TilingError::WorkspaceNotFound(workspace_name.to_string()))?;
+        let screen = state
+            .get_screen(&workspace.screen)
+            .ok_or_else(|| TilingError::ScreenNotFound(workspace.screen.clone()))?;
 
-        let gaps = crate::tiling::layout::ResolvedGaps::from_config(
+        Ok(crate::tiling::layout::ResolvedGaps::from_config(
             &self.config.gaps,
-            &screen,
+            screen,
             screen_count,
-        );
+        ))
+    }
 
-        // Calculate usable dimensions (screen minus gaps)
-        let usable_width = screen_width.saturating_sub(gaps.outer_left + gaps.outer_right);
-        let usable_height = screen_height.saturating_sub(gaps.outer_top + gaps.outer_bottom);
-
-        // Determine the initial split direction based on screen aspect ratio
-        let is_landscape = screen_width >= screen_height;
-
-        // In dwindle layout, splits alternate direction at each level.
-        // We need to figure out which split this window's resize affects.
-        //
-        // For window at index N, it participates in splits 0..N
-        // We determine which split is affected by looking at whether width or height changed
-        // relative to what we'd expect from the current ratios.
-
-        // Try to determine which dimension changed more significantly
-        // and update the corresponding split ratio
-
-        // Get current split ratios (for reference)
-        let _current_ratios = {
-            let state = self.workspace_manager.state();
-            let workspace = state
-                .get_workspace(&workspace_name)
-                .ok_or_else(|| TilingError::WorkspaceNotFound(workspace_name.clone()))?;
-            workspace.split_ratios.clone()
-        };
-
-        // Calculate which split this window belongs to based on its index
-        // In dwindle layout:
-        // - Window 0 is the "first" at depth 0, gets ratio[0] of the full space
-        // - Window 1 is the "first" at depth 1, gets ratio[1] of the remaining space
-        // - Window 2 is the "first" at depth 2, gets ratio[2] of the remaining space
-        // - etc.
-        //
-        // BUT: the ratio at depth N determines how much space window N gets
-        // relative to the "rest" space at that depth.
-        //
-        // When window N is resized:
-        // - Window 0: ratio[0] = window_0_size / total_container_size
-        // - Window 1: ratio[0] should give window_0 its share, so ratio[0] = 1 - (window_1_size / total)
-        //   Actually, window 1 size relative to total container tells us 1 - ratio[0]
-        //   So ratio[0] = 1 - (window_1_size / total)
-
-        // For two windows, ratio_index is always 0
-        // Window 0 resized: ratio = its proportion
-        // Window 1 resized: ratio = 1 - its proportion (because it's on the "other side")
-
-        // For N windows and window at index I:
-        // - If I == 0: affects ratio[0], and window 0 is "first" side, so ratio = proportion
-        // - If I == 1: affects ratio[0], but window 1 is "second" side, so ratio = 1 - proportion
-        // - If I >= 2: affects ratio[I-1] for deeper splits where window I is "first"
-        //   BUT also affects ratio[0..I-1] for parent splits
-
-        // Simplified approach for the common case:
-        // For the first split (ratio_index 0), window 0 is "first", window 1+ are "second"
-        let ratio_index = if window_index == 0 {
+    /// Calculates the ratio index for a window based on its position.
+    ///
+    /// In dwindle layout:
+    /// - Window 0: affects ratio[0]
+    /// - Window N (N > 0): affects ratio[N-1]
+    const fn calculate_ratio_index(window_index: usize) -> usize {
+        if window_index == 0 {
             0
         } else {
             window_index - 1
-        };
+        }
+    }
 
-        // Determine if this window is on the "first" side of its split
-        // Window 0 is always "first" at depth 0
-        // Window N (N > 0) is "first" at depth N-1 (i.e., within the "rest" area from depth N-2)
-        //
-        // But for the parent split (depth 0), window 1 is on the "second" side
-        // This is the tricky part: we need to decide which split we're affecting
-        //
-        // For simplicity with 2 windows:
-        // - Both affect ratio[0]
-        // - Window 0: ratio = proportion
-        // - Window 1: ratio = 1 - proportion
-
-        // For this window, check if it's the "first" at the split we're modifying
-        //
-        // In dwindle layout with ratio_index = 0 (first split):
-        // - Window 0 is "first" (gets ratio portion)
-        // - Windows 1+ are "second" (get 1-ratio portion, then further subdivided)
-        //
-        // For deeper splits (ratio_index > 0):
-        // - The window at index (ratio_index + 1) is "first" at that depth
-        // - Earlier windows don't participate in this split
-        //
-        // Since we calculated ratio_index = max(0, window_index - 1):
-        // - Window 0: ratio_index = 0, is first at split 0
-        // - Window 1: ratio_index = 0, is second at split 0
-        // - Window 2: ratio_index = 1, is first at split 1
-        // - Window 3: ratio_index = 2, is first at split 2
-        // etc.
-        //
-        // So is_first = (window_index == 0) for ratio_index 0,
-        //    is_first = true for ratio_index > 0 (window is always first at its own depth)
-        let is_first_at_split = window_index == 0 || ratio_index > 0;
-
-        // Determine if this split's dimension is width or height
-        // For explicit SplitHorizontal/SplitVertical layouts, use fixed orientation
-        // For other layouts (Tiling, Split), use dwindle-style alternating orientation
-        let uses_width = match layout_mode {
-            barba_shared::LayoutMode::SplitHorizontal => {
-                // SplitHorizontal = windows stacked vertically (top/bottom)
-                // The split line is horizontal, so HEIGHT determines the ratio
-                false
-            }
-            barba_shared::LayoutMode::SplitVertical => {
-                // SplitVertical = windows side by side (left/right)
-                // The split line is vertical, so WIDTH determines the ratio
-                true
-            }
+    /// Determines if a split at the given depth uses width or height.
+    const fn split_uses_width(
+        layout_mode: &barba_shared::LayoutMode,
+        ratio_index: usize,
+        is_landscape: bool,
+    ) -> bool {
+        match layout_mode {
+            barba_shared::LayoutMode::SplitHorizontal => false, // Height determines ratio
+            barba_shared::LayoutMode::SplitVertical => true,    // Width determines ratio
             _ => {
                 // Dwindle-style: alternate based on screen aspect ratio and depth
                 if is_landscape {
-                    ratio_index % 2 == 0 // Even indices use width on landscape
+                    ratio_index.is_multiple_of(2)
                 } else {
-                    ratio_index % 2 == 1 // Odd indices use width on portrait
+                    ratio_index % 2 == 1
                 }
             }
-        };
+        }
+    }
 
-        // Calculate the new ratio based on the window size
+    /// Calculates the new split ratio based on window size.
+    #[allow(clippy::cast_precision_loss, clippy::too_many_arguments)]
+    fn calculate_new_ratio(
+        uses_width: bool,
+        usable_width: u32,
+        usable_height: u32,
+        gap: u32,
+        new_width: u32,
+        new_height: u32,
+        is_first_at_split: bool,
+    ) -> Result<f64, TilingError> {
         let (container_size, window_size) = if uses_width {
-            // Width determines the ratio
-            let gap = gaps.inner;
             (usable_width.saturating_sub(gap), new_width)
         } else {
-            // Height determines the ratio
-            let gap = gaps.inner;
             (usable_height.saturating_sub(gap), new_height)
         };
 
         if container_size == 0 {
-            return Ok(());
+            return Err(TilingError::OperationFailed(
+                "Container size is zero".to_string(),
+            ));
         }
 
-        // Calculate the ratio based on the window's proportion of the container
         let raw_ratio = f64::from(window_size) / f64::from(container_size);
 
-        // If this window is on the "second" side of the split, we need to invert
-        // because the ratio determines the "first" window's size
-        //
-        // For 2 windows (most common case):
-        // - Window 0 is "first", so ratio = its_proportion
-        // - Window 1 is "second", so ratio = 1 - its_proportion
-        //
-        // For N windows at depth D:
-        // - is_first_at_split tells us if this window is the "first" at this split level
+        // Invert if window is on the "second" side of the split
         let adjusted_ratio = if is_first_at_split {
             raw_ratio
         } else {
             1.0 - raw_ratio
         };
 
-        // Clamp to valid range
-        let new_ratio = adjusted_ratio.clamp(0.1, 0.9);
+        Ok(adjusted_ratio.clamp(0.1, 0.9))
+    }
 
-        // Update the split ratio
-        {
-            let workspace =
-                self.workspace_manager
-                    .state_mut()
-                    .get_workspace_mut(&workspace_name)
-                    .ok_or_else(|| TilingError::WorkspaceNotFound(workspace_name.clone()))?;
+    /// Updates a split ratio in the workspace.
+    fn update_split_ratio(
+        &mut self,
+        workspace_name: &str,
+        ratio_index: usize,
+        new_ratio: f64,
+    ) -> Result<(), TilingError> {
+        let workspace = self
+            .workspace_manager
+            .state_mut()
+            .get_workspace_mut(workspace_name)
+            .ok_or_else(|| TilingError::WorkspaceNotFound(workspace_name.to_string()))?;
 
-            // Ensure split_ratios vector is large enough
-            while workspace.split_ratios.len() <= ratio_index {
-                workspace.split_ratios.push(0.5); // Default 50/50 split
-            }
-
-            workspace.split_ratios[ratio_index] = new_ratio;
+        // Ensure split_ratios vector is large enough
+        while workspace.split_ratios.len() <= ratio_index {
+            workspace.split_ratios.push(0.5);
         }
 
-        // Re-apply the layout with new ratios to ensure consistent state
-        self.apply_layout(&workspace_name)
+        workspace.split_ratios[ratio_index] = new_ratio;
+        Ok(())
     }
 
     /// Handles user-initiated resize for master layout.

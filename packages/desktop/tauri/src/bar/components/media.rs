@@ -24,7 +24,7 @@ use tauri_plugin_shell::process::CommandEvent;
 use crate::utils::thread::spawn_named_thread;
 
 /// Event name for media state changes.
-const EVENT_NAME: &str = "tauri_media_changed";
+const EVENT_NAME: &str = "media_changed";
 
 /// Resize the provided image to 128x128 and encode it as PNG.
 ///

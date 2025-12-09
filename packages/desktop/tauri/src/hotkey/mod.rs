@@ -95,7 +95,7 @@ pub fn create_hotkey_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
 /// - "Cmd" is normalized to "Command" (macOS Command key)
 /// - "Alt" and "Opt" are normalized to "Option" (macOS Option key)
 /// - "Super" and "Meta" are normalized to "Command"
-/// - "`" (backtick) is normalized to "Backquote"
+/// - backtick (`` ` ``) is normalized to "Backquote"
 fn normalize_shortcut(shortcut: &str) -> String {
     shortcut
         .replace("Ctrl+", "Control+")

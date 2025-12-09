@@ -3,6 +3,12 @@
 //! This module provides various easing functions including standard easing curves
 //! and Hyprland-style cubic bezier curves for high-quality window animations.
 
+// Allow intentional numeric casts in this math-heavy module
+#![allow(clippy::cast_precision_loss)]
+#![allow(clippy::cast_possible_truncation)]
+#![allow(clippy::cast_possible_wrap)]
+#![allow(clippy::cast_sign_loss)]
+
 use simple_easing::{cubic_in, cubic_in_out, cubic_out, linear};
 
 /// Number of pre-baked points for bezier curve lookup (like Hyprland).
@@ -74,10 +80,13 @@ impl BezierCurve {
         let mt2 = mt * mt;
         let mt3 = mt2 * mt;
 
-        mt3 * self.points[0].0
-            + 3.0 * t * mt2 * self.points[1].0
-            + 3.0 * t2 * mt * self.points[2].0
-            + t3 * self.points[3].0
+        t3.mul_add(
+            self.points[3].0,
+            (3.0 * t2 * mt).mul_add(
+                self.points[2].0,
+                mt3 * self.points[0].0 + 3.0 * t * mt2 * self.points[1].0,
+            ),
+        )
     }
 
     /// Gets Y coordinate for parameter t.
@@ -88,10 +97,13 @@ impl BezierCurve {
         let mt2 = mt * mt;
         let mt3 = mt2 * mt;
 
-        mt3 * self.points[0].1
-            + 3.0 * t * mt2 * self.points[1].1
-            + 3.0 * t2 * mt * self.points[2].1
-            + t3 * self.points[3].1
+        t3.mul_add(
+            self.points[3].1,
+            (3.0 * t2 * mt).mul_add(
+                self.points[2].1,
+                mt3 * self.points[0].1 + 3.0 * t * mt2 * self.points[1].1,
+            ),
+        )
     }
 
     /// Gets Y value for a given X using binary search on baked points.
@@ -143,7 +155,7 @@ impl BezierCurve {
             return lower_point.1;
         }
 
-        lower_point.1 + (upper_point.1 - lower_point.1) * perc
+        (upper_point.1 - lower_point.1).mul_add(perc, lower_point.1)
     }
 }
 
@@ -182,7 +194,7 @@ fn apply_spring(t: f64) -> f64 {
 pub fn lerp_i32(start: i32, end: i32, t: f64) -> i32 {
     let start_f = f64::from(start);
     let end_f = f64::from(end);
-    (start_f + (end_f - start_f) * t).round() as i32
+    (end_f - start_f).mul_add(t, start_f).round() as i32
 }
 
 /// Linear interpolation for u32 values.
@@ -191,7 +203,7 @@ pub fn lerp_i32(start: i32, end: i32, t: f64) -> i32 {
 pub fn lerp_u32(start: u32, end: u32, t: f64) -> u32 {
     let start_f = f64::from(start);
     let end_f = f64::from(end);
-    (start_f + (end_f - start_f) * t).round().max(0.0) as u32
+    (end_f - start_f).mul_add(t, start_f).round().max(0.0) as u32
 }
 
 #[cfg(test)]

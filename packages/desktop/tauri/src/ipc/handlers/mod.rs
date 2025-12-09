@@ -17,6 +17,7 @@ use super::types::IpcPayload;
 /// Returns `Some(true)` if the command was handled successfully,
 /// `Some(false)` if it was handled but failed,
 /// or `None` if the command should be forwarded to the frontend.
+#[allow(clippy::too_many_lines)]
 pub fn dispatch(payload: &IpcPayload, stream: &mut UnixStream) -> Option<bool> {
     match payload.name.as_str() {
         // Wallpaper commands

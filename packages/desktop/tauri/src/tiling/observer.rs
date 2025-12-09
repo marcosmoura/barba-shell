@@ -7,13 +7,17 @@
 //!
 //! For app launch/terminate events, we use NSWorkspace notifications.
 
-// Suppress warnings for this module as we're using raw FFI
-#![allow(clippy::collapsible_if)]
+// Suppress warnings for this module as we're using raw FFI and complex matching
 #![allow(clippy::cast_possible_truncation)]
+#![allow(clippy::cast_precision_loss)]
+#![allow(clippy::cast_sign_loss)]
+#![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::missing_panics_doc)]
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::doc_markdown)]
-#![allow(clashing_extern_declarations)]
+#![allow(clippy::assigning_clones)]
+#![allow(clippy::significant_drop_tightening)]
+#![allow(clippy::significant_drop_in_scrutinee)]
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
@@ -77,7 +81,7 @@ unsafe extern "C" {
 
     fn AXUIElementCreateApplication(pid: i32) -> AXUIElementRef;
 
-    fn CFRelease(cf: *const c_void);
+    fn CFRelease(cf: *mut c_void);
 }
 
 #[link(name = "CoreFoundation", kind = "framework")]
@@ -162,13 +166,22 @@ const APP_NOTIFICATIONS: &[&str] = &[
 
 /// Event types emitted to the frontend.
 pub mod events {
+    // Window events
     pub const WINDOW_CREATED: &str = "tiling:window-created";
     pub const WINDOW_DESTROYED: &str = "tiling:window-destroyed";
     pub const WINDOW_FOCUSED: &str = "tiling:window-focused";
     pub const WINDOW_MOVED: &str = "tiling:window-moved";
     pub const WINDOW_RESIZED: &str = "tiling:window-resized";
+
+    // App events
     pub const APP_ACTIVATED: &str = "tiling:app-activated";
     pub const APP_DEACTIVATED: &str = "tiling:app-deactivated";
+
+    // Workspace events
+    pub const WORKSPACES_CHANGED: &str = "tiling:workspaces-changed";
+
+    // Screen events
+    pub const SCREEN_FOCUSED: &str = "tiling:screen-focused";
 }
 
 /// Payload for window events.
@@ -187,6 +200,17 @@ pub struct WindowGeometryPayload {
     pub y: i32,
     pub width: u32,
     pub height: u32,
+}
+
+/// Payload for screen focus events.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ScreenFocusedPayload {
+    /// The screen ID that is now focused.
+    pub screen: String,
+    /// Whether this is the main screen.
+    pub is_main: bool,
+    /// The previously focused screen ID (if any).
+    pub previous_screen: Option<String>,
 }
 
 // ============================================================================
@@ -446,11 +470,11 @@ impl ObserverManager {
 
         // Get the run loop source and add it to the run loop
         let source = unsafe { AXObserverGetRunLoopSource(observer) };
-        if !source.is_null() {
-            if let Some(run_loop) = self.run_loop {
-                unsafe {
-                    CFRunLoopAddSource(run_loop.0, source, cf_run_loop_common_modes());
-                }
+        if !source.is_null()
+            && let Some(run_loop) = self.run_loop
+        {
+            unsafe {
+                CFRunLoopAddSource(run_loop.0, source, cf_run_loop_common_modes());
             }
         }
 
@@ -525,10 +549,10 @@ impl ObserverManager {
         }
 
         // If there are still pending resizes that haven't settled, schedule another timer
-        if !self.pending_resizes.is_empty() {
-            if let Some(run_loop) = self.run_loop {
-                schedule_resize_timer(run_loop.0);
-            }
+        if !self.pending_resizes.is_empty()
+            && let Some(run_loop) = self.run_loop
+        {
+            schedule_resize_timer(run_loop.0);
         }
     }
 
@@ -537,13 +561,13 @@ impl ObserverManager {
         // Try to get window info and potentially add observer for new app
         if let Ok(window) = window::get_window_by_id(window_id) {
             // If this is from an app we don't have an observer for, add one
-            if !self.observers.contains_key(&window.pid) {
-                if let Err(e) = self.add_observer_for_pid(window.pid) {
-                    eprintln!(
-                        "barba: failed to add observer for new app PID {}: {e}",
-                        window.pid
-                    );
-                }
+            if !self.observers.contains_key(&window.pid)
+                && let Err(e) = self.add_observer_for_pid(window.pid)
+            {
+                eprintln!(
+                    "barba: failed to add observer for new app PID {}: {e}",
+                    window.pid
+                );
             }
 
             if let Some(ref app_handle) = self.app_handle {
@@ -632,10 +656,8 @@ impl ObserverManager {
         }
 
         // Schedule a timer to process the move after settle time
-        if !had_pending {
-            if let Some(run_loop) = self.run_loop {
-                schedule_move_timer(run_loop.0);
-            }
+        if !had_pending && let Some(run_loop) = self.run_loop {
+            schedule_move_timer(run_loop.0);
         }
     }
 
@@ -666,10 +688,10 @@ impl ObserverManager {
         }
 
         // If there are still pending moves, schedule another timer
-        if !self.pending_moves.is_empty() {
-            if let Some(run_loop) = self.run_loop {
-                schedule_move_timer(run_loop.0);
-            }
+        if !self.pending_moves.is_empty()
+            && let Some(run_loop) = self.run_loop
+        {
+            schedule_move_timer(run_loop.0);
         }
     }
 
@@ -708,66 +730,80 @@ impl ObserverManager {
 
             // Schedule a timer to process the resize after settle time
             // Only schedule if we didn't already have pending resizes (to avoid duplicate timers)
-            if !had_pending {
-                if let Some(run_loop) = self.run_loop {
-                    schedule_resize_timer(run_loop.0);
-                }
+            if !had_pending && let Some(run_loop) = self.run_loop {
+                schedule_resize_timer(run_loop.0);
             }
         }
     }
 
     /// Handles a focus change notification.
     fn handle_focus_changed(&self, window_id: u64) {
-        if let Some(ref app_handle) = self.app_handle {
-            if let Ok(window) = window::get_window_by_id(window_id) {
-                let _ = app_handle.emit(events::WINDOW_FOCUSED, WindowEventPayload {
-                    window_id,
-                    app_name: window.app_name.clone(),
-                    title: window.title,
-                });
-            }
+        if let Some(ref app_handle) = self.app_handle
+            && let Ok(window) = window::get_window_by_id(window_id)
+        {
+            let _ = app_handle.emit(events::WINDOW_FOCUSED, WindowEventPayload {
+                window_id,
+                app_name: window.app_name.clone(),
+                title: window.title,
+            });
         }
 
         // Handle workspace switching based on focus if not in cooldown
-        if !is_in_switch_cooldown() {
-            if let Some(manager) = try_get_manager() {
-                let guard = manager.read();
-                let state = guard.workspace_manager.state();
+        if !is_in_switch_cooldown()
+            && let Some(manager) = try_get_manager()
+        {
+            let guard = manager.read();
+            let state = guard.workspace_manager.state();
 
-                // Find which workspace this window belongs to
-                for ws in &state.workspaces {
-                    if ws.windows.contains(&window_id) {
-                        let ws_name = ws.name.clone();
-                        let current_global_focus = state.focused_workspace.as_deref();
+            // Find which workspace this window belongs to
+            for ws in &state.workspaces {
+                if ws.windows.contains(&window_id) {
+                    let ws_name = ws.name.clone();
+                    let current_global_focus = state.focused_workspace.as_deref();
 
-                        // Check if this workspace is already focused on its screen
-                        if state.focused_workspace_per_screen.get(&ws.screen) != Some(&ws.name) {
-                            // Need to switch workspaces on this screen
-                            drop(guard);
-                            if let Some(manager) = try_get_manager() {
-                                // Pass the window ID so we focus the right window after switch
-                                if let Err(e) = manager
-                                    .write()
-                                    .switch_workspace_focusing(&ws_name, Some(window_id))
-                                {
-                                    eprintln!(
-                                        "barba: failed to switch to workspace {ws_name}: {e}"
-                                    );
-                                }
-                            }
-                        } else if current_global_focus != Some(ws_name.as_str()) {
-                            // Workspace is already focused on its screen, but the global focus
-                            // is on a different workspace (e.g., user clicked on a window on
-                            // secondary screen). Update global focus so commands target the
-                            // correct workspace.
-                            drop(guard);
-                            if let Some(manager) = try_get_manager() {
-                                manager.write().workspace_manager.state_mut().focused_workspace =
-                                    Some(ws_name);
+                    // Check if this workspace is already focused on its screen
+                    if state.focused_workspace_per_screen.get(&ws.screen) != Some(&ws.name) {
+                        // Need to switch workspaces on this screen
+                        drop(guard);
+                        if let Some(manager) = try_get_manager() {
+                            // Pass the window ID so we focus the right window after switch
+                            if let Err(e) =
+                                manager.write().switch_workspace_focusing(&ws_name, Some(window_id))
+                            {
+                                eprintln!("barba: failed to switch to workspace {ws_name}: {e}");
                             }
                         }
-                        break;
+                    } else if current_global_focus != Some(ws_name.as_str()) {
+                        // Workspace is already focused on its screen, but the global focus
+                        // is on a different workspace (e.g., user clicked on a window on
+                        // secondary screen). Update global focus so commands target the
+                        // correct workspace.
+                        let screen_id = ws.screen.clone();
+                        let is_main = state.screens.iter().any(|s| s.id == screen_id && s.is_main);
+                        let previous_screen = current_global_focus.and_then(|prev_ws| {
+                            state.get_workspace(prev_ws).map(|w| w.screen.clone())
+                        });
+                        drop(guard);
+                        if let Some(manager) = try_get_manager() {
+                            let mut guard = manager.write();
+
+                            guard.workspace_manager.state_mut().focused_workspace =
+                                Some(ws_name.clone());
+
+                            // Emit workspace focused event
+                            guard.emit_workspaces_changed();
+
+                            // Emit screen focused event if screen changed
+                            if previous_screen.as_deref() != Some(&screen_id) {
+                                guard.emit_screen_focused(
+                                    &screen_id,
+                                    is_main,
+                                    previous_screen.as_deref(),
+                                );
+                            }
+                        }
                     }
+                    break;
                 }
             }
         }
@@ -814,17 +850,14 @@ impl ObserverManager {
         };
 
         // Get the window frame to identify it
-        let frame = if let Ok(f) = focused_window.get_frame() {
-            f
-        } else {
+        let Ok(frame) = focused_window.get_frame() else {
             eprintln!("barba: APP_ACTIVATED but couldn't get window frame");
             return;
         };
 
         // Find the window ID by matching frame
-        let windows = match window::get_all_windows() {
-            Ok(w) => w,
-            Err(_) => return,
+        let Ok(windows) = window::get_all_windows() else {
+            return;
         };
 
         let matching_window = windows
@@ -867,10 +900,9 @@ impl ObserverManager {
                         // Add to workspace
                         if let Some(ws) =
                             guard.workspace_manager.state_mut().get_workspace_mut(&workspace_name)
+                            && !ws.windows.contains(&window_id)
                         {
-                            if !ws.windows.contains(&window_id) {
-                                ws.windows.push(window_id);
-                            }
+                            ws.windows.push(window_id);
                         }
                     }
                 }
@@ -894,9 +926,8 @@ impl ObserverManager {
             std::mem::ManuallyDrop::new(unsafe { AccessibilityElement::from_raw(element) });
 
         // Get the PID of the deactivated app
-        let app_pid = match app_element.pid() {
-            Ok(pid) => pid,
-            Err(_) => return,
+        let Ok(app_pid) = app_element.pid() else {
+            return;
         };
 
         // Emit app deactivated event to frontend
@@ -924,20 +955,14 @@ impl ObserverManager {
         // This works even for windows on other virtual desktops
         let app_element = AccessibilityElement::application(pid);
 
-        let focused_window = match app_element.get_focused_window() {
-            Ok(w) => w,
-            Err(_) => {
-                // App activated but no focused window - this is normal for some apps
-                return;
-            }
+        let Ok(focused_window) = app_element.get_focused_window() else {
+            // App activated but no focused window - this is normal for some apps
+            return;
         };
 
-        let frame = match focused_window.get_frame() {
-            Ok(f) => f,
-            Err(_) => {
-                // Couldn't get window frame - skip
-                return;
-            }
+        let Ok(frame) = focused_window.get_frame() else {
+            // Couldn't get window frame - skip
+            return;
         };
 
         // Try to find this window in our known windows (may be on current space)
@@ -1044,10 +1069,9 @@ impl ObserverManager {
                 // Add to workspace
                 if let Some(ws) =
                     guard.workspace_manager.state_mut().get_workspace_mut(&workspace_name)
+                    && !ws.windows.contains(&synthetic_id)
                 {
-                    if !ws.windows.contains(&synthetic_id) {
-                        ws.windows.push(synthetic_id);
-                    }
+                    ws.windows.push(synthetic_id);
                 }
             }
         }
@@ -1057,6 +1081,7 @@ impl ObserverManager {
     }
 
     /// Ensures a window is tracked in the tiling manager.
+    #[allow(clippy::unused_self)]
     fn ensure_window_tracked(&self, window_id: u64, window: crate::tiling::state::ManagedWindow) {
         if let Some(manager) = try_get_manager() {
             let mut guard = manager.write();
@@ -1082,10 +1107,9 @@ impl ObserverManager {
                     // Add to workspace
                     if let Some(ws) =
                         guard.workspace_manager.state_mut().get_workspace_mut(&workspace_name)
+                        && !ws.windows.contains(&window_id)
                     {
-                        if !ws.windows.contains(&window_id) {
-                            ws.windows.push(window_id);
-                        }
+                        ws.windows.push(window_id);
                     }
                 }
             }
@@ -1122,7 +1146,6 @@ impl Default for ObserverManager {
 ///
 /// This function is called by the Accessibility framework and must only be
 /// invoked by the system with valid AX references.
-#[allow(unsafe_op_in_unsafe_fn)]
 unsafe extern "C" fn ax_observer_callback(
     _observer: AXObserverRef,
     element: AXUIElementRef,
@@ -1130,7 +1153,7 @@ unsafe extern "C" fn ax_observer_callback(
     _user_data: *mut c_void,
 ) {
     // Convert notification to Rust string
-    let notif_cf: CFString = CFString::wrap_under_get_rule(notification.cast());
+    let notif_cf: CFString = unsafe { CFString::wrap_under_get_rule(notification.cast()) };
     let notif_str = notif_cf.to_string();
 
     // Get window info from the element if possible
@@ -1197,12 +1220,11 @@ unsafe extern "C" fn ax_observer_callback(
 /// The `element` is a borrowed reference from the Accessibility framework.
 /// We must NOT call CFRelease on it (or drop an AccessibilityElement wrapping it).
 fn get_window_info_from_element(element: AXUIElementRef) -> Option<(u64, u32, u32)> {
+    use crate::tiling::accessibility::AccessibilityElement;
+
     if element.is_null() {
         return None;
     }
-
-    // Try to get window frame via AX API
-    use crate::tiling::accessibility::AccessibilityElement;
 
     // SAFETY: Create a wrapper but use ManuallyDrop to ensure we never accidentally
     // drop and release the borrowed element. This is critical because the element
@@ -1211,15 +1233,13 @@ fn get_window_info_from_element(element: AXUIElementRef) -> Option<(u64, u32, u3
         std::mem::ManuallyDrop::new(unsafe { AccessibilityElement::from_raw(element) });
 
     // Get the frame - if this fails, ManuallyDrop ensures no CFRelease is called
-    let frame = match ax_element.get_frame() {
-        Ok(f) => f,
-        Err(_) => return None,
+    let Ok(frame) = ax_element.get_frame() else {
+        return None;
     };
 
     // Try to find matching window ID from the window list
-    let windows = match window::get_all_windows() {
-        Ok(w) => w,
-        Err(_) => return None,
+    let Ok(windows) = window::get_all_windows() else {
+        return None;
     };
 
     // Find window matching position/size
@@ -1417,8 +1437,9 @@ unsafe extern "C" fn cleanup_timer_callback(_timer: CFRunLoopTimerRef, _info: *m
     let mut guard = manager.write();
 
     // Only check for dead processes - window events are handled by AXObserver
-    let dead_pids: Vec<i32> = {
-        if let Ok(windows) = window::get_all_windows() {
+    let dead_pids: Vec<i32> = window::get_all_windows().map_or_else(
+        |_| Vec::new(),
+        |windows| {
             let current_pids: HashSet<i32> = windows.iter().map(|w| w.pid).collect();
             guard
                 .observers
@@ -1426,10 +1447,8 @@ unsafe extern "C" fn cleanup_timer_callback(_timer: CFRunLoopTimerRef, _info: *m
                 .filter(|pid| !current_pids.contains(pid))
                 .copied()
                 .collect()
-        } else {
-            Vec::new()
-        }
-    };
+        },
+    );
 
     for pid in dead_pids {
         guard.remove_observer_for_pid(pid);
@@ -1489,6 +1508,7 @@ unsafe fn nsstring(s: &str) -> *mut objc::runtime::Object {
 }
 
 /// Creates the Objective-C observer object for app activation notifications.
+#[allow(clippy::items_after_statements)]
 unsafe fn create_app_activation_observer_object() -> *mut objc::runtime::Object {
     use objc::declare::ClassDecl;
     use objc::runtime::{Class, Object, Sel};

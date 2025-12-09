@@ -3,6 +3,8 @@
 //! This module handles discovering windows on the system and matching them
 //! to workspaces based on configured rules.
 
+#![allow(clippy::cast_possible_wrap)]
+
 use barba_shared::WindowRule;
 
 use super::TilingManager;
@@ -181,6 +183,7 @@ impl TilingManager {
     }
 
     /// Checks if a window matches a rule.
+    #[allow(clippy::unused_self)]
     pub(super) fn window_matches_rule(&self, win: &ManagedWindow, rule: &WindowRule) -> bool {
         // All specified criteria must match (AND logic)
         if let Some(ref app_id) = rule.app_id {
@@ -266,6 +269,7 @@ mod tests {
             config,
             workspace_manager,
             workspace_pids: std::collections::HashMap::new(),
+            app_handle: None,
         }
     }
 

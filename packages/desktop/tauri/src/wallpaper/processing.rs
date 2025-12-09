@@ -22,19 +22,19 @@ const SUPPORTED_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png"];
 #[derive(Debug)]
 pub enum ProcessingError {
     /// Failed to read the source image.
-    ImageReadError(String),
+    ImageRead(String),
     /// Failed to save the processed image.
-    ImageSaveError(String),
+    ImageSave(String),
     /// Failed to create the cache directory.
-    CacheDirectoryError(String),
+    CacheDirectory(String),
 }
 
 impl std::fmt::Display for ProcessingError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::ImageReadError(path) => write!(f, "Failed to read image: {path}"),
-            Self::ImageSaveError(path) => write!(f, "Failed to save processed image: {path}"),
-            Self::CacheDirectoryError(path) => {
+            Self::ImageRead(path) => write!(f, "Failed to read image: {path}"),
+            Self::ImageSave(path) => write!(f, "Failed to save processed image: {path}"),
+            Self::CacheDirectory(path) => {
                 write!(f, "Failed to create cache directory: {path}")
             }
         }
@@ -211,7 +211,7 @@ pub fn ensure_cache_dir() -> Result<(), ProcessingError> {
     let dir = cache_dir();
     if !dir.exists() {
         fs::create_dir_all(&dir)
-            .map_err(|_| ProcessingError::CacheDirectoryError(dir.display().to_string()))?;
+            .map_err(|_| ProcessingError::CacheDirectory(dir.display().to_string()))?;
     }
     Ok(())
 }
@@ -271,9 +271,9 @@ pub fn process_image(source: &Path, config: &WallpaperConfig) -> Result<PathBuf,
 
     // Load the source image
     let img = ImageReader::open(source)
-        .map_err(|_| ProcessingError::ImageReadError(source.display().to_string()))?
+        .map_err(|_| ProcessingError::ImageRead(source.display().to_string()))?
         .decode()
-        .map_err(|_| ProcessingError::ImageReadError(source.display().to_string()))?;
+        .map_err(|_| ProcessingError::ImageRead(source.display().to_string()))?;
 
     // Resize to screen dimensions
     let resized = resize_to_screen(&img, screen);
@@ -283,13 +283,13 @@ pub fn process_image(source: &Path, config: &WallpaperConfig) -> Result<PathBuf,
 
     // Save as JPEG with high quality (much faster than PNG)
     let file = File::create(&cache_path)
-        .map_err(|_| ProcessingError::ImageSaveError(cache_path.display().to_string()))?;
+        .map_err(|_| ProcessingError::ImageSave(cache_path.display().to_string()))?;
     let writer = BufWriter::new(file);
     let encoder = JpegEncoder::new_with_quality(writer, 95);
     processed
         .to_rgb8()
         .write_with_encoder(encoder)
-        .map_err(|_| ProcessingError::ImageSaveError(cache_path.display().to_string()))?;
+        .map_err(|_| ProcessingError::ImageSave(cache_path.display().to_string()))?;
 
     Ok(cache_path)
 }
@@ -325,9 +325,9 @@ pub fn process_image_for_screen(
 
     // Load the source image
     let img = ImageReader::open(source)
-        .map_err(|_| ProcessingError::ImageReadError(source.display().to_string()))?
+        .map_err(|_| ProcessingError::ImageRead(source.display().to_string()))?
         .decode()
-        .map_err(|_| ProcessingError::ImageReadError(source.display().to_string()))?;
+        .map_err(|_| ProcessingError::ImageRead(source.display().to_string()))?;
 
     // Resize to screen dimensions
     let resized = resize_to_screen(&img, screen);
@@ -337,13 +337,13 @@ pub fn process_image_for_screen(
 
     // Save as JPEG with high quality (much faster than PNG)
     let file = File::create(&cache_path)
-        .map_err(|_| ProcessingError::ImageSaveError(cache_path.display().to_string()))?;
+        .map_err(|_| ProcessingError::ImageSave(cache_path.display().to_string()))?;
     let writer = BufWriter::new(file);
     let encoder = JpegEncoder::new_with_quality(writer, 95);
     processed
         .to_rgb8()
         .write_with_encoder(encoder)
-        .map_err(|_| ProcessingError::ImageSaveError(cache_path.display().to_string()))?;
+        .map_err(|_| ProcessingError::ImageSave(cache_path.display().to_string()))?;
 
     Ok(cache_path)
 }

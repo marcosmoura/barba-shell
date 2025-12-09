@@ -15,8 +15,6 @@
 //! 2. `AirPods` microphone
 //! 3. `MacBook` Pro built-in microphone (fallback)
 
-#![allow(deprecated)] // kAudioObjectPropertyElementMaster is deprecated but still widely used
-
 use std::ffi::c_void;
 use std::ptr::{NonNull, null};
 use std::sync::OnceLock;
@@ -30,7 +28,7 @@ use objc2_core_audio::{
     AudioDeviceID, AudioObjectAddPropertyListener, AudioObjectID, AudioObjectPropertyAddress,
     AudioObjectSetPropertyData, kAudioHardwareNoError, kAudioHardwarePropertyDefaultInputDevice,
     kAudioHardwarePropertyDefaultOutputDevice, kAudioHardwarePropertyDevices,
-    kAudioObjectPropertyElementMaster, kAudioObjectPropertyScopeGlobal, kAudioObjectSystemObject,
+    kAudioObjectPropertyElementMain, kAudioObjectPropertyScopeGlobal, kAudioObjectSystemObject,
 };
 
 use crate::utils::thread::spawn_named_thread;
@@ -93,7 +91,7 @@ fn set_default_output_device(device_id: AudioDeviceID) -> bool {
     let property_address = AudioObjectPropertyAddress {
         mSelector: kAudioHardwarePropertyDefaultOutputDevice,
         mScope: kAudioObjectPropertyScopeGlobal,
-        mElement: kAudioObjectPropertyElementMaster,
+        mElement: kAudioObjectPropertyElementMain,
     };
 
     let status = unsafe {
@@ -115,7 +113,7 @@ fn set_default_input_device(device_id: AudioDeviceID) -> bool {
     let property_address = AudioObjectPropertyAddress {
         mSelector: kAudioHardwarePropertyDefaultInputDevice,
         mScope: kAudioObjectPropertyScopeGlobal,
-        mElement: kAudioObjectPropertyElementMaster,
+        mElement: kAudioObjectPropertyElementMain,
     };
 
     let status = unsafe {
@@ -280,7 +278,7 @@ fn register_audio_listeners(tx: Sender<()>) {
     let output_property_address = AudioObjectPropertyAddress {
         mSelector: kAudioHardwarePropertyDefaultOutputDevice,
         mScope: kAudioObjectPropertyScopeGlobal,
-        mElement: kAudioObjectPropertyElementMaster,
+        mElement: kAudioObjectPropertyElementMain,
     };
 
     unsafe {
@@ -296,7 +294,7 @@ fn register_audio_listeners(tx: Sender<()>) {
     let input_property_address = AudioObjectPropertyAddress {
         mSelector: kAudioHardwarePropertyDefaultInputDevice,
         mScope: kAudioObjectPropertyScopeGlobal,
-        mElement: kAudioObjectPropertyElementMaster,
+        mElement: kAudioObjectPropertyElementMain,
     };
 
     unsafe {
@@ -312,7 +310,7 @@ fn register_audio_listeners(tx: Sender<()>) {
     let devices_property_address = AudioObjectPropertyAddress {
         mSelector: kAudioHardwarePropertyDevices,
         mScope: kAudioObjectPropertyScopeGlobal,
-        mElement: kAudioObjectPropertyElementMaster,
+        mElement: kAudioObjectPropertyElementMain,
     };
 
     unsafe {

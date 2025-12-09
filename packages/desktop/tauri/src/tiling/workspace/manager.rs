@@ -13,6 +13,14 @@ use crate::tiling::state::{TilingState, Workspace};
 /// Result type for workspace operations.
 pub type WorkspaceResult<T> = Result<T, TilingError>;
 
+/// Backup of state needed for screen reinitialization.
+struct ReinitBackup {
+    focused_workspace: Option<String>,
+    focused_per_screen: std::collections::HashMap<String, String>,
+    windows: std::collections::HashMap<u64, crate::tiling::state::ManagedWindow>,
+    fallback_workspaces: std::collections::HashMap<String, barba_shared::ScreenTarget>,
+}
+
 /// Manages workspaces and their state.
 pub struct WorkspaceManager {
     /// The current tiling state.
@@ -42,7 +50,7 @@ impl WorkspaceManager {
 
         // Create workspaces for each screen based on config
         for screen_id in &screen_ids {
-            self.create_workspaces_for_screen(screen_id)?;
+            self.create_workspaces_for_screen(screen_id);
         }
 
         // Focus the first workspace on EACH screen
@@ -73,145 +81,204 @@ impl WorkspaceManager {
     /// 4. Migrates windows to appropriate workspaces
     /// 5. Preserves the current workspace focus where possible
     pub fn reinitialize_screens(&mut self) -> WorkspaceResult<()> {
-        // Remember current focus state
-        let old_focused_workspace = self.state.focused_workspace.clone();
-        let old_focused_per_screen = self.state.focused_workspace_per_screen.clone();
+        // Backup current state
+        let backup = self.backup_current_state();
 
-        // Remember all windows and their workspace assignments
-        let windows_backup = self.state.windows.clone();
+        // Rediscover screens and check if they changed
+        let new_screens = screen::get_all_screens()?;
+        if !self.screens_changed(&new_screens) {
+            self.state.screens = new_screens;
+            return Ok(());
+        }
 
-        // Remember which workspaces were in fallback mode
-        let fallback_workspaces: std::collections::HashMap<String, barba_shared::ScreenTarget> =
-            self.state
+        self.log_screen_change(new_screens.len());
+        self.state.screens = new_screens;
+
+        // Recreate workspaces for the new screen configuration
+        let old_layouts = self.backup_workspace_layouts();
+        self.recreate_workspaces();
+        self.restore_workspace_layouts(&old_layouts);
+
+        // Log workspace migrations
+        self.log_workspace_migrations(&backup.fallback_workspaces);
+
+        // Restore windows and focus state
+        self.restore_windows(backup.windows);
+        self.restore_focus_state(backup.focused_workspace.as_deref(), &backup.focused_per_screen);
+
+        Ok(())
+    }
+
+    /// Backs up the current state before reinitialization.
+    fn backup_current_state(&self) -> ReinitBackup {
+        ReinitBackup {
+            focused_workspace: self.state.focused_workspace.clone(),
+            focused_per_screen: self.state.focused_workspace_per_screen.clone(),
+            windows: self.state.windows.clone(),
+            fallback_workspaces: self
+                .state
                 .workspaces
                 .iter()
                 .filter_map(|ws| {
                     ws.intended_screen.as_ref().map(|target| (ws.name.clone(), target.clone()))
                 })
-                .collect();
-
-        // Rediscover screens
-        let new_screens = screen::get_all_screens()?;
-
-        // Check if screens actually changed
-        let old_screen_ids: std::collections::HashSet<_> =
-            self.state.screens.iter().map(|s| s.id.clone()).collect();
-        let new_screen_ids: std::collections::HashSet<_> =
-            new_screens.iter().map(|s| s.id.clone()).collect();
-
-        if old_screen_ids == new_screen_ids {
-            // No actual screen change, just update the frames in case resolution changed
-            self.state.screens = new_screens;
-            return Ok(());
+                .collect(),
         }
+    }
 
+    /// Checks if the screen configuration has changed.
+    fn screens_changed(&self, new_screens: &[crate::tiling::state::Screen]) -> bool {
+        let old_ids: std::collections::HashSet<_> =
+            self.state.screens.iter().map(|s| &s.id).collect();
+        let new_ids: std::collections::HashSet<_> = new_screens.iter().map(|s| &s.id).collect();
+        old_ids != new_ids
+    }
+
+    /// Logs screen configuration change.
+    fn log_screen_change(&self, new_count: usize) {
         eprintln!(
             "barba: screen configuration changed ({} -> {} screens)",
-            old_screen_ids.len(),
-            new_screen_ids.len()
+            self.state.screens.len(),
+            new_count
         );
+    }
 
-        // Update screens
-        self.state.screens = new_screens;
-
-        // Clear old workspaces but remember their layouts
-        let old_workspaces: std::collections::HashMap<String, barba_shared::LayoutMode> = self
-            .state
+    /// Backs up workspace layouts before clearing.
+    fn backup_workspace_layouts(
+        &self,
+    ) -> std::collections::HashMap<String, barba_shared::LayoutMode> {
+        self.state
             .workspaces
             .iter()
             .map(|ws| (ws.name.clone(), ws.layout.clone()))
-            .collect();
+            .collect()
+    }
 
+    /// Clears and recreates workspaces for the new screen configuration.
+    fn recreate_workspaces(&mut self) {
         self.state.workspaces.clear();
         self.state.focused_workspace_per_screen.clear();
 
-        // Recreate workspaces for new screen configuration
         let screen_ids: Vec<String> = self.state.screens.iter().map(|s| s.id.clone()).collect();
         for screen_id in &screen_ids {
-            self.create_workspaces_for_screen(screen_id)?;
+            self.create_workspaces_for_screen(screen_id);
         }
+    }
 
-        // Restore layout overrides from old workspaces
+    /// Restores layout overrides from old workspaces.
+    fn restore_workspace_layouts(
+        &mut self,
+        old_layouts: &std::collections::HashMap<String, barba_shared::LayoutMode>,
+    ) {
         for ws in &mut self.state.workspaces {
-            if let Some(old_layout) = old_workspaces.get(&ws.name) {
+            if let Some(old_layout) = old_layouts.get(&ws.name) {
                 ws.layout = old_layout.clone();
             }
         }
+    }
 
-        // Log workspaces that have been migrated from fallback to their intended screen
+    /// Logs workspaces that migrated from fallback to their intended screen.
+    fn log_workspace_migrations(
+        &self,
+        fallback_workspaces: &std::collections::HashMap<String, barba_shared::ScreenTarget>,
+    ) {
         for ws in &self.state.workspaces {
-            if let Some(old_target) = fallback_workspaces.get(&ws.name) {
-                // This workspace was previously in fallback mode
-                if ws.intended_screen.is_none() {
-                    // Now it's on its intended screen (no longer in fallback)
-                    eprintln!(
-                        "barba: workspace '{}' migrated to intended screen '{}'",
-                        ws.name, old_target
-                    );
-                }
+            if let Some(old_target) = fallback_workspaces.get(&ws.name)
+                && ws.intended_screen.is_none()
+            {
+                eprintln!(
+                    "barba: workspace '{}' migrated to intended screen '{}'",
+                    ws.name, old_target
+                );
             }
         }
+    }
 
-        // Reassign windows to their workspaces (they may have moved screens)
+    /// Restores windows to their workspaces after reinitialization.
+    fn restore_windows(
+        &mut self,
+        windows_backup: std::collections::HashMap<u64, crate::tiling::state::ManagedWindow>,
+    ) {
         for (window_id, mut window) in windows_backup {
-            // Find if this workspace still exists
             if self.state.get_workspace(&window.workspace).is_some() {
                 // Workspace exists, restore window
-                if let Some(ws) = self.state.get_workspace_mut(&window.workspace) {
-                    if !ws.windows.contains(&window_id) {
-                        ws.windows.push(window_id);
-                    }
-                }
+                self.add_window_to_workspace(window_id, &window.workspace);
                 self.state.windows.insert(window_id, window);
             } else {
-                // Workspace doesn't exist anymore, assign to first workspace on main screen
-                if let Some(main_screen) = self.state.get_main_screen() {
-                    let main_screen_id = main_screen.id.clone();
-                    if let Some(first_ws) =
-                        self.state.get_workspaces_on_screen(&main_screen_id).first()
-                    {
-                        let ws_name = first_ws.name.clone();
-                        window.workspace = ws_name.clone();
-                        if let Some(ws) = self.state.get_workspace_mut(&ws_name) {
-                            if !ws.windows.contains(&window_id) {
-                                ws.windows.push(window_id);
-                            }
-                        }
-                        self.state.windows.insert(window_id, window);
-                    }
+                // Workspace doesn't exist, assign to main screen's first workspace
+                if let Some(ws_name) = self.get_main_screen_fallback_workspace() {
+                    window.workspace.clone_from(&ws_name);
+                    self.add_window_to_workspace(window_id, &ws_name);
+                    self.state.windows.insert(window_id, window);
                 }
             }
         }
+    }
 
-        // Restore focus state where possible
+    /// Adds a window to a workspace if not already present.
+    fn add_window_to_workspace(&mut self, window_id: u64, workspace_name: &str) {
+        if let Some(ws) = self.state.get_workspace_mut(workspace_name)
+            && !ws.windows.contains(&window_id)
+        {
+            ws.windows.push(window_id);
+        }
+    }
+
+    /// Gets the first workspace on the main screen as a fallback.
+    fn get_main_screen_fallback_workspace(&self) -> Option<String> {
+        let main_screen = self.state.get_main_screen()?;
+        let main_screen_id = main_screen.id.clone();
+        self.state
+            .get_workspaces_on_screen(&main_screen_id)
+            .first()
+            .map(|ws| ws.name.clone())
+    }
+
+    /// Restores focus state after reinitialization.
+    fn restore_focus_state(
+        &mut self,
+        old_focused_workspace: Option<&str>,
+        old_focused_per_screen: &std::collections::HashMap<String, String>,
+    ) {
+        // Restore per-screen focus
+        let screen_ids: Vec<String> = self.state.screens.iter().map(|s| s.id.clone()).collect();
         for screen_id in &screen_ids {
-            // Try to restore old focus, but verify the workspace is still on this screen
-            // (workspaces may have migrated to different screens)
-            let ws_name = if let Some(old_ws) = old_focused_per_screen.get(screen_id)
-                && self.state.get_workspace(old_ws).is_some_and(|ws| ws.screen == *screen_id)
-            {
-                old_ws.clone()
-            } else if let Some(first_ws) = self.state.get_workspaces_on_screen(screen_id).first() {
-                first_ws.name.clone()
-            } else {
-                continue;
-            };
-            self.state.focused_workspace_per_screen.insert(screen_id.clone(), ws_name);
+            let ws_name = self.determine_screen_focus(screen_id, old_focused_per_screen);
+            if let Some(name) = ws_name {
+                self.state.focused_workspace_per_screen.insert(screen_id.clone(), name);
+            }
         }
 
         // Restore global focused workspace
-        if let Some(old_focus) = old_focused_workspace
-            && self.state.get_workspace(&old_focus).is_some()
+        self.restore_global_focus(old_focused_workspace);
+    }
+
+    /// Determines which workspace should be focused on a screen.
+    fn determine_screen_focus(
+        &self,
+        screen_id: &str,
+        old_focused_per_screen: &std::collections::HashMap<String, String>,
+    ) -> Option<String> {
+        // Try to restore old focus if workspace is still on this screen
+        if let Some(old_ws) = old_focused_per_screen.get(screen_id)
+            && self.state.get_workspace(old_ws).is_some_and(|ws| ws.screen == *screen_id)
         {
-            self.state.focused_workspace = Some(old_focus);
-        } else if let Some(main_screen) = self.state.get_main_screen() {
-            let main_screen_id = main_screen.id.clone();
-            if let Some(first_ws) = self.state.get_workspaces_on_screen(&main_screen_id).first() {
-                self.state.focused_workspace = Some(first_ws.name.clone());
-            }
+            return Some(old_ws.clone());
         }
 
-        Ok(())
+        // Fall back to first workspace on this screen
+        self.state.get_workspaces_on_screen(screen_id).first().map(|ws| ws.name.clone())
+    }
+
+    /// Restores the global focused workspace.
+    fn restore_global_focus(&mut self, old_focused_workspace: Option<&str>) {
+        if let Some(old_focus) = old_focused_workspace
+            && self.state.get_workspace(old_focus).is_some()
+        {
+            self.state.focused_workspace = Some(old_focus.to_string());
+        } else if let Some(ws_name) = self.get_main_screen_fallback_workspace() {
+            self.state.focused_workspace = Some(ws_name);
+        }
     }
 
     /// Creates workspaces for a screen based on configuration.
@@ -219,7 +286,7 @@ impl WorkspaceManager {
     /// For each configured workspace:
     /// - If its target screen matches this screen, create it here
     /// - If its target screen doesn't exist AND this is the main screen, create it here (fallback)
-    fn create_workspaces_for_screen(&mut self, screen_id: &str) -> WorkspaceResult<()> {
+    fn create_workspaces_for_screen(&mut self, screen_id: &str) {
         let default_layout = self.config.default_layout.clone();
         let workspace_configs = &self.config.workspaces;
 
@@ -231,7 +298,7 @@ impl WorkspaceManager {
                 default_layout,
                 screen_id.to_string(),
             ));
-            return Ok(());
+            return;
         }
 
         let is_main_screen = self.state.get_screen(screen_id).is_some_and(|s| s.is_main);
@@ -304,8 +371,6 @@ impl WorkspaceManager {
                 }
             }
         }
-
-        Ok(())
     }
 
     /// Gets a reference to the current state.
@@ -408,7 +473,7 @@ mod tests {
         });
 
         // Create workspaces for the main screen
-        manager.create_workspaces_for_screen("main-screen-id").unwrap();
+        manager.create_workspaces_for_screen("main-screen-id");
 
         // Both workspaces should be created on the main screen
         assert_eq!(manager.state.workspaces.len(), 2);
@@ -463,7 +528,7 @@ mod tests {
         });
 
         // Create workspaces for the main screen
-        manager.create_workspaces_for_screen("main-screen-id").unwrap();
+        manager.create_workspaces_for_screen("main-screen-id");
 
         // Workspace should fall back to main screen
         assert_eq!(manager.state.workspaces.len(), 1);
@@ -519,7 +584,7 @@ mod tests {
             is_main: true,
         });
 
-        manager.create_workspaces_for_screen("main-screen-id").unwrap();
+        manager.create_workspaces_for_screen("main-screen-id");
 
         // Both workspaces on main, set secondary-ws as focused on main screen
         manager
@@ -576,8 +641,8 @@ mod tests {
         manager.state.workspaces.clear();
         manager.state.focused_workspace_per_screen.clear();
 
-        manager.create_workspaces_for_screen("main-screen-id").unwrap();
-        manager.create_workspaces_for_screen("secondary-screen-id").unwrap();
+        manager.create_workspaces_for_screen("main-screen-id");
+        manager.create_workspaces_for_screen("secondary-screen-id");
 
         // Verify secondary-ws migrated to secondary screen
         let sec_ws = manager.state.get_workspace("secondary-ws").unwrap();
@@ -658,7 +723,7 @@ mod tests {
             is_main: true,
         });
 
-        manager.create_workspaces_for_screen("main-screen-id").unwrap();
+        manager.create_workspaces_for_screen("main-screen-id");
 
         // Add 5 windows to secondary-ws
         for i in 1..=5 {
@@ -711,8 +776,8 @@ mod tests {
         manager.state.workspaces.clear();
         manager.state.windows.clear();
 
-        manager.create_workspaces_for_screen("main-screen-id").unwrap();
-        manager.create_workspaces_for_screen("secondary-screen-id").unwrap();
+        manager.create_workspaces_for_screen("main-screen-id");
+        manager.create_workspaces_for_screen("secondary-screen-id");
 
         // Restore windows (simulating reinitialize_screens logic)
         for (window_id, window) in windows_backup {

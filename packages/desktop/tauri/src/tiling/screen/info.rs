@@ -2,40 +2,18 @@
 //!
 //! This module provides functions to query connected displays.
 
-use cocoa::base::{id, nil};
-use cocoa::foundation::NSArray;
 use core_graphics::display::{
     CGDirectDisplayID, CGDisplay, CGDisplayBounds, CGGetActiveDisplayList, CGMainDisplayID,
 };
-use objc::{class, msg_send, sel, sel_impl};
+use objc2::MainThreadMarker;
+use objc2_app_kit::NSScreen;
+use objc2_foundation::{NSNumber, NSRect, NSString};
 
 use crate::tiling::error::TilingError;
 use crate::tiling::state::{Screen, ScreenFrame};
 
 /// Result type for screen operations.
 pub type ScreenResult<T> = Result<T, TilingError>;
-
-/// `NSRect` structure matching `AppKit`'s definition.
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-struct NSRect {
-    origin: NSPoint,
-    size: NSSize,
-}
-
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-struct NSPoint {
-    x: f64,
-    y: f64,
-}
-
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-struct NSSize {
-    width: f64,
-    height: f64,
-}
 
 /// Gets the list of all connected screens.
 pub fn get_all_screens() -> ScreenResult<Vec<Screen>> {
@@ -61,7 +39,7 @@ pub fn get_all_screens() -> ScreenResult<Vec<Screen>> {
         };
 
         // Convert bounds to our frame type
-        #[allow(clippy::cast_possible_truncation)]
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let frame = ScreenFrame {
             x: bounds.origin.x as i32,
             y: bounds.origin.y as i32,
@@ -96,41 +74,38 @@ struct NSScreenInfo {
 
 /// Gets `NSScreen` information mapped by display ID.
 fn get_ns_screen_map() -> Vec<NSScreenInfo> {
+    use objc2::msg_send;
+
     let mut result = Vec::new();
 
-    unsafe {
-        let screens: id = msg_send![class!(NSScreen), screens];
-        if screens == nil {
-            return result;
-        }
+    // Get main thread marker; NSScreen requires main thread
+    let Some(mtm) = MainThreadMarker::new() else {
+        return result;
+    };
 
-        let count = NSArray::count(screens);
-        for i in 0..count {
-            let screen: id = msg_send![screens, objectAtIndex: i];
-            if screen == nil {
-                continue;
-            }
+    let screens = NSScreen::screens(mtm);
 
-            // Get the deviceDescription dictionary
-            let device_desc: id = msg_send![screen, deviceDescription];
-            if device_desc == nil {
-                continue;
-            }
+    let screen_number_key = NSString::from_str("NSScreenNumber");
 
-            // Get the NSScreenNumber key to get the CGDirectDisplayID
-            let screen_number_key: id =
-                msg_send![class!(NSString), stringWithUTF8String: b"NSScreenNumber\0".as_ptr()];
-            let screen_number: id = msg_send![device_desc, objectForKey: screen_number_key];
-            if screen_number == nil {
-                continue;
-            }
+    for screen in screens {
+        // Get the deviceDescription dictionary
+        let device_desc = screen.deviceDescription();
 
-            // NSNumber -> unsigned int (CGDirectDisplayID)
-            let display_id: CGDirectDisplayID = msg_send![screen_number, unsignedIntValue];
-            let visible_frame: NSRect = msg_send![screen, visibleFrame];
+        // Get the NSScreenNumber key to get the CGDirectDisplayID
+        let Some(screen_number) = device_desc.objectForKey(&screen_number_key) else {
+            continue;
+        };
 
-            result.push(NSScreenInfo { display_id, visible_frame });
-        }
+        // SAFETY: We know this is an NSNumber from the deviceDescription dictionary
+        let screen_number: &NSNumber = unsafe { std::mem::transmute(screen_number) };
+
+        // NSNumber -> unsigned int (CGDirectDisplayID)
+        let display_id: CGDirectDisplayID = screen_number.unsignedIntValue();
+
+        // Get the visible frame using msg_send since visibleFrame returns NSRect
+        let visible_frame: NSRect = unsafe { msg_send![&screen, visibleFrame] };
+
+        result.push(NSScreenInfo { display_id, visible_frame });
     }
 
     result
@@ -138,13 +113,15 @@ fn get_ns_screen_map() -> Vec<NSScreenInfo> {
 
 /// Gets the usable frame for a specific display ID.
 /// Uses `NSScreen`'s visibleFrame which properly accounts for menu bar and dock.
-#[allow(clippy::cast_possible_truncation)]
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn get_usable_frame_for_display(
     display_id: CGDirectDisplayID,
     ns_screens: &[NSScreenInfo],
     cg_frame: &ScreenFrame,
     is_main: bool,
 ) -> ScreenFrame {
+    use objc2::msg_send;
+
     // Find the matching NSScreen by display ID
     for info in ns_screens {
         if info.display_id == display_id {
@@ -155,11 +132,13 @@ fn get_usable_frame_for_display(
             // We need to convert the visibleFrame to Quartz coordinates
 
             // Get the main screen height to convert coordinates
-            let main_screen_height = unsafe {
-                let main_screen: id = msg_send![class!(NSScreen), mainScreen];
-                let main_frame: NSRect = msg_send![main_screen, frame];
-                main_frame.size.height
-            };
+            let main_screen_height =
+                MainThreadMarker::new()
+                    .and_then(NSScreen::mainScreen)
+                    .map_or(0.0, |main_screen| {
+                        let main_frame: NSRect = unsafe { msg_send![&main_screen, frame] };
+                        main_frame.size.height
+                    });
 
             // In Cocoa, origin.y is distance from bottom of main screen to bottom of visible area
             // In Quartz, y=0 is at the top of the main screen

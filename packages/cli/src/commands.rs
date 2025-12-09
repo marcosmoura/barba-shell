@@ -2,9 +2,11 @@
 //!
 //! This module defines all CLI commands and their arguments.
 
+use std::io;
 use std::str::FromStr;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::{Generator, Shell, generate};
 
 use crate::error::CliError;
 use crate::ipc;
@@ -77,6 +79,21 @@ pub enum Commands {
     /// editors that support JSON Schema validation.
     #[command(name = "generate-schema")]
     GenerateSchema,
+
+    /// Generate shell completions.
+    ///
+    /// Outputs shell completion script to stdout for the specified shell.
+    /// Can be used with eval or redirected to a file.
+    ///
+    /// Usage:
+    ///   eval "$(barba completions --shell zsh)"
+    ///   barba completions --shell bash > ~/.local/share/bash-completion/completions/barba
+    ///   barba completions --shell fish > ~/.config/fish/completions/barba.fish
+    Completions {
+        /// The shell to generate completions for.
+        #[arg(long, short, value_enum)]
+        shell: Shell,
+    },
 }
 
 // ============================================================================
@@ -588,9 +605,19 @@ impl Cli {
                 let schema = barba_shared::generate_schema_json();
                 println!("{schema}");
             }
+
+            Commands::Completions { shell } => {
+                Self::print_completions(*shell);
+            }
         }
 
         Ok(())
+    }
+
+    /// Print shell completions to stdout.
+    fn print_completions<G: Generator>(generator: G) {
+        let mut cmd = Self::command();
+        generate(generator, &mut cmd, "barba", &mut io::stdout());
     }
 
     /// Execute wallpaper subcommands.

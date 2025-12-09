@@ -21,7 +21,7 @@ export const KeepAwake = () => {
     refetchOnWindowFocus: true,
   });
 
-  useTauriEvent<boolean>('tauri_keep_awake_changed', ({ payload }) => {
+  useTauriEvent<boolean>('keep_awake_changed', ({ payload }) => {
     onKeepAwakeChanged(payload, queryClient);
   });
 

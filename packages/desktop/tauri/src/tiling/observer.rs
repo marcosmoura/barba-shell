@@ -787,8 +787,7 @@ impl ObserverManager {
                         if let Some(manager) = try_get_manager() {
                             let mut guard = manager.write();
 
-                            guard.workspace_manager.state_mut().focused_workspace =
-                                Some(ws_name);
+                            guard.workspace_manager.state_mut().focused_workspace = Some(ws_name);
 
                             // Emit workspace focused event
                             guard.emit_workspaces_changed();

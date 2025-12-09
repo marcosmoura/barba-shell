@@ -16,9 +16,7 @@ export const CurrentApp = () => {
     refetchOnMount: true,
   });
 
-  useTauriEvent<CLIEventPayload>('tauri_cli_event', ({ payload }) =>
-    onCLIEvent(payload, queryClient),
-  );
+  useTauriEvent<CLIEventPayload>('cli_event', ({ payload }) => onCLIEvent(payload, queryClient));
 
   if (!focusedWindow || focusedWindow.length === 0) {
     return null;

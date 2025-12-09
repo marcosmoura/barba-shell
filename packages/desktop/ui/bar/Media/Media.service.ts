@@ -1,3 +1,4 @@
+import { faTidal, type IconDefinition } from '@fortawesome/free-brands-svg-icons';
 import { SpotifyIcon, YoutubeIcon, PlayCircle02Icon } from '@hugeicons/core-free-icons';
 import type { IconSvgElement } from '@hugeicons/react';
 import { invoke } from '@tauri-apps/api/core';
@@ -87,22 +88,37 @@ export const loadMediaArtwork = (artwork?: string, onLoad?: (image: string | nul
   };
 };
 
-export const getPlayerIcon = (bundleIdentifier: string): { svg: IconSvgElement; color: string } => {
+type PlayerIconInfo = {
+  svg: IconSvgElement | IconDefinition;
+  color: string;
+  iconPack: 'hugeicons' | 'fontawesome';
+};
+
+export const getPlayerIcon = (bundleIdentifier: string): PlayerIconInfo => {
   switch (bundleIdentifier) {
     case mediaApps.spotify.bundleIdentifier:
       return {
         svg: SpotifyIcon,
         color: colors.green,
+        iconPack: 'hugeicons',
       };
     case mediaApps.edge.bundleIdentifier:
       return {
         svg: YoutubeIcon,
         color: colors.red,
+        iconPack: 'hugeicons',
+      };
+    case mediaApps.tidal.bundleIdentifier:
+      return {
+        svg: faTidal,
+        color: colors.text,
+        iconPack: 'fontawesome',
       };
     default:
       return {
         svg: PlayCircle02Icon,
         color: colors.text,
+        iconPack: 'hugeicons',
       };
   }
 };

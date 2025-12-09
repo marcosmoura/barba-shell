@@ -1,13 +1,131 @@
-import { CurrentApp } from './CurrentApp';
-import { Hyprspace } from './Hyprspace';
+import { useCallback, useMemo } from 'react';
 
+import {
+  ComputerTerminal01Icon,
+  SourceCodeIcon,
+  AiBrowserIcon,
+  SpotifyIcon,
+  FigmaIcon,
+  SlackIcon,
+  DashboardCircleIcon,
+  AppleFinderIcon,
+  Mail02Icon,
+  AppleReminderIcon,
+  AppStoreIcon,
+  BrowserIcon,
+  DiscordIcon,
+  HardDriveIcon,
+  Mail01Icon,
+  SecurityPasswordIcon,
+  SourceCodeCircleIcon,
+  UserMultiple02Icon,
+  VisualStudioCodeIcon,
+  WhatsappIcon,
+  ZoomIcon,
+} from '@hugeicons/core-free-icons';
+import type { IconSvgElement } from '@hugeicons/react';
+import { cx } from '@linaria/core';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+
+import { Button } from '@/components/Button';
+import { Icon } from '@/components/Icon';
+import { Surface } from '@/components/Surface';
+import { useTauriEvent } from '@/hooks';
+
+import { fetchWorkspaceList, onWorkspaceChange, onWorkspaceClick } from './Spaces.service';
 import * as styles from './Spaces.styles';
+import type { Workspaces } from './Spaces.types';
+
+const workspaceIcons: Record<string, IconSvgElement> = {
+  terminal: ComputerTerminal01Icon,
+  coding: SourceCodeIcon,
+  browser: AiBrowserIcon,
+  music: SpotifyIcon,
+  design: FigmaIcon,
+  communication: SlackIcon,
+  misc: DashboardCircleIcon,
+  files: AppleFinderIcon,
+  mail: Mail02Icon,
+  tasks: AppleReminderIcon,
+};
+
+const appIcons = {
+  'App Store': AppStoreIcon,
+  'Microsoft Edge Dev': BrowserIcon,
+  'Microsoft Outlook': Mail01Icon,
+  'Microsoft Teams': UserMultiple02Icon,
+  'Proton Drive': HardDriveIcon,
+  'Proton Pass': SecurityPasswordIcon,
+  'Zed Preview': SourceCodeCircleIcon,
+  Code: VisualStudioCodeIcon,
+  Discord: DiscordIcon,
+  Figma: FigmaIcon,
+  Finder: AppleFinderIcon,
+  Ghostty: ComputerTerminal01Icon,
+  Reminders: AppleReminderIcon,
+  Slack: SlackIcon,
+  Spotify: SpotifyIcon,
+  WhatsApp: WhatsappIcon,
+  // WTF? There is a special character in the app name
+  '‎WhatsApp': WhatsappIcon,
+  Zoom: ZoomIcon,
+} as const;
+
+const getAppIcon = (name: string) => {
+  const appName = name.trim() as keyof typeof appIcons;
+
+  return appIcons[appName] || DashboardCircleIcon;
+};
 
 export const Spaces = () => {
+  const queryClient = useQueryClient();
+
+  const { data: workspaceData } = useQuery<Workspaces>({
+    queryKey: ['workspaces'],
+    queryFn: fetchWorkspaceList,
+    refetchOnMount: true,
+  });
+
+  useTauriEvent<Workspaces>('tiling:workspaces-changed', ({ payload }) => {
+    onWorkspaceChange(payload, queryClient);
+  });
+
+  const focusedApp = useMemo(() => {
+    return workspaceData?.find((workspace) => workspace.isFocused)?.focusedApp;
+  }, [workspaceData]);
+
+  const onSpaceClick = useCallback((name: string) => () => onWorkspaceClick(name), []);
+
+  if (!workspaceData) {
+    return null;
+  }
+
   return (
     <div className={styles.spaces} data-test-id="spaces-container">
-      <Hyprspace />
-      <CurrentApp />
+      <Surface className={styles.workspaces}>
+        {workspaceData.map(({ name, isFocused }) => {
+          const capitalizedName = name.charAt(0).toUpperCase() + name.slice(1);
+
+          return (
+            <Button
+              key={name}
+              className={cx(styles.workspace, isFocused && styles.workspaceActive)}
+              active={isFocused}
+              onClick={onSpaceClick(name)}
+            >
+              <Icon icon={workspaceIcons[name]} />
+              {isFocused && <span>{capitalizedName}</span>}
+            </Button>
+          );
+        })}
+      </Surface>
+
+      {focusedApp && (
+        <Surface className={styles.app}>
+          <Icon icon={getAppIcon(focusedApp.name)} />
+          <span>{focusedApp.name}</span>
+        </Surface>
+      )}
     </div>
   );
 };

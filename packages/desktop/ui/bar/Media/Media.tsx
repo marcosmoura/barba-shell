@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 
+import type { IconDefinition } from '@fortawesome/free-brands-svg-icons';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import type { IconSvgElement } from '@hugeicons/react';
+
 import { Button } from '@/components/Button';
 import { Icon } from '@/components/Icon';
 import { ScrollingLabel } from '@/components/ScrollingLabel';
@@ -19,7 +23,7 @@ import type { MediaPayload, TransformedMediaPayload } from './Media.types';
 
 export const Media = () => {
   const { data: media } = useTauriEventQuery<MediaPayload, TransformedMediaPayload>({
-    eventName: 'tauri_media_changed',
+    eventName: 'media_changed',
     transformFn: (payload) => parseMediaPayload(payload),
     initialFetch: fetchCurrentMedia,
     queryOptions: {
@@ -44,7 +48,7 @@ export const Media = () => {
     return null;
   }
 
-  const { svg, color } = getPlayerIcon(media?.bundleIdentifier || '');
+  const { svg, color, iconPack } = getPlayerIcon(media?.bundleIdentifier || '');
 
   return (
     <Surface
@@ -54,7 +58,10 @@ export const Media = () => {
       data-test-id="media-container"
     >
       {loadedArtwork && <img className={styles.artwork} src={loadedArtwork} alt={media.label} />}
-      <Icon icon={svg} fill={color} color={colors.crust} size={22} />
+      {iconPack === 'hugeicons' && (
+        <Icon icon={svg as IconSvgElement} fill={color} color={colors.crust} size={22} />
+      )}
+      {iconPack === 'fontawesome' && <FontAwesomeIcon icon={svg as IconDefinition} />}
       {media.prefix && <span>{media.prefix}</span>}
       <ScrollingLabel className={styles.label}>{media.label}</ScrollingLabel>
     </Surface>

@@ -32,7 +32,7 @@ export const Hyprspace = () => {
     refetchOnMount: true,
   });
 
-  useTauriEvent<CLIEventPayload>('tauri_cli_event', ({ payload }) => {
+  useTauriEvent<CLIEventPayload>('cli_event', ({ payload }) => {
     onCLIEvent(payload, queryClient);
   });
 

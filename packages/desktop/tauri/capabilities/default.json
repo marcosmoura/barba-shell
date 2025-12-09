@@ -13,6 +13,8 @@
     "global-shortcut:allow-register",
     "global-shortcut:allow-unregister",
     "global-shortcut:allow-is-registered",
+    "macos-permissions:allow-check-accessibility-permission",
+    "macos-permissions:allow-request-accessibility-permission",
     "process:allow-restart",
     {
       "identifier": "shell:allow-spawn",

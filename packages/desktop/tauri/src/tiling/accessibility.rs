@@ -73,6 +73,7 @@ pub mod attributes {
     pub const POSITION: &str = "AXPosition";
     pub const SIZE: &str = "AXSize";
     pub const MAIN: &str = "AXMain";
+    pub const TITLE: &str = "AXTitle";
     /// Application hidden state (like Cmd+H).
     pub const HIDDEN: &str = "AXHidden";
     /// System-wide focused application.
@@ -441,6 +442,9 @@ impl AccessibilityElement {
     pub fn get_subrole(&self) -> Option<String> {
         self.get_string_attribute(attributes::SUBROLE).ok()
     }
+
+    /// Gets the title of this element.
+    pub fn get_title(&self) -> Option<String> { self.get_string_attribute(attributes::TITLE).ok() }
 
     /// Checks if this element is a dialog, sheet, or other non-tileable window type.
     ///

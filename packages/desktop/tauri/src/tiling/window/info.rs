@@ -165,6 +165,7 @@ pub fn get_focused_window() -> WindowResult<ManagedWindow> {
     let app_element = AccessibilityElement::application(frontmost_pid);
     let focused_ax_window = app_element.get_focused_window()?;
     let focused_frame = focused_ax_window.get_frame()?;
+    let focused_title = focused_ax_window.get_title();
 
     // Get all windows and find the one matching the focused window's position/size
     let windows = get_all_windows()?;
@@ -177,23 +178,41 @@ pub fn get_focused_window() -> WindowResult<ManagedWindow> {
         return Ok(app_windows.into_iter().next().unwrap());
     }
 
-    // Find window matching the focused window's frame
-    for window in app_windows {
-        // Match by position with a small tolerance (sometimes AX and CG report slightly different values)
+    // Try to find a window that matches both title and frame (best match)
+    if let Some(ref title) = focused_title {
+        for window in &app_windows {
+            let title_matches = &window.title == title;
+            let frame_matches = (window.frame.x - focused_frame.x).abs() <= 5
+                && (window.frame.y - focused_frame.y).abs() <= 5
+                && window.frame.width.abs_diff(focused_frame.width) <= 5
+                && window.frame.height.abs_diff(focused_frame.height) <= 5;
+
+            if title_matches && frame_matches {
+                return Ok(window.clone());
+            }
+        }
+
+        // Try title-only match (for when frames are identical)
+        for window in &app_windows {
+            if &window.title == title {
+                return Ok(window.clone());
+            }
+        }
+    }
+
+    // Fallback: find window matching the focused window's frame
+    for window in &app_windows {
         if (window.frame.x - focused_frame.x).abs() <= 5
             && (window.frame.y - focused_frame.y).abs() <= 5
             && window.frame.width.abs_diff(focused_frame.width) <= 5
             && window.frame.height.abs_diff(focused_frame.height) <= 5
         {
-            return Ok(window);
+            return Ok(window.clone());
         }
     }
 
-    // Fallback: try to get any window from the frontmost app
-    get_all_windows()?
-        .into_iter()
-        .find(|w| w.pid == frontmost_pid)
-        .ok_or(TilingError::WindowNotFound(0))
+    // Final fallback: return any window from the frontmost app
+    app_windows.into_iter().next().ok_or(TilingError::WindowNotFound(0))
 }
 
 /// Parses a window info dictionary into a `ManagedWindow`.

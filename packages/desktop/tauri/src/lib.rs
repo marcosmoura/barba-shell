@@ -27,6 +27,7 @@ pub fn run() {
             // Single instance plugin ensures only one instance runs
             // CLI communication is handled via IPC socket
         }))
+        .plugin(tauri_plugin_macos_permissions::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(hotkey::create_hotkey_plugin())
         .invoke_handler(tauri::generate_handler![
@@ -46,6 +47,14 @@ pub fn run() {
             tiling::commands::switch_workspace,
         ])
         .setup(move |app| {
+            // Request accessibility permissions on startup if not already granted
+            // This is needed for tiling window manager and global hotkeys
+            tauri::async_runtime::block_on(async {
+                if !tauri_plugin_macos_permissions::check_accessibility_permission().await {
+                    tauri_plugin_macos_permissions::request_accessibility_permission().await;
+                }
+            });
+
             // Start watching the config file for changes
             config::watch_config_file(app.handle().clone());
 

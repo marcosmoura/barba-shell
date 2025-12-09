@@ -94,8 +94,23 @@ impl TilingManager {
             return Ok(()); // Nothing to focus if only one window
         }
 
-        let target_id = match direction {
+        match direction {
             "next" | "previous" => {
+                // Get fresh window info for all windows in this workspace
+                let windows: Vec<_> =
+                    window_ids.iter().filter_map(|&id| window::get_window_by_id(id).ok()).collect();
+
+                // Group windows by PID to identify same-app windows
+                let current_pid = focused_window.pid;
+                let same_app_count = windows.iter().filter(|w| w.pid == current_pid).count();
+
+                // If there are multiple windows from the same app in this workspace,
+                // use AX z-order cycling which is more reliable
+                if same_app_count > 1 {
+                    return window::cycle_app_window(current_pid, direction);
+                }
+
+                // For different apps, use the workspace window order
                 let current_index =
                     window_ids.iter().position(|&id| id == focused_window.id).unwrap_or(0);
                 let new_index = if direction == "next" {
@@ -103,25 +118,22 @@ impl TilingManager {
                 } else {
                     (current_index + window_ids.len() - 1) % window_ids.len()
                 };
-                window_ids[new_index]
+                let target_id = window_ids[new_index];
+                window::focus_window(target_id)?;
             }
-            "left" | "right" | "up" | "down" => self
-                .find_window_in_direction(&workspace_name, focused_window.id, direction)?
-                .ok_or_else(|| {
-                    TilingError::OperationFailed(format!("No window in direction {direction}"))
-                })?,
+            "left" | "right" | "up" | "down" => {
+                let target_id = self
+                    .find_window_in_direction(&workspace_name, focused_window.id, direction)?
+                    .ok_or_else(|| {
+                        TilingError::OperationFailed(format!("No window in direction {direction}"))
+                    })?;
+                window::focus_window(target_id)?;
+            }
             _ => {
                 return Err(TilingError::OperationFailed(format!(
                     "Invalid direction: {direction}"
                 )));
             }
-        };
-
-        // Focus the target window using cached state for speed
-        if let Some(target_window) = self.workspace_manager.state().get_window(target_id) {
-            window::focus_window_fast(target_window)?;
-        } else {
-            window::focus_window(target_id)?;
         }
 
         Ok(())
@@ -549,13 +561,9 @@ impl TilingManager {
 
         // Only allow resizing in tiled layouts
         match layout_mode {
-            barba_shared::LayoutMode::Monocle => {
-                // Monocle windows can't be resized
+            barba_shared::LayoutMode::Monocle | barba_shared::LayoutMode::Floating => {
+                // Monocle and floating windows can't be resized via resize commands
                 return Ok(());
-            }
-            barba_shared::LayoutMode::Floating => {
-                // Floating windows are resized directly, not through split ratios
-                return self.resize_floating_window(focused_window.id, dimension, delta_pixels);
             }
             barba_shared::LayoutMode::Master => {
                 // Master layout: only width resize affects master/stack ratio
@@ -659,42 +667,6 @@ impl TilingManager {
 
         // Re-apply the layout with new ratios
         self.apply_layout(&workspace_name)
-    }
-
-    /// Resizes a floating window directly by the given pixel amount.
-    #[allow(
-        clippy::cast_sign_loss,
-        clippy::cast_possible_wrap,
-        clippy::items_after_statements
-    )]
-    fn resize_floating_window(
-        &self,
-        window_id: u64,
-        dimension: &str,
-        delta_pixels: i32,
-    ) -> Result<(), TilingError> {
-        let state = self.workspace_manager.state();
-        let window = state.get_window(window_id).ok_or(TilingError::WindowNotFound(window_id))?;
-
-        const MIN_SIZE: i32 = 100;
-
-        let (new_width, new_height) = match dimension {
-            "width" => {
-                let new_w = (window.frame.width as i32 + delta_pixels).max(MIN_SIZE) as u32;
-                (new_w, window.frame.height)
-            }
-            "height" => {
-                let new_h = (window.frame.height as i32 + delta_pixels).max(MIN_SIZE) as u32;
-                (window.frame.width, new_h)
-            }
-            _ => {
-                return Err(TilingError::OperationFailed(format!(
-                    "Invalid dimension: {dimension}"
-                )));
-            }
-        };
-
-        window::resize_window(window_id, new_width, new_height)
     }
 
     /// Resizes the master layout by adjusting the master/stack split ratio.

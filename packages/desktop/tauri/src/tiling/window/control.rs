@@ -264,52 +264,6 @@ pub fn focus_window(window_id: u64) -> ControlResult<()> {
     focus_window_fast(&window)
 }
 
-/// Cycles to the next or previous window of the given app.
-///
-/// This uses the AX window list which is ordered by z-order (front to back).
-/// For "next": focuses the second window (the one behind the current front window)
-/// For "previous": focuses the last window (will become front after focus)
-///
-/// This is more reliable than trying to match specific windows by title,
-/// since some apps (like Edge) report different titles via `CGWindowList` vs AX.
-///
-/// Note: This function is currently unused but kept for potential future use
-/// (e.g., a "cycle within app" command distinct from "cycle all windows").
-#[allow(dead_code)]
-pub fn cycle_app_window(pid: i32, direction: &str) -> ControlResult<()> {
-    if !is_accessibility_enabled() {
-        return Err(TilingError::AccessibilityNotAuthorized);
-    }
-
-    let app = AccessibilityElement::application(pid);
-    let ax_windows = app.get_windows()?;
-
-    if ax_windows.len() < 2 {
-        return Ok(()); // Nothing to cycle if only one window
-    }
-
-    // AX windows are ordered by z-order (front to back)
-    // For "next": focus the second window (index 1)
-    // For "previous": focus the last window
-    let target_index = if direction == "next" {
-        1 // The window right behind the current front window
-    } else {
-        ax_windows.len() - 1 // The backmost window
-    };
-
-    let target_window =
-        ax_windows.into_iter().nth(target_index).ok_or(TilingError::WindowNotFound(0))?;
-
-    // Focus and raise the target window
-    target_window.focus()?;
-
-    // Activate the app to ensure it's in the foreground
-    activate_app(pid)?;
-
-    // Focus again after activation
-    target_window.focus()
-}
-
 /// Activates an application by PID.
 fn activate_app(pid: i32) -> ControlResult<()> {
     let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) else {

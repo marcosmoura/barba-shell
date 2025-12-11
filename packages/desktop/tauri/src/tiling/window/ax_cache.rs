@@ -9,7 +9,6 @@
 //! The cache is automatically invalidated when windows are destroyed.
 
 #![allow(clippy::cast_possible_truncation)]
-#![allow(dead_code)] // Public API methods may be unused currently
 
 use std::collections::HashMap;
 use std::ffi::c_void;
@@ -19,7 +18,6 @@ use std::time::{Duration, Instant};
 use parking_lot::RwLock;
 
 use crate::tiling::accessibility::AccessibilityElement;
-use crate::tiling::error::TilingError;
 
 // FFI declarations for Core Foundation reference counting
 #[link(name = "CoreFoundation", kind = "framework")]
@@ -237,56 +235,9 @@ pub fn invalidate_app(pid: i32) { AX_ELEMENT_CACHE.write().remove_by_pid(pid); }
 /// This should be called on screen changes or other major events.
 pub fn clear_cache() { AX_ELEMENT_CACHE.write().clear(); }
 
-/// Gets cache statistics for debugging/monitoring.
-#[must_use]
-pub fn cache_stats() -> (u64, u64, u64) {
-    let cache = AX_ELEMENT_CACHE.read();
-    (cache.stats.hits, cache.stats.misses, cache.stats.evictions)
-}
-
-/// Result type alias for cache operations.
-pub type CacheResult<T> = Result<T, TilingError>;
-
-/// Gets an AX element for a window, using the cache if available.
-///
-/// This is the main entry point for getting AX elements. It:
-/// 1. Checks the cache first
-/// 2. Falls back to the slow lookup if not cached
-/// 3. Caches the result for future use
-pub fn get_element_cached<F>(
-    window_id: u64,
-    pid: i32,
-    lookup_fn: F,
-) -> CacheResult<AccessibilityElement>
-where
-    F: FnOnce() -> CacheResult<AccessibilityElement>,
-{
-    // Try cache first
-    if let Some(element) = get_cached_element(window_id) {
-        return Ok(element);
-    }
-
-    // Cache miss - perform lookup
-    let element = lookup_fn()?;
-
-    // Cache the result
-    cache_element(window_id, &element, pid);
-
-    Ok(element)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_cache_stats_initial() {
-        // Just verify we can read stats
-        let (hits, misses, evictions) = cache_stats();
-        // Stats should be non-negative (they're cumulative)
-        // Just verify we can read stats without panicking
-        let _ = (hits, misses, evictions);
-    }
 
     #[test]
     fn test_invalidate_nonexistent_window() {

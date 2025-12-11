@@ -18,18 +18,10 @@ use crate::tiling::window;
 /// This struct contains all the data needed to compute a layout without
 /// holding any references to the `TilingManager`.
 struct WorkspaceLayoutData {
-    /// Workspace name.
-    name: String,
-    /// Screen ID for the workspace.
-    #[allow(dead_code)]
-    screen_id: String,
     /// Layout mode for the workspace.
     layout_mode: LayoutMode,
     /// Window IDs assigned to the workspace.
     window_ids: Vec<u64>,
-    /// App IDs assigned to this workspace from rules.
-    #[allow(dead_code)]
-    app_ids: Vec<String>,
     /// Layout context for computing window positions.
     context: layout::LayoutContext,
     /// Master layout config (cloned for parallel access).
@@ -38,9 +30,6 @@ struct WorkspaceLayoutData {
 
 /// Result of computing a layout for a workspace.
 struct ComputedLayout {
-    /// Workspace name.
-    #[allow(dead_code)]
-    name: String,
     /// Computed window layouts.
     layouts: Vec<layout::WindowLayout>,
 }
@@ -154,11 +143,8 @@ impl TilingManager {
             };
 
             workspace_data.push(WorkspaceLayoutData {
-                name,
-                screen_id,
                 layout_mode,
                 window_ids,
-                app_ids,
                 context,
                 master_config: self.config.master.clone(),
             });
@@ -198,10 +184,7 @@ impl TilingManager {
             &data.master_config,
         )?;
 
-        Ok(ComputedLayout {
-            name: data.name.clone(),
-            layouts,
-        })
+        Ok(ComputedLayout { layouts })
     }
 
     /// Static version of `compute_layouts` that doesn't require `&self`.

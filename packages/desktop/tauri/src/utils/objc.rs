@@ -89,58 +89,6 @@ pub unsafe fn get_app_bundle_id(app: *mut Object) -> Option<String> {
     }
 }
 
-/// Gets the frontmost (active) application.
-///
-/// # Safety
-///
-/// This function is unsafe because it calls Objective-C methods via FFI.
-/// The caller must ensure that the Objective-C runtime is properly initialized.
-///
-/// # Returns
-///
-/// A pointer to the frontmost `NSRunningApplication`, or null if unavailable.
-#[must_use]
-#[allow(dead_code)] // Available for future use
-pub unsafe fn get_frontmost_app() -> *mut Object {
-    let workspace: *mut Object = msg_send![class!(NSWorkspace), sharedWorkspace];
-    if workspace.is_null() {
-        return std::ptr::null_mut();
-    }
-
-    msg_send![workspace, frontmostApplication]
-}
-
-/// Gets the localized name of an `NSRunningApplication`.
-///
-/// # Safety
-///
-/// This function is unsafe because it calls Objective-C methods via FFI.
-/// The caller must ensure that `app` is a valid `NSRunningApplication` pointer.
-///
-/// # Returns
-///
-/// The localized name as a `String`, or `None` if unavailable.
-#[must_use]
-#[allow(dead_code)] // Available for future use
-pub unsafe fn get_app_name(app: *mut Object) -> Option<String> {
-    if app.is_null() {
-        return None;
-    }
-
-    let name: *mut Object = msg_send![app, localizedName];
-    if name.is_null() {
-        return None;
-    }
-
-    // SAFETY: name is verified non-null above
-    let name_str = unsafe { nsstring_to_string(name) };
-    if name_str.is_empty() {
-        None
-    } else {
-        Some(name_str)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -186,23 +134,6 @@ mod tests {
     fn test_get_app_bundle_id_null() {
         unsafe {
             let result = get_app_bundle_id(std::ptr::null_mut());
-            assert!(result.is_none());
-        }
-    }
-
-    #[test]
-    fn test_get_frontmost_app_returns_something() {
-        unsafe {
-            // This test just verifies the function doesn't crash
-            // The result depends on the system state
-            let _ = get_frontmost_app();
-        }
-    }
-
-    #[test]
-    fn test_get_app_name_null() {
-        unsafe {
-            let result = get_app_name(std::ptr::null_mut());
             assert!(result.is_none());
         }
     }

@@ -5,7 +5,6 @@
 //! window moves, resizes, and other events that can fire rapidly.
 
 #![allow(clippy::cast_possible_truncation)] // Duration values won't exceed u64
-#![allow(dead_code)] // Public API methods may be unused currently
 
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -67,12 +66,6 @@ where
     #[must_use]
     pub fn is_empty(&self) -> bool { self.pending.is_empty() }
 
-    /// Checks if there were pending items before an operation.
-    ///
-    /// This is useful for determining whether to schedule a timer.
-    #[must_use]
-    pub fn had_pending(&self) -> bool { !self.pending.is_empty() }
-
     /// Drains all items that have settled (been stable for the settle time).
     ///
     /// Returns a vector of (key, value) pairs for settled items.
@@ -101,9 +94,11 @@ where
     pub fn remove(&mut self, key: &K) { self.pending.remove(key); }
 
     /// Clears all pending items.
+    #[cfg(test)]
     pub fn clear(&mut self) { self.pending.clear(); }
 
     /// Gets the number of pending items.
+    #[cfg(test)]
     #[must_use]
     pub fn len(&self) -> usize { self.pending.len() }
 

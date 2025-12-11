@@ -26,6 +26,7 @@ pub struct Cli {
 
 /// Available CLI commands.
 #[derive(Subcommand, Debug)]
+#[command(next_display_order = None)]
 pub enum Commands {
     /// Wallpaper management commands.
     #[command(subcommand)]
@@ -91,6 +92,7 @@ pub enum Commands {
 
 /// Query subcommands for inspecting tiling state.
 #[derive(Subcommand, Debug)]
+#[command(next_display_order = None)]
 pub enum QueryCommands {
     /// List all connected screens.
     ///
@@ -198,6 +200,7 @@ impl std::fmt::Display for Direction {
 
 /// Workspace subcommands for managing workspaces.
 #[derive(Subcommand, Debug)]
+#[command(next_display_order = None)]
 pub enum WorkspaceCommands {
     /// Focus a workspace by name or direction.
     ///
@@ -276,6 +279,7 @@ impl FromStr for ResizeDimension {
 
 /// Window subcommands for managing windows.
 #[derive(Subcommand, Debug)]
+#[command(next_display_order = None)]
 pub enum WindowCommands {
     /// Move the focused window in a direction (swap in tiling layouts).
     #[command(after_long_help = r#"Examples:
@@ -414,6 +418,7 @@ pub struct WallpaperSetData {
 
 /// Wallpaper subcommands.
 #[derive(Subcommand, Debug)]
+#[command(next_display_order = None)]
 pub enum WallpaperCommands {
     /// Set the desktop wallpaper.
     ///
@@ -466,6 +471,7 @@ pub enum WallpaperCommands {
 
 /// Cache subcommands for managing the application's cache.
 #[derive(Subcommand, Debug)]
+#[command(next_display_order = None)]
 pub enum CacheCommands {
     /// Clear the application's cache directory.
     ///

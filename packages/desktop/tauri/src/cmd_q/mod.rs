@@ -21,6 +21,12 @@ use tauri::Emitter;
 /// Duration (in seconds) required to hold ⌘Q before quitting.
 const HOLD_DURATION_SECS: f64 = 1.5;
 
+/// Polling interval when idle (not tracking a key press).
+const IDLE_POLL_MS: u64 = 100;
+
+/// Polling interval when actively tracking a key hold.
+const ACTIVE_POLL_MS: u64 = 16;
+
 /// Virtual key code for Q on macOS.
 const KEY_Q: i64 = 12;
 
@@ -121,9 +127,18 @@ pub fn init(app_handle: tauri::AppHandle) {
 }
 
 /// Main timer loop that checks if the ⌘Q key has been held long enough.
+///
+/// Uses adaptive polling: longer intervals when idle to save CPU,
+/// shorter intervals when actively tracking a key hold for responsiveness.
 fn timer_loop() {
     loop {
-        std::thread::sleep(Duration::from_millis(50));
+        // Use adaptive polling: longer sleep when idle, shorter when active
+        let poll_interval = if CHECK_QUIT.load(Ordering::SeqCst) {
+            ACTIVE_POLL_MS
+        } else {
+            IDLE_POLL_MS
+        };
+        std::thread::sleep(Duration::from_millis(poll_interval));
 
         if !CHECK_QUIT.load(Ordering::SeqCst) {
             continue;

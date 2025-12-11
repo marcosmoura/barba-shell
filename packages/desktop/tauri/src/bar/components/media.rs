@@ -66,18 +66,23 @@ fn resize_artwork(img: &image::DynamicImage) -> io::Result<(Vec<u8>, String)> {
 }
 
 /// Clean a string for safe use as a filename.
+///
+/// Converts to lowercase, keeps alphanumeric, dash, and underscore characters,
+/// and replaces other characters with underscores (without consecutive underscores).
 fn cleanup_string_for_filename(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut last_was_underscore = false;
 
     for c in s.chars().flat_map(char::to_lowercase) {
-        if c.is_alphanumeric() || c == '-' || c == '_' {
+        if c.is_alphanumeric() || c == '-' {
             result.push(c);
-            last_was_underscore = c == '_';
-        } else if !last_was_underscore {
+            last_was_underscore = false;
+        } else if c == '_' || !last_was_underscore {
+            // Underscore char or first replacement char in a sequence
             result.push('_');
             last_was_underscore = true;
         }
+        // Skip consecutive replacement characters (when last_was_underscore && c != '_')
     }
 
     result.trim_matches('_').to_string()
@@ -134,18 +139,26 @@ fn get_cache_dir() -> &'static str {
     })
 }
 
+/// Maps MIME types to image formats.
+///
+/// Supports common image formats: PNG, JPEG, WebP, GIF, and BMP.
 fn image_format_from_mime(mime: &str) -> Option<ImageFormat> {
-    let mime = mime.trim();
+    // Normalize: lowercase and trim whitespace
+    let mime = mime.trim().to_ascii_lowercase();
 
-    if mime.eq_ignore_ascii_case("image/png") || mime.eq_ignore_ascii_case("image/x-png") {
-        Some(ImageFormat::Png)
-    } else if mime.eq_ignore_ascii_case("image/jpeg")
-        || mime.eq_ignore_ascii_case("image/jpg")
-        || mime.eq_ignore_ascii_case("image/pjpeg")
-    {
-        Some(ImageFormat::Jpeg)
-    } else {
-        None
+    match mime.as_str() {
+        // PNG variants
+        "image/png" | "image/x-png" => Some(ImageFormat::Png),
+        // JPEG variants
+        "image/jpeg" | "image/jpg" | "image/pjpeg" => Some(ImageFormat::Jpeg),
+        // WebP
+        "image/webp" => Some(ImageFormat::WebP),
+        // GIF
+        "image/gif" => Some(ImageFormat::Gif),
+        // BMP
+        "image/bmp" | "image/x-bmp" | "image/x-ms-bmp" => Some(ImageFormat::Bmp),
+        // Unsupported
+        _ => None,
     }
 }
 
@@ -414,9 +427,28 @@ mod tests {
     }
 
     #[test]
+    fn test_image_format_from_mime_webp() {
+        assert_eq!(image_format_from_mime("image/webp"), Some(ImageFormat::WebP));
+        assert_eq!(image_format_from_mime("IMAGE/WEBP"), Some(ImageFormat::WebP));
+    }
+
+    #[test]
+    fn test_image_format_from_mime_gif() {
+        assert_eq!(image_format_from_mime("image/gif"), Some(ImageFormat::Gif));
+        assert_eq!(image_format_from_mime("IMAGE/GIF"), Some(ImageFormat::Gif));
+    }
+
+    #[test]
+    fn test_image_format_from_mime_bmp() {
+        assert_eq!(image_format_from_mime("image/bmp"), Some(ImageFormat::Bmp));
+        assert_eq!(image_format_from_mime("image/x-bmp"), Some(ImageFormat::Bmp));
+        assert_eq!(image_format_from_mime("image/x-ms-bmp"), Some(ImageFormat::Bmp));
+    }
+
+    #[test]
     fn test_image_format_from_mime_unknown() {
-        assert_eq!(image_format_from_mime("image/gif"), None);
-        assert_eq!(image_format_from_mime("image/webp"), None);
+        assert_eq!(image_format_from_mime("image/tiff"), None);
+        assert_eq!(image_format_from_mime("image/svg+xml"), None);
         assert_eq!(image_format_from_mime("text/plain"), None);
         assert_eq!(image_format_from_mime(""), None);
     }

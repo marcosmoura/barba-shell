@@ -7,7 +7,6 @@
 //!
 //! Inspired by <https://github.com/tombonez/noTunes> (MIT License, Tom Taylor 2017).
 
-use std::ffi::c_void;
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -15,6 +14,7 @@ use objc::declare::ClassDecl;
 use objc::runtime::{Class, Object, Sel};
 use objc::{class, msg_send, sel, sel_impl};
 
+use crate::utils::objc::{get_app_bundle_id, nsstring};
 use crate::utils::thread::spawn_named_thread;
 
 /// Bundle identifier for Apple Music.
@@ -31,6 +31,12 @@ const TIDAL_BUNDLE_ID: &str = "com.tidal.desktop";
 
 /// Flag indicating if the module is running.
 static IS_RUNNING: AtomicBool = AtomicBool::new(false);
+
+/// Checks if a bundle identifier belongs to Apple Music or iTunes.
+#[inline]
+fn is_music_app(bundle_id: &str) -> bool {
+    bundle_id == APPLE_MUSIC_BUNDLE_ID || bundle_id == ITUNES_BUNDLE_ID
+}
 
 /// Initializes the noTunes module.
 ///
@@ -60,15 +66,10 @@ unsafe fn terminate_music_apps() {
 
     for i in 0..count {
         let app: *mut Object = msg_send![running_apps, objectAtIndex: i];
-        let bundle_id: *mut Object = msg_send![app, bundleIdentifier];
 
-        if bundle_id.is_null() {
-            continue;
-        }
-
-        let bundle_id_str = unsafe { nsstring_to_string(bundle_id) };
-
-        if bundle_id_str == APPLE_MUSIC_BUNDLE_ID || bundle_id_str == ITUNES_BUNDLE_ID {
+        if let Some(bundle_id_str) = unsafe { get_app_bundle_id(app) }
+            && is_music_app(&bundle_id_str)
+        {
             eprintln!("barba: notunes: terminating running instance of {bundle_id_str}");
             let _: () = msg_send![app, forceTerminate];
         }
@@ -145,16 +146,10 @@ extern "C" fn handle_app_launch(_self: &Object, _cmd: Sel, notification: *mut Ob
             return;
         }
 
-        // Get the bundle identifier
-        let bundle_id: *mut Object = msg_send![app, bundleIdentifier];
-        if bundle_id.is_null() {
-            return;
-        }
-
-        let bundle_id_str = nsstring_to_string(bundle_id);
-
-        // Check if it's Apple Music or iTunes
-        if bundle_id_str == APPLE_MUSIC_BUNDLE_ID || bundle_id_str == ITUNES_BUNDLE_ID {
+        // Get the bundle identifier and check if it's a music app
+        if let Some(bundle_id_str) = get_app_bundle_id(app)
+            && is_music_app(&bundle_id_str)
+        {
             eprintln!("barba: notunes: blocking launch of {bundle_id_str}");
 
             // Force terminate the app
@@ -183,14 +178,12 @@ fn launch_tidal() {
 
         for i in 0..count {
             let app: *mut Object = msg_send![running_apps, objectAtIndex: i];
-            let bundle_id: *mut Object = msg_send![app, bundleIdentifier];
 
-            if !bundle_id.is_null() {
-                let bundle_id_str = nsstring_to_string(bundle_id);
-                if bundle_id_str == TIDAL_BUNDLE_ID {
-                    // Tidal is already running, no need to launch
-                    return;
-                }
+            if let Some(bundle_id_str) = get_app_bundle_id(app)
+                && bundle_id_str == TIDAL_BUNDLE_ID
+            {
+                // Tidal is already running, no need to launch
+                return;
             }
         }
     }
@@ -202,38 +195,29 @@ fn launch_tidal() {
     }
 }
 
-/// Creates an `NSString` from a Rust string.
-unsafe fn nsstring(s: &str) -> *mut Object {
-    let nsstring_class = class!(NSString);
-    let bytes = s.as_ptr().cast::<c_void>();
-    let len = s.len();
-    let encoding: usize = 4; // NSUTF8StringEncoding
-
-    msg_send![
-        nsstring_class,
-        stringWithBytes: bytes
-        length: len
-        encoding: encoding
-    ]
-}
-
-/// Converts an `NSString` to a Rust String.
-unsafe fn nsstring_to_string(nsstring: *mut Object) -> String {
-    if nsstring.is_null() {
-        return String::new();
-    }
-
-    let c_str: *const i8 = msg_send![nsstring, UTF8String];
-    if c_str.is_null() {
-        return String::new();
-    }
-
-    unsafe { std::ffi::CStr::from_ptr(c_str) }.to_string_lossy().into_owned()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_is_music_app_apple_music() {
+        assert!(is_music_app(APPLE_MUSIC_BUNDLE_ID));
+        assert!(is_music_app("com.apple.Music"));
+    }
+
+    #[test]
+    fn test_is_music_app_itunes() {
+        assert!(is_music_app(ITUNES_BUNDLE_ID));
+        assert!(is_music_app("com.apple.iTunes"));
+    }
+
+    #[test]
+    fn test_is_music_app_other_apps() {
+        assert!(!is_music_app("com.spotify.client"));
+        assert!(!is_music_app(TIDAL_BUNDLE_ID));
+        assert!(!is_music_app("com.apple.Safari"));
+        assert!(!is_music_app(""));
+    }
 
     #[test]
     fn test_bundle_ids_are_correct() {

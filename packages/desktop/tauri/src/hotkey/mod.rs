@@ -90,22 +90,33 @@ pub fn create_hotkey_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
 
 /// Normalizes a shortcut string to a consistent format for macOS.
 ///
-/// This function handles common variations in shortcut notation:
+/// This function handles common variations in shortcut notation using a single-pass
+/// approach for efficiency:
 /// - "Ctrl" is normalized to "Control"
 /// - "Cmd" is normalized to "Command" (macOS Command key)
 /// - "Alt" and "Opt" are normalized to "Option" (macOS Option key)
 /// - "Super" and "Meta" are normalized to "Command"
 /// - backtick (`` ` ``) is normalized to "Backquote"
 fn normalize_shortcut(shortcut: &str) -> String {
-    shortcut
-        .replace("Ctrl+", "Control+")
-        .replace("Cmd+", "Command+")
-        .replace("Alt+", "Option+")
-        .replace("Opt+", "Option+")
-        .replace("Super+", "Command+")
-        .replace("Meta+", "Command+")
-        // Normalize backtick/grave accent to Backquote (must be at the end of shortcut)
-        .replace("+`", "+Backquote")
+    let mut result = String::with_capacity(shortcut.len() + 8);
+
+    for part in shortcut.split('+') {
+        if !result.is_empty() {
+            result.push('+');
+        }
+
+        let normalized = match part {
+            "Ctrl" => "Control",
+            "Cmd" | "Super" | "Meta" => "Command",
+            "Alt" | "Opt" => "Option",
+            "`" => "Backquote",
+            other => other,
+        };
+
+        result.push_str(normalized);
+    }
+
+    result
 }
 
 /// Executes all commands associated with a shortcut sequentially.
@@ -226,5 +237,28 @@ mod tests {
     fn test_normalize_shortcut_super_and_meta() {
         assert_eq!(normalize_shortcut("Super+K"), "Command+K");
         assert_eq!(normalize_shortcut("Meta+K"), "Command+K");
+    }
+
+    #[test]
+    fn test_normalize_shortcut_backtick() {
+        assert_eq!(normalize_shortcut("Cmd+`"), "Command+Backquote");
+        assert_eq!(normalize_shortcut("Command+Shift+`"), "Command+Shift+Backquote");
+    }
+
+    #[test]
+    fn test_normalize_shortcut_complex() {
+        assert_eq!(normalize_shortcut("Ctrl+Alt+Shift+K"), "Control+Option+Shift+K");
+        assert_eq!(
+            normalize_shortcut("Cmd+Opt+Shift+`"),
+            "Command+Option+Shift+Backquote"
+        );
+    }
+
+    #[test]
+    fn test_normalize_shortcut_passthrough() {
+        // Keys that should pass through unchanged
+        assert_eq!(normalize_shortcut("A"), "A");
+        assert_eq!(normalize_shortcut("F12"), "F12");
+        assert_eq!(normalize_shortcut("Space"), "Space");
     }
 }

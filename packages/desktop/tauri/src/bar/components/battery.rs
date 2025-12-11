@@ -2,14 +2,15 @@ use serde::Serialize;
 use starship_battery::units::ratio::percent;
 use starship_battery::{Battery, Manager, State};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct BatteryInfo {
     pub percentage: u8,
     pub state: BatteryState,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub enum BatteryState {
+    #[default]
     Unknown,
     Charging,
     Discharging,
@@ -99,5 +100,17 @@ mod tests {
 
         let err = Error::other("boom");
         assert_eq!(stringify_error(err), "boom");
+    }
+
+    #[test]
+    fn battery_state_default_is_unknown() {
+        assert!(matches!(BatteryState::default(), BatteryState::Unknown));
+    }
+
+    #[test]
+    fn battery_info_default() {
+        let info = BatteryInfo::default();
+        assert_eq!(info.percentage, 0);
+        assert!(matches!(info.state, BatteryState::Unknown));
     }
 }

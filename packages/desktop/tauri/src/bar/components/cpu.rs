@@ -9,8 +9,13 @@ use serde::Serialize;
 use sysinfo::System;
 use tauri_plugin_shell::ShellExt;
 
+/// Minimum valid temperature in Celsius.
+const TEMP_MIN: f64 = 0.0;
+/// Maximum valid temperature in Celsius (sanity check).
+const TEMP_MAX: f64 = 150.0;
+
 /// CPU metrics payload.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct CpuInfo {
     /// CPU usage percentage (0-100).
     usage: f32,
@@ -55,6 +60,15 @@ fn get_cpu_temperature(app: &tauri::AppHandle) -> Option<f32> {
     get_shell_cpu_temperature(app)
 }
 
+/// Check if a temperature reading is within valid range.
+#[inline]
+const fn is_valid_temp(temp: f64) -> bool { temp > TEMP_MIN && temp < TEMP_MAX }
+
+/// Calculate average of a slice of f64 values.
+#[inline]
+#[allow(clippy::cast_precision_loss)]
+fn average_temps(temps: &[f64]) -> f64 { temps.iter().sum::<f64>() / temps.len() as f64 }
+
 /// Read CPU temperature directly from SMC using the smc crate.
 #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
 fn get_smc_cpu_temperature() -> Option<f32> {
@@ -62,11 +76,10 @@ fn get_smc_cpu_temperature() -> Option<f32> {
 
     // Try the built-in cpus_temperature method
     if let Ok(temps) = smc.cpus_temperature() {
-        let valid_temps: Vec<f64> = temps.into_iter().filter(|&t| t > 0.0 && t < 150.0).collect();
+        let valid_temps: Vec<f64> = temps.into_iter().filter(|&t| is_valid_temp(t)).collect();
 
         if !valid_temps.is_empty() {
-            let avg = valid_temps.iter().sum::<f64>() / valid_temps.len() as f64;
-            return Some(avg as f32);
+            return Some(average_temps(&valid_temps) as f32);
         }
     }
 
@@ -83,12 +96,11 @@ fn get_smc_cpu_temperature() -> Option<f32> {
                     || key_str.contains("Tf")
             })
             .map(|(_, &temp)| temp)
-            .filter(|&t| t > 0.0 && t < 150.0)
+            .filter(|&t| is_valid_temp(t))
             .collect();
 
         if !cpu_temps.is_empty() {
-            let avg = cpu_temps.iter().sum::<f64>() / cpu_temps.len() as f64;
-            return Some(avg as f32);
+            return Some(average_temps(&cpu_temps) as f32);
         }
     }
 
@@ -109,8 +121,7 @@ fn get_shell_cpu_temperature(app: &tauri::AppHandle) -> Option<f32> {
     // Fall back to smctemp (outputs just the temperature value)
     if let Ok(output) = run_shell_command(app, "smctemp", &["-c"])
         && let Ok(temp) = output.trim().parse::<f32>()
-        && temp > 0.0
-        && temp < 150.0
+        && is_valid_temp(f64::from(temp))
     {
         return Some(temp);
     }
@@ -236,5 +247,36 @@ mod tests {
 
         let result = parse_ismc_cpu_temps(json);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_is_valid_temp() {
+        // Valid temperatures
+        assert!(is_valid_temp(50.0));
+        assert!(is_valid_temp(0.1));
+        assert!(is_valid_temp(149.9));
+
+        // Invalid temperatures
+        assert!(!is_valid_temp(0.0)); // Exactly 0 is invalid
+        assert!(!is_valid_temp(-10.0));
+        assert!(!is_valid_temp(150.0)); // Exactly 150 is invalid
+        assert!(!is_valid_temp(200.0));
+    }
+
+    #[test]
+    fn test_average_temps() {
+        let temps = vec![50.0, 60.0, 70.0];
+        let avg = average_temps(&temps);
+        assert!((avg - 60.0).abs() < f64::EPSILON);
+
+        let single = vec![42.5];
+        assert!((average_temps(&single) - 42.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_cpu_info_default() {
+        let info = CpuInfo::default();
+        assert!((info.usage - 0.0).abs() < f32::EPSILON);
+        assert!(info.temperature.is_none());
     }
 }

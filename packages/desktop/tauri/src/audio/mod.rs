@@ -20,6 +20,12 @@ use std::ptr::{NonNull, null};
 use std::sync::OnceLock;
 use std::sync::mpsc::{Sender, channel};
 
+/// Stores the Sender used by audio property listeners.
+/// This is intentionally kept alive for the application's lifetime since the
+/// `CoreAudio` property listeners need a valid pointer to send device change events.
+/// The raw pointer is passed to `CoreAudio` callbacks and must remain valid.
+static LISTENER_SENDER: OnceLock<Box<Sender<()>>> = OnceLock::new();
+
 use coreaudio::audio_unit::Scope;
 use coreaudio::audio_unit::macos_helpers::{
     get_audio_device_ids, get_audio_device_supports_scope, get_default_device_id, get_device_name,
@@ -271,8 +277,16 @@ unsafe extern "C-unwind" fn audio_device_property_listener(
 }
 
 /// Registers listeners for audio device changes.
+///
+/// The `Sender` is stored in a static to ensure it lives for the application's
+/// lifetime, as `CoreAudio` callbacks require a valid pointer.
 fn register_audio_listeners(tx: Sender<()>) {
-    let tx_ptr = Box::into_raw(Box::new(tx));
+    // Store the sender in a static to ensure it lives for the app's lifetime.
+    // CoreAudio callbacks will use this pointer to send device change events.
+    let sender_box = LISTENER_SENDER.get_or_init(|| Box::new(tx));
+    // Cast to *mut for CoreAudio API compatibility (the callback only reads from it)
+    let tx_ptr: *mut c_void =
+        std::ptr::from_ref::<Sender<()>>(sender_box.as_ref()).cast_mut().cast();
 
     // Listen for default output device changes
     let output_property_address = AudioObjectPropertyAddress {
@@ -286,7 +300,7 @@ fn register_audio_listeners(tx: Sender<()>) {
             kAudioObjectSystemObject as AudioObjectID,
             NonNull::from(&output_property_address),
             Some(audio_device_property_listener),
-            tx_ptr.cast(),
+            tx_ptr,
         );
     }
 
@@ -302,7 +316,7 @@ fn register_audio_listeners(tx: Sender<()>) {
             kAudioObjectSystemObject as AudioObjectID,
             NonNull::from(&input_property_address),
             Some(audio_device_property_listener),
-            tx_ptr.cast(),
+            tx_ptr,
         );
     }
 
@@ -318,7 +332,7 @@ fn register_audio_listeners(tx: Sender<()>) {
             kAudioObjectSystemObject as AudioObjectID,
             NonNull::from(&devices_property_address),
             Some(audio_device_property_listener),
-            tx_ptr.cast(),
+            tx_ptr,
         );
     }
 }

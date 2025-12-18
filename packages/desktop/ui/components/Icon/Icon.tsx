@@ -3,7 +3,7 @@ import { HugeiconsIcon } from '@hugeicons/react';
 
 import type { FontAwesomeProps, HugeIconsProps, IconProps } from './Icon.types';
 
-export const Icon = ({ pack, ...props }: IconProps) => {
+export const Icon = ({ pack = 'hugeicons', ...props }: IconProps) => {
   if (pack === 'fontawesome') {
     return <FontAwesomeIcon {...(props as FontAwesomeProps)} />;
   }

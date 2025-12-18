@@ -2,7 +2,7 @@ import type { FontAwesomeIconProps } from '@fortawesome/react-fontawesome';
 import type { HugeiconsIconProps } from '@hugeicons/react';
 
 export type HugeIconsProps = Omit<HugeiconsIconProps, 'ref'> & {
-  pack: 'hugeicons';
+  pack?: 'hugeicons';
 };
 
 export type FontAwesomeProps = Omit<FontAwesomeIconProps, 'ref'> & {

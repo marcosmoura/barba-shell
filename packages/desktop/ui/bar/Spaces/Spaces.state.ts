@@ -13,7 +13,7 @@ import type {
   HyprspaceWorkspacePayload,
 } from './Spaces.types';
 
-const workspaceDefaultOrder = [
+const workspaceOrder = [
   'terminal',
   'coding',
   'browser',
@@ -32,8 +32,7 @@ const getSortedWorkspaces = (workspaces: HyprspaceWorkspacePayload[] | undefined
   }
 
   return [...workspaces].sort(
-    (a, b) =>
-      workspaceDefaultOrder.indexOf(a.workspace) - workspaceDefaultOrder.indexOf(b.workspace),
+    (a, b) => workspaceOrder.indexOf(a.workspace) - workspaceOrder.indexOf(b.workspace),
   );
 };
 

@@ -97,8 +97,8 @@ pub fn watch_config_file<R: tauri::Runtime>(app_handle: AppHandle<R>) {
         }
 
         // Track last event time for debouncing (None = no previous event)
+        #[allow(unused_variables, unused_mut)]
         let mut last_event_time: Option<Instant> = None;
-        #[allow(unused_variables)]
         let debounce_duration = Duration::from_millis(CONFIG_DEBOUNCE_MS);
 
         loop {

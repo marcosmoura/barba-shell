@@ -31,7 +31,6 @@
 
 Barba Shell is a **macOS-only** Tauri 2.x desktop application that provides a complete desktop environment experience with:
 
-- 🪟 **Tiling Window Manager** — Automatic window tiling with multiple layout modes
 - 📊 **Status Bar** — Customizable menubar with system information widgets
 - ⌨️ **Global Keybindings** — Configurable keyboard shortcuts for all actions
 - 🎨 **Dynamic Wallpapers** — Automatic wallpaper rotation with blur and rounded corners
@@ -42,30 +41,6 @@ Built with **Rust** for the backend and **React 19** for the frontend, Barba She
 ---
 
 ## Features
-
-### 🪟 Tiling Window Manager
-
-Barba Shell includes a powerful tiling window manager with multiple layout modes:
-
-| Layout             | Description                                      |
-| ------------------ | ------------------------------------------------ |
-| `tiling`           | Binary space partitioning (dwindle algorithm)    |
-| `monocle`          | All windows maximized, only focused visible      |
-| `master`           | One master window, remaining stacked on the side |
-| `split`            | Two windows split based on screen orientation    |
-| `split-vertical`   | Two windows side by side                         |
-| `split-horizontal` | Two windows stacked top/bottom                   |
-| `floating`         | Free-form window positioning                     |
-| `scrolling`        | Niri-style scrolling workspace layout            |
-
-**Key Features:**
-
-- Per-workspace layouts with individual customization
-- Configurable gaps (inner/outer, per-axis)
-- Window rules for automatic floating/assignment
-- Floating presets for common window positions
-- Multi-monitor support with workspace assignment
-- Window animations (optional)
 
 ### 📊 Status Bar
 
@@ -106,7 +81,6 @@ Define custom keyboard shortcuts to:
 ### Requirements
 
 - **macOS 10.15** (Catalina) or later
-- **Accessibility permissions** (required for window management)
 
 ### Download
 
@@ -194,46 +168,6 @@ A JSON Schema is provided for editor autocompletion and validation:
     "Command+Shift+J": "barba window move down",
     "Command+Shift+K": "barba window move up",
   },
-
-  // Tiling window manager
-  "tiling": {
-    "enabled": true,
-    "defaultLayout": "tiling",
-    "animations": true,
-    "gaps": {
-      "inner": { "horizontal": 10, "vertical": 10 },
-      "outer": { "top": 45, "bottom": 10, "left": 10, "right": 10 },
-    },
-    "workspaces": [
-      { "name": "1", "layout": "tiling", "screen": "main" },
-      { "name": "2", "layout": "tiling", "screen": "main" },
-      { "name": "3", "layout": "monocle", "screen": "main" },
-      { "name": "chat", "layout": "floating", "screen": "secondary" },
-    ],
-    "windowRules": [
-      {
-        "match": { "app": "Finder" },
-        "floating": true,
-      },
-      {
-        "match": { "title": "Settings" },
-        "floating": true,
-        "preset": "centered-large",
-      },
-    ],
-    "floatingPresets": {
-      "centered-small": {
-        "width": "40%",
-        "height": "50%",
-        "position": "center",
-      },
-      "centered-large": {
-        "width": "80%",
-        "height": "80%",
-        "position": "center",
-      },
-    },
-  },
 }
 ```
 
@@ -259,51 +193,6 @@ A JSON Schema is provided for editor autocompletion and validation:
 | ---------------------- | -------- | ------- | ------------------------------------------------------------------ |
 | `visualCrossingApiKey` | `string` | `""`    | API key from [visualcrossing.com](https://www.visualcrossing.com/) |
 | `defaultLocation`      | `string` | `""`    | Fallback location when geolocation fails                           |
-
-</details>
-
-<details>
-<summary><strong>Tiling Configuration</strong></summary>
-
-#### General
-
-| Option          | Type      | Default    | Description                       |
-| --------------- | --------- | ---------- | --------------------------------- |
-| `enabled`       | `boolean` | `true`     | Enable/disable window management  |
-| `defaultLayout` | `string`  | `"tiling"` | Default layout for new workspaces |
-| `animations`    | `boolean` | `false`    | Enable window animations          |
-
-#### Gaps
-
-| Option  | Type                                       | Description             |
-| ------- | ------------------------------------------ | ----------------------- |
-| `inner` | `number` \| `{ horizontal, vertical }`     | Gap between windows     |
-| `outer` | `number` \| `{ top, bottom, left, right }` | Gap around screen edges |
-
-#### Workspaces
-
-```jsonc
-{
-  "name": "coding", // Unique workspace identifier
-  "layout": "tiling", // Layout mode for this workspace
-  "screen": "main", // Assigned screen (main, secondary, or display name)
-}
-```
-
-#### Window Rules
-
-```jsonc
-{
-  "match": {
-    "app": "Firefox", // Match by app name (supports regex)
-    "title": "Picture-in-*", // Match by window title (supports glob)
-    "bundleId": "com.apple.*", // Match by bundle identifier
-  },
-  "floating": true, // Force floating mode
-  "workspace": "media", // Assign to specific workspace
-  "preset": "centered-small", // Apply floating preset
-}
-```
 
 </details>
 
@@ -342,7 +231,7 @@ barba completions --shell fish > ~/.config/fish/completions/barba.fish
 | Command                             | Description                          |
 | ----------------------------------- | ------------------------------------ |
 | `barba reload`                      | Reload configuration without restart |
-| `barba generate-schema`             | Output JSON schema to stdout         |
+| `barba schema`                      | Output JSON schema to stdout         |
 | `barba completions --shell <SHELL>` | Generate shell completions           |
 
 #### Workspace Management
@@ -474,7 +363,6 @@ barba-shell/
 │   └── shared/           # Shared Rust types
 │       └── src/
 │           ├── config.rs     # Configuration types
-│           └── tiling.rs     # Tiling types
 │
 ├── scripts/              # Build & release scripts
 ├── barba.schema.json     # JSON Schema for config

@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": { "script": "pnpm dev", "cwd": "../../.." },
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": { "script": "./scripts/generate-schema.sh && pnpm build", "cwd": "../../.." },
+    "beforeBuildCommand": { "script": "./scripts/generate-schema.sh && pnpm format && pnpm build", "cwd": "../../.." },
     "frontendDist": "../ui/dist"
   },
   "app": {

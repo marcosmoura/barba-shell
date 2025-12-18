@@ -1,38 +1,19 @@
-import { useCallback } from 'react';
-
-import { useQuery } from '@tanstack/react-query';
-
 import { Button } from '@/components/Button';
 import { Icon } from '@/components/Icon';
 import { Surface } from '@/components/Surface';
 
-import {
-  fetchBattery,
-  getBatteryIcon,
-  getBatteryIconColor,
-  getPollingInterval,
-  openBatterySettings,
-} from './Battery.service';
+import { useBattery } from './Battery.state';
 
 export const Battery = () => {
-  const { data: battery } = useQuery({
-    queryKey: ['battery'],
-    queryFn: fetchBattery,
-    refetchInterval: ({ state }) => getPollingInterval(state.data?.state),
-    refetchOnMount: true,
-  });
+  const { onBatteryClick, percentage, label, icon, color } = useBattery();
 
-  const onBatteryClick = useCallback(() => openBatterySettings(), []);
-
-  if (!battery) {
+  if (!percentage) {
     return null;
   }
 
-  const { state, percentage, label } = battery;
-
   return (
     <Surface as={Button} onClick={onBatteryClick}>
-      <Icon icon={getBatteryIcon(state, percentage)} color={getBatteryIconColor(state)} />
+      <Icon icon={icon} color={color} />
       <span>{label}</span>
     </Surface>
   );

@@ -21,7 +21,7 @@ fi
 
 # Generate the schema using the CLI
 # The CLI can generate the schema without the desktop app running
-"$CLI_BINARY" generate-schema >"$SCHEMA_FILE"
+"$CLI_BINARY" schema >"$SCHEMA_FILE"
 
 echo "Schema saved to $SCHEMA_FILE"
 

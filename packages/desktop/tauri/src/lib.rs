@@ -6,7 +6,6 @@ mod constants;
 mod hotkey;
 mod ipc;
 mod notunes;
-mod tiling;
 mod utils;
 mod wallpaper;
 
@@ -27,37 +26,28 @@ pub fn run() {
             // Single instance plugin ensures only one instance runs
             // CLI communication is handled via IPC socket
         }))
-        .plugin(tauri_plugin_macos_permissions::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(hotkey::create_hotkey_plugin())
         .invoke_handler(tauri::generate_handler![
             bar::components::apps::open_app,
             bar::components::battery::get_battery_info,
             bar::components::cpu::get_cpu_info,
+            bar::components::hyprspace::get_hyprspace_current_workspace_windows,
+            bar::components::hyprspace::get_hyprspace_focused_window,
+            bar::components::hyprspace::get_hyprspace_focused_workspace,
+            bar::components::hyprspace::get_hyprspace_workspaces,
+            bar::components::hyprspace::go_to_hyprspace_workspace,
             bar::components::keepawake::is_system_awake,
             bar::components::keepawake::toggle_system_awake,
             bar::components::media::get_current_media_info,
             bar::components::weather::get_weather_config,
-            tiling::commands::get_workspaces,
-            tiling::commands::switch_workspace,
         ])
         .setup(move |app| {
-            // Request accessibility permissions on startup if not already granted
-            // This is needed for tiling window manager and global hotkeys
-            tauri::async_runtime::block_on(async {
-                if !tauri_plugin_macos_permissions::check_accessibility_permission().await {
-                    tauri_plugin_macos_permissions::request_accessibility_permission().await;
-                }
-            });
-
             // Start watching the config file for changes
             config::watch_config_file(app.handle().clone());
 
             // Start IPC server for CLI communication
             ipc::start_ipc_server(app.handle().clone());
-
-            // Initialize tiling window manager
-            tiling::init(app.handle());
 
             // Initialize Bar components
             bar::init(app);

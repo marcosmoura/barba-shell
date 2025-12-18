@@ -35,41 +35,6 @@ pub enum ScreenTarget {
     Index(usize),
 }
 
-/// Direction for window/focus operations.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Direction {
-    Up,
-    Down,
-    Left,
-    Right,
-    Next,
-    Previous,
-}
-
-impl Direction {
-    /// Returns the direction as a string slice.
-    #[must_use]
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::Up => "up",
-            Self::Down => "down",
-            Self::Left => "left",
-            Self::Right => "right",
-            Self::Next => "next",
-            Self::Previous => "previous",
-        }
-    }
-}
-
-/// Resize dimension for window resize operations.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ResizeDimension {
-    Width,
-    Height,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,15 +95,5 @@ mod tests {
         let json = r#"{"index":2}"#;
         let target: ScreenTarget = serde_json::from_str(json).unwrap();
         assert!(matches!(target, ScreenTarget::Index(2)));
-    }
-
-    #[test]
-    fn test_direction_as_str() {
-        assert_eq!(Direction::Up.as_str(), "up");
-        assert_eq!(Direction::Down.as_str(), "down");
-        assert_eq!(Direction::Left.as_str(), "left");
-        assert_eq!(Direction::Right.as_str(), "right");
-        assert_eq!(Direction::Next.as_str(), "next");
-        assert_eq!(Direction::Previous.as_str(), "previous");
     }
 }

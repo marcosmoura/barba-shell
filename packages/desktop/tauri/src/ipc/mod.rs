@@ -7,7 +7,6 @@
 //! - `types`: Common types and payloads for IPC communication
 //! - `handlers`: Command handlers organized by domain:
 //!   - `handlers::wallpaper`: Wallpaper-related commands
-//!   - `handlers::tiling`: Tiling window manager commands
 //!   - `handlers::system`: System-level commands
 
 mod handlers;

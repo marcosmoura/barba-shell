@@ -94,17 +94,6 @@ fn run_server(listener: &UnixListener, app_handle: &AppHandle, running: &Arc<Ato
     }
 }
 
-/// Writes a JSON response to the stream with length-prefix.
-pub fn write_json_response(stream: &mut UnixStream, json: &str) {
-    #[allow(clippy::cast_possible_truncation)]
-    let len = json.len() as u32;
-    if stream.write_all(&len.to_le_bytes()).is_err() {
-        return;
-    }
-    stream.write_all(json.as_bytes()).ok();
-    stream.flush().ok();
-}
-
 /// Handles a client connection.
 fn handle_client(mut stream: UnixStream, app_handle: &AppHandle) {
     // Set blocking mode for this connection

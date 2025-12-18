@@ -1,5 +1,3 @@
-import { useCallback, useMemo } from 'react';
-
 import {
   ComputerTerminal01Icon,
   SourceCodeIcon,
@@ -13,29 +11,25 @@ import {
   AppleReminderIcon,
   AppStoreIcon,
   BrowserIcon,
-  DiscordIcon,
-  HardDriveIcon,
   Mail01Icon,
+  UserMultiple02Icon,
+  HardDriveIcon,
   SecurityPasswordIcon,
   SourceCodeCircleIcon,
-  UserMultiple02Icon,
   VisualStudioCodeIcon,
+  DiscordIcon,
   WhatsappIcon,
   ZoomIcon,
 } from '@hugeicons/core-free-icons';
 import type { IconSvgElement } from '@hugeicons/react';
 import { cx } from '@linaria/core';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { Button } from '@/components/Button';
 import { Icon } from '@/components/Icon';
 import { Surface } from '@/components/Surface';
-import { useTauriEvent } from '@/hooks';
-import { TilingEvents } from '@/types';
 
-import { fetchWorkspaceList, onWorkspaceChange, onWorkspaceClick } from './Spaces.service';
+import { useSpaces } from './Spaces.state';
 import * as styles from './Spaces.styles';
-import type { Workspaces } from './Spaces.types';
 
 const workspaceIcons: Record<string, IconSvgElement> = {
   terminal: ComputerTerminal01Icon,
@@ -79,23 +73,7 @@ const getAppIcon = (name: string) => {
 };
 
 export const Spaces = () => {
-  const queryClient = useQueryClient();
-
-  const { data: workspaces } = useQuery<Workspaces>({
-    queryKey: ['workspaces'],
-    queryFn: fetchWorkspaceList,
-    refetchOnMount: true,
-  });
-
-  useTauriEvent<Workspaces>(TilingEvents.WORKSPACES_CHANGED, ({ payload }) => {
-    onWorkspaceChange(payload, queryClient);
-  });
-
-  const focusedApp = useMemo(() => {
-    return workspaces?.find((workspace) => workspace.isFocused)?.focusedApp;
-  }, [workspaces]);
-
-  const onSpaceClick = useCallback((name: string) => () => onWorkspaceClick(name), []);
+  const { workspaces, focusedApp, onSpaceClick } = useSpaces();
 
   if (!workspaces) {
     return null;
@@ -104,27 +82,23 @@ export const Spaces = () => {
   return (
     <div className={styles.spaces} data-test-id="spaces-container">
       <Surface className={styles.workspaces}>
-        {workspaces.map(({ name, isFocused }) => {
-          const capitalizedName = name.charAt(0).toUpperCase() + name.slice(1);
-
-          return (
-            <Button
-              key={name}
-              className={cx(styles.workspace, isFocused && styles.workspaceActive)}
-              active={isFocused}
-              onClick={onSpaceClick(name)}
-            >
-              <Icon icon={workspaceIcons[name]} />
-              {isFocused && <span>{capitalizedName}</span>}
-            </Button>
-          );
-        })}
+        {workspaces.map(({ key, name, isFocused }) => (
+          <Button
+            key={key}
+            className={cx(styles.workspace, isFocused && styles.workspaceActive)}
+            active={isFocused}
+            onClick={onSpaceClick(key)}
+          >
+            <Icon icon={workspaceIcons[key]} />
+            {isFocused && <span>{name}</span>}
+          </Button>
+        ))}
       </Surface>
 
       {focusedApp && (
         <Surface className={styles.app}>
-          <Icon icon={getAppIcon(focusedApp.name)} />
-          <span>{focusedApp.name}</span>
+          <Icon icon={getAppIcon(focusedApp)} />
+          <span>{focusedApp}</span>
         </Surface>
       )}
     </div>

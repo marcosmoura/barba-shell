@@ -115,17 +115,17 @@ pub fn watch_config_file<R: tauri::Runtime>(app_handle: AppHandle<R>) {
 
                     // Debounce: ignore events that occur within the debounce window
                     // This prevents multiple restarts when editors trigger several events per save
-                    if let Some(last_time) = last_event_time
-                        && last_time.elapsed() < debounce_duration
-                    {
+                    let now = Instant::now();
+                    if last_event_time.is_some_and(|t| now.duration_since(t) < debounce_duration) {
                         continue;
                     }
-                    last_event_time = Some(Instant::now());
 
                     // In debug mode, just log a message since restart kills the dev server.
+                    // Update last_event_time only in debug mode for debouncing subsequent events.
                     // In release mode, restart the app to apply the new configuration.
                     #[cfg(debug_assertions)]
                     {
+                        last_event_time = Some(now);
                         eprintln!(
                             "barba: config file changed. Restart the app to apply new settings."
                         );

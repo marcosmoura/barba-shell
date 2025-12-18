@@ -1,3 +1,5 @@
+import { useCallback, useMemo } from 'react';
+
 import {
   SnowIcon,
   SunCloudSnowIcon,
@@ -16,15 +18,17 @@ import {
   MoonIcon,
 } from '@hugeicons/core-free-icons';
 import type { IconSvgElement } from '@hugeicons/react';
+import { useQuery } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 
-import type {
-  CurrentConditions,
-  IpApiResponse,
-  IpInfoResponse,
-  WeatherConfig,
-  WeatherData,
-} from './Weather.types';
+import { useMediaQuery } from '@/hooks';
+import { LAPTOP_MEDIA_QUERY } from '@/utils/media-query';
+
+import type { WeatherConfig, IpApiResponse, IpInfoResponse, WeatherData } from './Weather.types';
+
+const queryOptions = {
+  refetchInterval: 20 * 60 * 1000, // 20 minutes
+};
 
 const API_URL = 'https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services';
 const API_ELEMENTS = 'name,address,resolvedAddress,feelslike,moonphase,conditions,description,icon';
@@ -49,7 +53,7 @@ const iconMap: Record<string, IconSvgElement> = {
   'clear-night': MoonIcon,
 };
 
-export const getWeatherConfig = (): Promise<WeatherConfig> => {
+const getWeatherConfig = (): Promise<WeatherConfig> => {
   return invoke<WeatherConfig>('get_weather_config');
 };
 
@@ -92,13 +96,13 @@ const fetchIpInfoLocation = async (): Promise<string | undefined> => {
   }
 };
 
-export const fetchLocation = async (defaultLocation: string): Promise<string> => {
+const fetchLocation = async (defaultLocation: string): Promise<string> => {
   const location = (await fetchIpApiLocation()) ?? (await fetchIpInfoLocation());
 
   return location || defaultLocation;
 };
 
-export const fetchWeather = async (
+const fetchWeather = async (
   apiKey: string,
   location: string,
   defaultLocation: string,
@@ -124,32 +128,56 @@ export const fetchWeather = async (
   return await response.json();
 };
 
-export const openWeatherApp = () => invoke('open_app', { name: 'Weather' });
+const openWeatherApp = () => invoke('open_app', { name: 'Weather' });
 
-export const getWeatherIcon = (conditions?: CurrentConditions) => {
-  const defaultIcon = iconMap['clear-day'];
+export const useWeather = () => {
+  const isLaptopScreen = useMediaQuery(LAPTOP_MEDIA_QUERY);
+  const { data: config } = useQuery({
+    queryKey: ['weatherConfig'],
+    queryFn: getWeatherConfig,
+    staleTime: Infinity, // Config doesn't change during runtime
+  });
+  const { data: location } = useQuery({
+    ...queryOptions,
+    queryKey: ['location', config?.defaultLocation],
+    queryFn: () => fetchLocation(config!.defaultLocation),
+    enabled: !!config,
+  });
+  const { data: weather } = useQuery({
+    ...queryOptions,
+    queryKey: ['weather', location, config?.visualCrossingApiKey],
+    queryFn: () => fetchWeather(config!.visualCrossingApiKey, location!, config!.defaultLocation),
+    enabled: !!config?.visualCrossingApiKey && !!location,
+  });
 
-  if (!conditions) {
-    return defaultIcon;
-  }
+  const { currentConditions } = weather || {};
 
-  return iconMap[conditions.icon] ?? defaultIcon;
-};
+  const icon = useMemo(() => {
+    const defaultIcon = iconMap['clear-day'];
 
-export const getWeatherLabel = (
-  currentConditions?: CurrentConditions,
-  isLaptopScreen?: boolean,
-): string => {
-  if (!currentConditions) {
-    return '';
-  }
+    if (!currentConditions) {
+      return defaultIcon;
+    }
 
-  const feelsLike = Math.ceil(currentConditions.feelslike || 0);
-  const condition = currentConditions.conditions || '';
+    return iconMap[currentConditions.icon] ?? defaultIcon;
+  }, [currentConditions]);
 
-  if (isLaptopScreen) {
-    return `${feelsLike}°C`;
-  }
+  const label = useMemo((): string => {
+    if (!currentConditions) {
+      return 'Loading weather...';
+    }
 
-  return `${feelsLike}°C (${condition})`;
+    const feelsLike = Math.ceil(currentConditions.feelslike || 0);
+    const condition = currentConditions.conditions || '';
+
+    if (isLaptopScreen) {
+      return `${feelsLike}°C`;
+    }
+
+    return `${feelsLike}°C (${condition})`;
+  }, [currentConditions, isLaptopScreen]);
+
+  const onWeatherClick = useCallback(() => openWeatherApp(), []);
+
+  return { label, icon, onWeatherClick };
 };

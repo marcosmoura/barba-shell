@@ -34,25 +34,14 @@ vi.mock('@hugeicons/react', () => ({
 
 // Default mock implementations for Tauri invoke commands
 const defaultInvokeMocks: Record<string, unknown> = {
-  get_workspaces: [
-    {
-      name: 'coding',
-      layout: 'tiling',
-      screen: 'Main',
-      isFocused: true,
-      windowCount: 2,
-      focusedApp: {
-        name: 'Visual Studio Code',
-        appId: 'com.microsoft.VSCode',
-        windowCount: 1,
-      },
-    },
-  ],
   get_current_media_info: {},
   get_battery_info: { percentage: 100, state: 'Full' },
   get_cpu_info: { usage: 25, temperature: 50 },
   is_system_awake: false,
   get_weather_config: {},
+  get_hyprspace_workspaces: [{ workspace: 'terminal' }],
+  get_hyprspace_focused_workspace: { workspace: 'terminal' },
+  get_hyprspace_focused_window: [{ appName: 'Ghostty', title: 'zsh' }],
 };
 
 vi.mock('@tauri-apps/api/core', () => ({

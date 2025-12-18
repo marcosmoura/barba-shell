@@ -6,15 +6,35 @@ import { createQueryClientWrapper, createTestQueryClient } from '@/tests/utils';
 import { Spaces } from './Spaces';
 
 describe('Spaces Component', () => {
-  test('renders workspace and current app components', async () => {
+  test('renders spaces container', async () => {
     const queryClient = createTestQueryClient();
-    const { container } = await render(<Spaces />, {
+    queryClient.setQueryData(['hyprspace_workspaces'], ['terminal', 'coding', 'browser']);
+    queryClient.setQueryData(['hyprspace_current_workspace'], 'terminal');
+    queryClient.setQueryData(['focused_app'], 'Ghostty');
+
+    const { getByTestId } = await render(<Spaces />, {
       wrapper: createQueryClientWrapper(queryClient),
     });
 
     await vi.waitFor(() => {
-      // Should have the main container
-      expect(container.querySelector('div')).toBeDefined();
+      expect(getByTestId('spaces-container')).toBeDefined();
+    });
+
+    queryClient.clear();
+  });
+
+  test('renders with empty workspace list', async () => {
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(['hyprspace_workspaces'], []);
+    queryClient.setQueryData(['hyprspace_current_workspace'], undefined);
+    queryClient.setQueryData(['focused_app'], undefined);
+
+    const { getByTestId } = await render(<Spaces />, {
+      wrapper: createQueryClientWrapper(queryClient),
+    });
+
+    await vi.waitFor(() => {
+      expect(getByTestId('spaces-container')).toBeDefined();
     });
 
     queryClient.clear();
@@ -22,12 +42,34 @@ describe('Spaces Component', () => {
 
   test('renders workspace buttons', async () => {
     const queryClient = createTestQueryClient();
-    const { container } = await render(<Spaces />, {
+    queryClient.setQueryData(['hyprspace_workspaces'], ['terminal', 'coding']);
+    queryClient.setQueryData(['hyprspace_current_workspace'], 'terminal');
+    queryClient.setQueryData(['focused_app'], 'Ghostty');
+
+    const { getByText } = await render(<Spaces />, {
       wrapper: createQueryClientWrapper(queryClient),
     });
 
     await vi.waitFor(() => {
-      expect(container.querySelectorAll('button').length).toBeGreaterThan(0);
+      // Focused workspace shows capitalized name
+      expect(getByText('Terminal')).toBeDefined();
+    });
+
+    queryClient.clear();
+  });
+
+  test('renders focused app name', async () => {
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(['hyprspace_workspaces'], ['terminal']);
+    queryClient.setQueryData(['hyprspace_current_workspace'], 'terminal');
+    queryClient.setQueryData(['focused_app'], 'Visual Studio Code');
+
+    const { getByText } = await render(<Spaces />, {
+      wrapper: createQueryClientWrapper(queryClient),
+    });
+
+    await vi.waitFor(() => {
+      expect(getByText('Visual Studio Code')).toBeDefined();
     });
 
     queryClient.clear();

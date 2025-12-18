@@ -28,27 +28,26 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 #[command(next_display_order = None)]
 pub enum Commands {
+    /// Notify Barba that the focused window changed.
+    ///
+    /// Use when your automation detects a window-focus change.
+    /// Triggers Hyprspace queries to refresh current workspace and app state.
+    #[command(name = "focus-changed")]
+    FocusChanged,
+
+    /// Notify Barba that the active workspace changed.
+    ///
+    /// Requires the new workspace name so Barba can update its Hyprspace view
+    /// and trigger a window refresh.
+    #[command(name = "workspace-changed")]
+    WorkspaceChanged {
+        /// Workspace identifier reported by hyprspace (e.g. coding).
+        name: String,
+    },
+
     /// Wallpaper management commands.
     #[command(subcommand)]
     Wallpaper(WallpaperCommands),
-
-    /// Query tiling window manager state.
-    ///
-    /// Returns information about screens, workspaces, and windows in JSON format.
-    #[command(subcommand)]
-    Query(QueryCommands),
-
-    /// Workspace management commands.
-    ///
-    /// Focus, switch layout, balance, or move workspaces between screens.
-    #[command(subcommand)]
-    Workspace(WorkspaceCommands),
-
-    /// Window management commands.
-    ///
-    /// Move, focus, resize, or send windows to different workspaces/screens.
-    #[command(subcommand)]
-    Window(WindowCommands),
 
     /// Cache management commands.
     ///
@@ -83,283 +82,6 @@ pub enum Commands {
         #[arg(long, short, value_enum)]
         shell: Shell,
     },
-}
-
-// ============================================================================
-// Query Commands
-// ============================================================================
-
-/// Query subcommands for inspecting tiling state.
-#[derive(Subcommand, Debug)]
-#[command(next_display_order = None)]
-pub enum QueryCommands {
-    /// List all connected screens.
-    ///
-    /// Returns JSON array with screen information including name, dimensions,
-    /// and whether it's the main display.
-    Screens,
-
-    /// List workspaces.
-    ///
-    /// Returns JSON array with workspace information including name, layout,
-    /// assigned screen, and window count.
-    Workspaces {
-        /// Get a specific workspace by name.
-        #[arg(long)]
-        name: Option<String>,
-
-        /// Get the currently focused workspace.
-        #[arg(long, conflicts_with = "name")]
-        focused: bool,
-
-        /// Only show workspaces on the currently focused screen.
-        #[arg(long, conflicts_with_all = ["name", "focused"])]
-        focused_screen: bool,
-
-        /// Only show workspaces on the specified screen.
-        #[arg(long, conflicts_with_all = ["name", "focused", "focused_screen"])]
-        screen: Option<String>,
-    },
-
-    /// List windows.
-    ///
-    /// Returns JSON array with window information including title, app name,
-    /// workspace, position, and dimensions.
-    Windows {
-        /// Only show windows in the currently focused workspace.
-        #[arg(long)]
-        focused_workspace: bool,
-
-        /// Only show windows on the currently focused screen.
-        #[arg(long, conflicts_with = "focused_workspace")]
-        focused_screen: bool,
-
-        /// Only show windows in the specified workspace.
-        #[arg(long, conflicts_with_all = ["focused_workspace", "focused_screen"])]
-        workspace: Option<String>,
-
-        /// Only show windows on the specified screen.
-        #[arg(long, conflicts_with_all = ["focused_workspace", "focused_screen", "workspace"])]
-        screen: Option<String>,
-    },
-}
-
-// ============================================================================
-// Workspace Commands
-// ============================================================================
-
-/// Direction for workspace/window navigation.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Direction {
-    /// Move/focus up.
-    Up,
-    /// Move/focus down.
-    Down,
-    /// Move/focus left.
-    Left,
-    /// Move/focus right.
-    Right,
-    /// Next in order.
-    Next,
-    /// Previous in order.
-    Previous,
-}
-
-impl FromStr for Direction {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "up" => Ok(Self::Up),
-            "down" => Ok(Self::Down),
-            "left" => Ok(Self::Left),
-            "right" => Ok(Self::Right),
-            "next" => Ok(Self::Next),
-            "previous" | "prev" => Ok(Self::Previous),
-            _ => Err(format!(
-                "Invalid direction '{s}'. Expected one of: up, down, left, right, next, previous"
-            )),
-        }
-    }
-}
-
-impl std::fmt::Display for Direction {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Up => write!(f, "up"),
-            Self::Down => write!(f, "down"),
-            Self::Left => write!(f, "left"),
-            Self::Right => write!(f, "right"),
-            Self::Next => write!(f, "next"),
-            Self::Previous => write!(f, "previous"),
-        }
-    }
-}
-
-/// Workspace subcommands for managing workspaces.
-#[derive(Subcommand, Debug)]
-#[command(next_display_order = None)]
-pub enum WorkspaceCommands {
-    /// Focus a workspace by name or direction.
-    ///
-    /// Target can be a workspace name (e.g., "1", "coding") or a direction
-    /// (next, previous, up, down, left, right).
-    #[command(after_long_help = r#"Examples:
-  barba workspace focus 1          # Focus workspace named "1"
-  barba workspace focus coding     # Focus workspace named "coding"
-  barba workspace focus next       # Focus next workspace
-  barba workspace focus previous   # Focus previous workspace"#)]
-    Focus {
-        /// Workspace name or direction (next, previous, up, down, left, right).
-        target: String,
-    },
-
-    /// Set the layout for the current workspace.
-    #[command(after_long_help = r#"Examples:
-  barba workspace layout tiling          # Switch to tiling layout
-  barba workspace layout monocle         # Switch to monocle layout
-  barba workspace layout master          # Switch to master-stack layout
-  barba workspace layout split           # Switch to split layout (auto-detect orientation)
-  barba workspace layout split-vertical  # Switch to vertical split
-  barba workspace layout split-horizontal # Switch to horizontal split
-  barba workspace layout floating        # Switch to floating layout"#)]
-    Layout {
-        /// Layout mode: tiling, monocle, master, split, split-vertical, split-horizontal, floating, scrolling.
-        layout: String,
-    },
-
-    /// Send the current workspace to another screen.
-    #[command(
-        name = "send-to-screen",
-        after_long_help = r#"Examples:
-  barba workspace send-to-screen main    # Send to main screen
-  barba workspace send-to-screen left    # Send to screen on the left
-  barba workspace send-to-screen DP-1    # Send to screen named "DP-1""#
-    )]
-    SendToScreen {
-        /// Target screen: main, secondary, left, right, up, down, or screen name.
-        screen: String,
-    },
-
-    /// Balance window sizes in the current layout.
-    ///
-    /// Resets all windows to their default size ratios for the current layout.
-    Balance,
-}
-
-// ============================================================================
-// Window Commands
-// ============================================================================
-
-/// Dimension to resize (width or height).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ResizeDimension {
-    /// Resize width.
-    Width,
-    /// Resize height.
-    Height,
-}
-
-impl FromStr for ResizeDimension {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "width" | "w" => Ok(Self::Width),
-            "height" | "h" => Ok(Self::Height),
-            _ => Err(format!(
-                "Invalid dimension '{s}'. Expected one of: width, height"
-            )),
-        }
-    }
-}
-
-/// Window subcommands for managing windows.
-#[derive(Subcommand, Debug)]
-#[command(next_display_order = None)]
-pub enum WindowCommands {
-    /// Move the focused window in a direction (swap in tiling layouts).
-    #[command(after_long_help = r#"Examples:
-  barba window move up      # Move/swap window up
-  barba window move down    # Move/swap window down
-  barba window move left    # Move/swap window left
-  barba window move right   # Move/swap window right"#)]
-    Move {
-        /// Direction to move: up, down, left, right.
-        direction: Direction,
-    },
-
-    /// Focus a window in a direction.
-    #[command(after_long_help = r#"Examples:
-  barba window focus up       # Focus window above
-  barba window focus down     # Focus window below
-  barba window focus left     # Focus window to the left
-  barba window focus right    # Focus window to the right
-  barba window focus next     # Focus next window in order
-  barba window focus previous # Focus previous window"#)]
-    Focus {
-        /// Direction to focus: up, down, left, right, next, previous.
-        direction: Direction,
-    },
-
-    /// Send the focused window to a workspace.
-    #[command(
-        name = "send-to-workspace",
-        after_long_help = r#"Examples:
-  barba window send-to-workspace 2              # Send to workspace "2" and focus
-  barba window send-to-workspace coding         # Send to workspace "coding" and focus
-  barba window send-to-workspace 2 --focus=false  # Send without following"#
-    )]
-    SendToWorkspace {
-        /// Target workspace name.
-        workspace: String,
-        /// Focus the window after sending (switches to the target workspace).
-        /// Defaults to true.
-        #[arg(long, short = 'f', default_value = "true", action = clap::ArgAction::Set)]
-        focus: bool,
-    },
-
-    /// Send the focused window to another screen.
-    #[command(
-        name = "send-to-screen",
-        after_long_help = r#"Examples:
-  barba window send-to-screen main   # Send to main screen
-  barba window send-to-screen left   # Send to screen on the left
-  barba window send-to-screen DP-1   # Send to screen named "DP-1""#
-    )]
-    SendToScreen {
-        /// Target screen: main, secondary, left, right, up, down, or screen name.
-        screen: String,
-    },
-
-    /// Resize the focused window.
-    #[command(after_long_help = r#"Examples:
-  barba window resize width 100    # Increase width by 100 pixels
-  barba window resize width -50    # Decrease width by 50 pixels
-  barba window resize height 100   # Increase height by 100 pixels"#)]
-    Resize {
-        /// Dimension to resize: width, height.
-        dimension: ResizeDimension,
-        /// Amount to resize in pixels (positive or negative).
-        #[arg(allow_hyphen_values = true)]
-        amount: i32,
-    },
-
-    /// Apply a floating preset to the focused window.
-    #[command(after_long_help = r#"Examples:
-  barba window preset centered-small  # Apply "centered-small" preset
-  barba window preset aligned-left    # Apply "aligned-left" preset"#)]
-    Preset {
-        /// Name of the floating preset to apply.
-        name: String,
-    },
-
-    /// Close the focused window.
-    ///
-    /// Uses the macOS Accessibility API to press the window's close button.
-    Close,
 }
 
 /// Screen target for wallpaper commands.
@@ -497,102 +219,27 @@ pub struct CliEventPayload {
     pub data: Option<String>,
 }
 
-// ============================================================================
-// IPC Data Types for Tiling Commands
-// ============================================================================
-
-/// Data for query windows command.
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct QueryWindowsData {
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub focused_workspace: bool,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub focused_screen: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub workspace: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub screen: Option<String>,
-}
-
-/// Data for query workspaces command.
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct QueryWorkspacesData {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub focused: bool,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub focused_screen: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub screen: Option<String>,
-}
-
-/// Data for workspace focus command.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct WorkspaceFocusData {
-    pub target: String,
-}
-
-/// Data for workspace layout command.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct WorkspaceLayoutData {
-    pub layout: String,
-}
-
-/// Data for workspace send-to-screen command.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct WorkspaceSendToScreenData {
-    pub screen: String,
-}
-
-/// Data for window move command.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct WindowMoveData {
-    pub direction: Direction,
-}
-
-/// Data for window focus command.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct WindowFocusData {
-    pub direction: Direction,
-}
-
-/// Data for window send-to-workspace command.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct WindowSendToWorkspaceData {
-    pub workspace: String,
-    pub focus: bool,
-}
-
-/// Data for window send-to-screen command.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct WindowSendToScreenData {
-    pub screen: String,
-}
-
-/// Data for window resize command.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct WindowResizeData {
-    pub dimension: ResizeDimension,
-    pub amount: i32,
-}
-
-/// Data for window preset command.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct WindowPresetData {
-    pub name: String,
-}
-
 impl Cli {
     /// Execute the CLI command.
     pub fn execute(&self) -> Result<(), CliError> {
         match &self.command {
+            Commands::FocusChanged => {
+                let payload = CliEventPayload {
+                    name: "focus-changed".to_string(),
+                    data: None,
+                };
+                ipc::send_to_desktop_app(&payload)?;
+            }
+
+            Commands::WorkspaceChanged { name } => {
+                let payload = CliEventPayload {
+                    name: "workspace-changed".to_string(),
+                    data: Some(name.clone()),
+                };
+                ipc::send_to_desktop_app(&payload)?;
+            }
+
             Commands::Wallpaper(wallpaper_cmd) => Self::execute_wallpaper(wallpaper_cmd)?,
-            Commands::Query(query_cmd) => Self::execute_query(query_cmd)?,
-            Commands::Workspace(workspace_cmd) => Self::execute_workspace(workspace_cmd)?,
-            Commands::Window(window_cmd) => Self::execute_window(window_cmd)?,
             Commands::Cache(cache_cmd) => Self::execute_cache(cache_cmd)?,
 
             Commands::Reload => {
@@ -692,170 +339,6 @@ impl Cli {
                 };
                 let response = ipc::send_to_desktop_app_with_response(&payload)?;
                 println!("{response}");
-            }
-        }
-        Ok(())
-    }
-
-    /// Execute query subcommands.
-    fn execute_query(cmd: &QueryCommands) -> Result<(), CliError> {
-        match cmd {
-            QueryCommands::Screens => {
-                let payload = CliEventPayload {
-                    name: "tiling-query-screens".to_string(),
-                    data: None,
-                };
-                let response = ipc::send_to_desktop_app_with_response(&payload)?;
-                println!("{response}");
-            }
-            QueryCommands::Workspaces {
-                name,
-                focused,
-                focused_screen,
-                screen,
-            } => {
-                let data = QueryWorkspacesData {
-                    name: name.clone(),
-                    focused: *focused,
-                    focused_screen: *focused_screen,
-                    screen: screen.clone(),
-                };
-                let payload = CliEventPayload {
-                    name: "tiling-query-workspaces".to_string(),
-                    data: Some(serde_json::to_string(&data).unwrap()),
-                };
-                let response = ipc::send_to_desktop_app_with_response(&payload)?;
-                println!("{response}");
-            }
-            QueryCommands::Windows {
-                focused_workspace,
-                focused_screen,
-                workspace,
-                screen,
-            } => {
-                let data = QueryWindowsData {
-                    focused_workspace: *focused_workspace,
-                    focused_screen: *focused_screen,
-                    workspace: workspace.clone(),
-                    screen: screen.clone(),
-                };
-                let payload = CliEventPayload {
-                    name: "tiling-query-windows".to_string(),
-                    data: Some(serde_json::to_string(&data).unwrap()),
-                };
-                let response = ipc::send_to_desktop_app_with_response(&payload)?;
-                println!("{response}");
-            }
-        }
-        Ok(())
-    }
-
-    /// Execute workspace subcommands.
-    fn execute_workspace(cmd: &WorkspaceCommands) -> Result<(), CliError> {
-        match cmd {
-            WorkspaceCommands::Focus { target } => {
-                let data = WorkspaceFocusData { target: target.clone() };
-                let payload = CliEventPayload {
-                    name: "tiling-workspace-focus".to_string(),
-                    data: Some(serde_json::to_string(&data).unwrap()),
-                };
-                ipc::send_to_desktop_app(&payload)?;
-            }
-            WorkspaceCommands::Layout { layout } => {
-                if layout.parse::<barba_shared::LayoutMode>().is_err() {
-                    return Err(CliError::InvalidArguments(format!(
-                        "Invalid layout '{layout}'. Expected one of: tiling, monocle, master, split, split-vertical, split-horizontal, floating, scrolling"
-                    )));
-                }
-                let data = WorkspaceLayoutData { layout: layout.clone() };
-                let payload = CliEventPayload {
-                    name: "tiling-workspace-layout".to_string(),
-                    data: Some(serde_json::to_string(&data).unwrap()),
-                };
-                ipc::send_to_desktop_app(&payload)?;
-            }
-            WorkspaceCommands::SendToScreen { screen } => {
-                let data = WorkspaceSendToScreenData { screen: screen.clone() };
-                let payload = CliEventPayload {
-                    name: "tiling-workspace-send-to-screen".to_string(),
-                    data: Some(serde_json::to_string(&data).unwrap()),
-                };
-                ipc::send_to_desktop_app(&payload)?;
-            }
-            WorkspaceCommands::Balance => {
-                let payload = CliEventPayload {
-                    name: "tiling-workspace-balance".to_string(),
-                    data: None,
-                };
-                ipc::send_to_desktop_app(&payload)?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Execute window subcommands.
-    fn execute_window(cmd: &WindowCommands) -> Result<(), CliError> {
-        match cmd {
-            WindowCommands::Move { direction } => {
-                let data = WindowMoveData { direction: direction.clone() };
-                let payload = CliEventPayload {
-                    name: "tiling-window-move".to_string(),
-                    data: Some(serde_json::to_string(&data).unwrap()),
-                };
-                ipc::send_to_desktop_app(&payload)?;
-            }
-            WindowCommands::Focus { direction } => {
-                let data = WindowFocusData { direction: direction.clone() };
-                let payload = CliEventPayload {
-                    name: "tiling-window-focus".to_string(),
-                    data: Some(serde_json::to_string(&data).unwrap()),
-                };
-                ipc::send_to_desktop_app(&payload)?;
-            }
-            WindowCommands::SendToWorkspace { workspace, focus } => {
-                let data = WindowSendToWorkspaceData {
-                    workspace: workspace.clone(),
-                    focus: *focus,
-                };
-                let payload = CliEventPayload {
-                    name: "tiling-window-send-to-workspace".to_string(),
-                    data: Some(serde_json::to_string(&data).unwrap()),
-                };
-                ipc::send_to_desktop_app(&payload)?;
-            }
-            WindowCommands::SendToScreen { screen } => {
-                let data = WindowSendToScreenData { screen: screen.clone() };
-                let payload = CliEventPayload {
-                    name: "tiling-window-send-to-screen".to_string(),
-                    data: Some(serde_json::to_string(&data).unwrap()),
-                };
-                ipc::send_to_desktop_app(&payload)?;
-            }
-            WindowCommands::Resize { dimension, amount } => {
-                let data = WindowResizeData {
-                    dimension: dimension.clone(),
-                    amount: *amount,
-                };
-                let payload = CliEventPayload {
-                    name: "tiling-window-resize".to_string(),
-                    data: Some(serde_json::to_string(&data).unwrap()),
-                };
-                ipc::send_to_desktop_app(&payload)?;
-            }
-            WindowCommands::Preset { name } => {
-                let data = WindowPresetData { name: name.clone() };
-                let payload = CliEventPayload {
-                    name: "tiling-window-preset".to_string(),
-                    data: Some(serde_json::to_string(&data).unwrap()),
-                };
-                ipc::send_to_desktop_app(&payload)?;
-            }
-            WindowCommands::Close => {
-                let payload = CliEventPayload {
-                    name: "tiling-window-close".to_string(),
-                    data: None,
-                };
-                ipc::send_to_desktop_app(&payload)?;
             }
         }
         Ok(())

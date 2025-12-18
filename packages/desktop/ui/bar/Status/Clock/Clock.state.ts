@@ -1,6 +1,9 @@
+import { useCallback } from 'react';
+
+import { useQuery } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 
-export function getClockInfo(): string {
+function getClock(): string {
   const findDatePart = (parts: Intl.DateTimeFormatPart[], part: string) =>
     parts.find((p) => p.type === part)?.value || '';
 
@@ -28,4 +31,15 @@ export function getClockInfo(): string {
   return `${weekday} ${month} ${day} ${hour}:${minute}:${second}`;
 }
 
-export const openClockApp = () => invoke('open_app', { name: 'Clock' });
+export const useClock = () => {
+  const { data: clock } = useQuery({
+    queryKey: ['clock'],
+    queryFn: () => getClock(),
+    refetchInterval: 1000,
+    refetchOnMount: true,
+  });
+
+  const onClick = useCallback(() => invoke('open_app', { name: 'Clock' }), []);
+
+  return { clock, onClick };
+};

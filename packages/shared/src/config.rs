@@ -13,8 +13,6 @@ use std::path::PathBuf;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::tiling::TilingConfig;
-
 /// Wallpaper cycling mode.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "lowercase")]
@@ -185,23 +183,6 @@ pub struct BarbaConfig {
     /// }
     /// ```
     pub keybindings: HashMap<String, ShortcutCommands>,
-
-    /// Tiling window manager configuration.
-    ///
-    /// Example:
-    /// ```json
-    /// {
-    ///   "tiling": {
-    ///     "enabled": true,
-    ///     "defaultLayout": "tiling",
-    ///     "gaps": { "inner": 10, "outer": 15 },
-    ///     "workspaces": [
-    ///       { "name": "1", "layout": "tiling", "screen": "main" }
-    ///     ]
-    ///   }
-    /// }
-    /// ```
-    pub tiling: TilingConfig,
 }
 
 /// Commands to execute for a keyboard shortcut.
@@ -443,7 +424,6 @@ mod tests {
             bar: BarConfig::default(),
             wallpapers: WallpaperConfig::default(),
             keybindings,
-            tiling: TilingConfig::default(),
         };
 
         let json = serde_json::to_string_pretty(&config).unwrap();

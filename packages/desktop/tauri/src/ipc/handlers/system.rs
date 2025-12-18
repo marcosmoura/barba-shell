@@ -8,7 +8,7 @@ use std::os::unix::net::UnixStream;
 
 use crate::config;
 
-/// Handles the generate-schema command.
+/// Handles the schema command.
 ///
 /// Generates and prints the JSON schema for the configuration file.
 pub fn handle_generate_schema(stream: &mut UnixStream) {

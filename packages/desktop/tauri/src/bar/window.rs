@@ -140,7 +140,7 @@ fn get_screen_size(window: &WebviewWindow) -> Result<(f64, f64), Box<dyn std::er
     Ok((logical_width, logical_height))
 }
 
-fn calculate_window_frame(logical_width: f64) -> (f64, f64, f64, f64) {
+const fn calculate_window_frame(logical_width: f64) -> (f64, f64, f64, f64) {
     let width = PADDING.mul_add(-2.0, logical_width);
     let height = BAR_HEIGHT;
     (PADDING, PADDING, width, height)

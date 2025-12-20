@@ -3,19 +3,19 @@ import { render } from 'vitest-browser-react';
 
 import { LAPTOP_MEDIA_QUERY } from '@/utils/media-query';
 
+import { Stack } from './Stack';
+
 type MockMediaQueryList = MediaQueryList & {
   trigger: (matches: boolean) => void;
 };
 
-let Stack: typeof import('./Stack').Stack;
 let mediaQueries: Map<string, MockMediaQueryList>;
-const initialMatches = new Map<string, boolean>();
-let matchMediaMock: typeof window.matchMedia;
+const currentInitialMatches = new Map<string, boolean>();
 const originalMatchMedia = window.matchMedia;
 
 const createMock = (query: string): MockMediaQueryList => {
   const listeners = new Set<(event: MediaQueryListEvent) => void>();
-  let currentMatches = initialMatches.get(query) ?? false;
+  let currentMatches = currentInitialMatches.get(query) ?? false;
 
   const mql = {
     media: query,
@@ -53,12 +53,11 @@ const createMock = (query: string): MockMediaQueryList => {
 };
 
 describe('Stack Component', () => {
-  beforeEach(async () => {
-    vi.resetModules();
+  beforeEach(() => {
     mediaQueries = new Map<string, MockMediaQueryList>();
-    initialMatches.clear();
+    currentInitialMatches.clear();
 
-    matchMediaMock = vi.fn<typeof window.matchMedia>((query: string) => {
+    window.matchMedia = vi.fn<typeof window.matchMedia>((query: string) => {
       let mql = mediaQueries.get(query);
 
       if (!mql) {
@@ -68,11 +67,6 @@ describe('Stack Component', () => {
 
       return mql;
     });
-
-    window.matchMedia = matchMediaMock;
-
-    const module = await import('./Stack');
-    Stack = module.Stack;
   });
 
   afterEach(() => {
@@ -87,29 +81,23 @@ describe('Stack Component', () => {
       </Stack>,
     );
 
-    await vi.waitFor(() => {
-      expect(getByText('Child 1')).toBeDefined();
-      expect(getByText('Child 2')).toBeDefined();
-    });
+    expect(getByText('Child 1')).toBeDefined();
+    expect(getByText('Child 2')).toBeDefined();
   });
 
   test('renders as div element', async () => {
     const { container } = await render(<Stack>Content</Stack>);
 
-    await vi.waitFor(() => {
-      const div = container.querySelector('div');
-      expect(div).toBeDefined();
-    });
+    const div = container.querySelector('div');
+    expect(div).toBeDefined();
   });
 
   test('applies custom className', async () => {
     const customClass = 'my-stack-class';
     const { container } = await render(<Stack className={customClass}>Styled</Stack>);
 
-    await vi.waitFor(() => {
-      const div = container.querySelector('div');
-      expect(div?.classList.contains(customClass)).toBe(true);
-    });
+    const div = container.querySelector('div');
+    expect(div?.classList.contains(customClass)).toBe(true);
   });
 
   test('forwards additional HTML attributes', async () => {
@@ -119,47 +107,35 @@ describe('Stack Component', () => {
       </Stack>,
     );
 
-    await vi.waitFor(() => {
-      const div = container.querySelector('div');
-      expect(div?.getAttribute('data-testid')).toBe('test-stack');
-      expect(div?.getAttribute('aria-label')).toBe('Stack container');
-    });
+    const div = container.querySelector('div');
+    expect(div?.getAttribute('data-testid')).toBe('test-stack');
+    expect(div?.getAttribute('aria-label')).toBe('Stack container');
   });
 
   test('applies base stack styles', async () => {
     const { container } = await render(<Stack>Base</Stack>);
 
-    await vi.waitFor(() => {
-      const div = container.querySelector('div');
-      expect(div?.classList.length).toBeGreaterThanOrEqual(1);
-    });
+    const div = container.querySelector('div');
+    expect(div?.classList.length).toBeGreaterThanOrEqual(1);
   });
 
   test('applies compact styles on laptop screen', async () => {
-    initialMatches.set(LAPTOP_MEDIA_QUERY, true);
-    vi.resetModules();
+    currentInitialMatches.set(LAPTOP_MEDIA_QUERY, true);
 
-    const module = await import('./Stack');
-    const StackWithLaptop = module.Stack;
+    const { container } = await render(<Stack>Compact</Stack>);
 
-    const { container } = await render(<StackWithLaptop>Compact</StackWithLaptop>);
-
-    await vi.waitFor(() => {
-      const div = container.querySelector('div');
-      // Should have base class and compact class
-      expect(div?.classList.length).toBeGreaterThanOrEqual(2);
-    });
+    const div = container.querySelector('div');
+    // Should have base class and compact class
+    expect(div?.classList.length).toBeGreaterThanOrEqual(2);
   });
 
   test('renders correctly with media query', async () => {
     const { container } = await render(<Stack>Test Content</Stack>);
 
-    await vi.waitFor(() => {
-      const div = container.querySelector('div');
-      expect(div).toBeDefined();
-      // Should have at least the base stack class
-      expect(div?.classList.length).toBeGreaterThanOrEqual(1);
-    });
+    const div = container.querySelector('div');
+    expect(div).toBeDefined();
+    // Should have at least the base stack class
+    expect(div?.classList.length).toBeGreaterThanOrEqual(1);
   });
 
   test('handles multiple children', async () => {
@@ -171,20 +147,16 @@ describe('Stack Component', () => {
       </Stack>,
     );
 
-    await vi.waitFor(() => {
-      expect(getByText('First')).toBeDefined();
-      expect(getByText('Second')).toBeDefined();
-      expect(getByText('Third')).toBeDefined();
-    });
+    expect(getByText('First')).toBeDefined();
+    expect(getByText('Second')).toBeDefined();
+    expect(getByText('Third')).toBeDefined();
   });
 
   test('handles empty children', async () => {
     const { container } = await render(<Stack />);
 
-    await vi.waitFor(() => {
-      const div = container.querySelector('div');
-      expect(div).toBeDefined();
-      expect(div?.children.length).toBe(0);
-    });
+    const div = container.querySelector('div');
+    expect(div).toBeDefined();
+    expect(div?.children.length).toBe(0);
   });
 });

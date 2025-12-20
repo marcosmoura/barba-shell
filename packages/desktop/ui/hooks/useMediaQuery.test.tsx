@@ -1,19 +1,20 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
 import { renderHook } from 'vitest-browser-react';
+
+import { useMediaQuery } from './useMediaQuery';
 
 type MockMediaQueryList = MediaQueryList & {
   trigger: (matches: boolean) => void;
 };
 
-let useMediaQuery: typeof import('./useMediaQuery').useMediaQuery;
 let mediaQueries: Map<string, MockMediaQueryList>;
-const initialMatches = new Map<string, boolean>();
+const currentInitialMatches = new Map<string, boolean>();
 let matchMediaMock: ReturnType<typeof vi.fn>;
 const originalMatchMedia = window.matchMedia;
 
 const createMock = (query: string): MockMediaQueryList => {
   const listeners = new Set<(event: MediaQueryListEvent) => void>();
-  let currentMatches = initialMatches.get(query) ?? false;
+  let currentMatches = currentInitialMatches.get(query) ?? false;
 
   const mql = {
     media: query,
@@ -51,10 +52,7 @@ const createMock = (query: string): MockMediaQueryList => {
 };
 
 describe('useMediaQuery', () => {
-  beforeEach(async () => {
-    vi.resetModules();
-    mediaQueries = new Map();
-    initialMatches.clear();
+  beforeAll(() => {
     matchMediaMock = vi.fn((query: string) => {
       let mql = mediaQueries.get(query);
 
@@ -71,11 +69,15 @@ describe('useMediaQuery', () => {
       configurable: true,
       value: matchMediaMock,
     });
-
-    ({ useMediaQuery } = await import('./useMediaQuery'));
   });
 
-  afterEach(() => {
+  beforeEach(() => {
+    mediaQueries = new Map();
+    currentInitialMatches.clear();
+    matchMediaMock.mockClear();
+  });
+
+  afterAll(() => {
     vi.unstubAllGlobals();
     Object.defineProperty(window, 'matchMedia', {
       configurable: true,
@@ -85,7 +87,7 @@ describe('useMediaQuery', () => {
 
   test('returns the current match state from matchMedia', async () => {
     const query = '(min-width: 100px)';
-    initialMatches.set(query, true);
+    currentInitialMatches.set(query, true);
 
     const { result } = await renderHook(() => useMediaQuery(query));
 

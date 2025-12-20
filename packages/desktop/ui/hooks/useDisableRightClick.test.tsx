@@ -1,35 +1,26 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { renderHook } from 'vitest-browser-react';
 
-type UseDisableRightClickModule = typeof import('./useDisableRightClick');
+import {
+  attachContextMenuListener,
+  isDisableRightClickDevModeForTesting,
+  resetDisableRightClickForTesting,
+  setDisableRightClickDevModeForTesting,
+  useDisableRightClick,
+} from './useDisableRightClick';
 
-let attachContextMenuListener: UseDisableRightClickModule['attachContextMenuListener'];
-let resetDisableRightClickForTesting: UseDisableRightClickModule['resetDisableRightClickForTesting'];
-let isDisableRightClickDevModeForTesting: UseDisableRightClickModule['isDisableRightClickDevModeForTesting'];
-let setDisableRightClickDevModeForTesting: UseDisableRightClickModule['setDisableRightClickDevModeForTesting'];
-let useDisableRightClick: UseDisableRightClickModule['useDisableRightClick'];
 let addEventListenerSpy: ReturnType<typeof vi.spyOn>;
 let removeEventListenerSpy: ReturnType<typeof vi.spyOn>;
 const originalDev = import.meta.env.DEV;
 
-const loadHook = async () => {
-  ({
-    attachContextMenuListener,
-    resetDisableRightClickForTesting,
-    isDisableRightClickDevModeForTesting,
-    setDisableRightClickDevModeForTesting,
-    useDisableRightClick,
-  } = await import('./useDisableRightClick'));
-};
-
 describe('useDisableRightClick', () => {
-  beforeEach(async () => {
-    vi.resetModules();
+  beforeEach(() => {
     Object.defineProperty(import.meta.env, 'DEV', {
       configurable: true,
       writable: true,
       value: false,
     });
+
     const originalAddEventListener = document.addEventListener.bind(document);
     const originalRemoveEventListener = document.removeEventListener.bind(document);
 
@@ -52,7 +43,7 @@ describe('useDisableRightClick', () => {
           listener,
           options,
         )) as typeof document.removeEventListener);
-    await loadHook();
+
     resetDisableRightClickForTesting();
     setDisableRightClickDevModeForTesting(false);
   });
@@ -69,7 +60,7 @@ describe('useDisableRightClick', () => {
     setDisableRightClickDevModeForTesting(null);
   });
 
-  test('attaches and detaches the contextmenu listener outside dev', async () => {
+  test('attaches and detaches the contextmenu listener outside dev', () => {
     expect(import.meta.env.DEV).toBe(false);
     expect(isDisableRightClickDevModeForTesting()).toBe(false);
 
@@ -94,7 +85,7 @@ describe('useDisableRightClick', () => {
     expect(removeEventListenerSpy).toHaveBeenCalledWith('contextmenu', handler);
   });
 
-  test('does not register the listener multiple times for re-renders', async () => {
+  test('does not register the listener multiple times for re-renders', () => {
     expect(import.meta.env.DEV).toBe(false);
     expect(isDisableRightClickDevModeForTesting()).toBe(false);
 
@@ -111,18 +102,16 @@ describe('useDisableRightClick', () => {
     cleanupSecond();
   });
 
-  test('skips registering the listener while in dev mode', async () => {
+  test('skips registering the listener while in dev mode', () => {
     addEventListenerSpy.mockClear();
     removeEventListenerSpy.mockClear();
 
-    vi.resetModules();
     Object.defineProperty(import.meta.env, 'DEV', {
       configurable: true,
       writable: true,
       value: true,
     });
 
-    await loadHook();
     resetDisableRightClickForTesting();
     setDisableRightClickDevModeForTesting(true);
 
@@ -141,7 +130,7 @@ describe('useDisableRightClick', () => {
     expect(removeEventListenerSpy).not.toHaveBeenCalled();
   });
 
-  test('cleanup function does nothing if listener is not attached', async () => {
+  test('cleanup function does nothing if listener is not attached', () => {
     expect(import.meta.env.DEV).toBe(false);
     expect(isDisableRightClickDevModeForTesting()).toBe(false);
 
@@ -160,7 +149,7 @@ describe('useDisableRightClick', () => {
     expect(removeEventListenerSpy).not.toHaveBeenCalled();
   });
 
-  test('resetDisableRightClickForTesting does nothing when listener is not attached', async () => {
+  test('resetDisableRightClickForTesting does nothing when listener is not attached', () => {
     removeEventListenerSpy.mockClear();
 
     // Call reset when nothing is attached
@@ -169,7 +158,7 @@ describe('useDisableRightClick', () => {
     expect(removeEventListenerSpy).not.toHaveBeenCalled();
   });
 
-  test('resetDisableRightClickForTesting removes listener when attached', async () => {
+  test('resetDisableRightClickForTesting removes listener when attached', () => {
     expect(import.meta.env.DEV).toBe(false);
 
     attachContextMenuListener();
@@ -195,7 +184,7 @@ describe('useDisableRightClick', () => {
     await unmount();
   });
 
-  test('isDisableRightClickDevModeForTesting falls back to import.meta.env when override is null', async () => {
+  test('isDisableRightClickDevModeForTesting falls back to import.meta.env when override is null', () => {
     Object.defineProperty(import.meta.env, 'DEV', {
       configurable: true,
       writable: true,

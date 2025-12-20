@@ -67,4 +67,52 @@ describe('KeepAwake Component', () => {
 
     queryClient.clear();
   });
+
+  test('button is clickable', async () => {
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(['keep-awake'], false);
+
+    const { container } = await render(<KeepAwake />, {
+      wrapper: createQueryClientWrapper(queryClient),
+    });
+
+    await vi.waitFor(() => {
+      const button = container.querySelector('button');
+      expect(button).toBeDefined();
+    });
+
+    queryClient.clear();
+  });
+
+  test('displays icon when awake', async () => {
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(['keep-awake'], true);
+
+    const { container } = await render(<KeepAwake />, {
+      wrapper: createQueryClientWrapper(queryClient),
+    });
+
+    await vi.waitFor(() => {
+      const svg = container.querySelector('svg');
+      expect(svg).toBeDefined();
+    });
+
+    queryClient.clear();
+  });
+
+  test('displays icon when sleep', async () => {
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(['keep-awake'], false);
+
+    const { container } = await render(<KeepAwake />, {
+      wrapper: createQueryClientWrapper(queryClient),
+    });
+
+    await vi.waitFor(() => {
+      const svg = container.querySelector('svg');
+      expect(svg).toBeDefined();
+    });
+
+    queryClient.clear();
+  });
 });

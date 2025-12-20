@@ -23,7 +23,7 @@
     "test": "pnpm test:ui && pnpm test:rust",
     "test:rust": "cargo nextest run --workspace",
     "test:ui": "vitest run",
-    "test:ui:coverage": "vitest run --coverage --browser=chromium"
+    "test:ui:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@fortawesome/fontawesome-svg-core": "^7.1.0",

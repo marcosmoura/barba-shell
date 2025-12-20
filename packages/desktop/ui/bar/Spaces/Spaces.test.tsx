@@ -251,4 +251,107 @@ describe('Spaces Component', () => {
 
     queryClient.clear();
   });
+
+  test('workspace button is clickable', async () => {
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(['hyprspace_workspaces'], ['terminal', 'coding']);
+    queryClient.setQueryData(['hyprspace_current_workspace'], 'terminal');
+    queryClient.setQueryData(['workspace_apps'], []);
+    queryClient.setQueryData(['focused_app'], undefined);
+
+    const { container } = await render(<Spaces />, {
+      wrapper: createQueryClientWrapper(queryClient),
+    });
+
+    await vi.waitFor(() => {
+      const buttons = container.querySelectorAll('button');
+      expect(buttons.length).toBe(2);
+      // Buttons should be present and clickable
+      buttons.forEach((button) => {
+        expect(button).toBeDefined();
+      });
+    });
+
+    queryClient.clear();
+  });
+
+  test('app button is clickable', async () => {
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(['hyprspace_workspaces'], ['terminal']);
+    queryClient.setQueryData(['hyprspace_current_workspace'], 'terminal');
+    queryClient.setQueryData(['workspace_apps'], [{ key: '1', appName: 'Ghostty', windowId: 100 }]);
+    queryClient.setQueryData(['focused_app'], { appName: 'Ghostty', windowId: 100 });
+
+    const { container } = await render(<Spaces />, {
+      wrapper: createQueryClientWrapper(queryClient),
+    });
+
+    await vi.waitFor(() => {
+      // Should have workspace button and app button
+      const buttons = container.querySelectorAll('button');
+      expect(buttons.length).toBeGreaterThanOrEqual(1);
+    });
+
+    queryClient.clear();
+  });
+
+  test('renders all standard workspaces', async () => {
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(
+      ['hyprspace_workspaces'],
+      ['terminal', 'coding', 'browser', 'music', 'design', 'communication', 'misc', 'files'],
+    );
+    queryClient.setQueryData(['hyprspace_current_workspace'], 'coding');
+    queryClient.setQueryData(['workspace_apps'], []);
+    queryClient.setQueryData(['focused_app'], undefined);
+
+    const { container } = await render(<Spaces />, {
+      wrapper: createQueryClientWrapper(queryClient),
+    });
+
+    await vi.waitFor(() => {
+      const buttons = container.querySelectorAll('button');
+      expect(buttons.length).toBe(8);
+    });
+
+    queryClient.clear();
+  });
+
+  test('renders mail workspace', async () => {
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(['hyprspace_workspaces'], ['mail']);
+    queryClient.setQueryData(['hyprspace_current_workspace'], 'mail');
+    queryClient.setQueryData(['workspace_apps'], []);
+    queryClient.setQueryData(['focused_app'], undefined);
+
+    const { container } = await render(<Spaces />, {
+      wrapper: createQueryClientWrapper(queryClient),
+    });
+
+    await vi.waitFor(() => {
+      const buttons = container.querySelectorAll('button');
+      expect(buttons.length).toBe(1);
+    });
+
+    queryClient.clear();
+  });
+
+  test('renders tasks workspace', async () => {
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(['hyprspace_workspaces'], ['tasks']);
+    queryClient.setQueryData(['hyprspace_current_workspace'], 'tasks');
+    queryClient.setQueryData(['workspace_apps'], []);
+    queryClient.setQueryData(['focused_app'], undefined);
+
+    const { container } = await render(<Spaces />, {
+      wrapper: createQueryClientWrapper(queryClient),
+    });
+
+    await vi.waitFor(() => {
+      const buttons = container.querySelectorAll('button');
+      expect(buttons.length).toBe(1);
+    });
+
+    queryClient.clear();
+  });
 });

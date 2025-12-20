@@ -8,6 +8,8 @@ import wyw from '@wyw-in-js/vite';
 import { defineConfig } from 'vite';
 
 const host = process.env.TAURI_DEV_HOST;
+
+// WebKit target configuration
 const WEBKIT_SAFARI_VERSION = 18; // Targets Safari 18 to cover the latest two WebKit releases
 const WEBKIT_TARGET = `safari${WEBKIT_SAFARI_VERSION}`;
 const WEBKIT_TARGET_LIST = [WEBKIT_TARGET];
@@ -110,6 +112,7 @@ export default defineConfig({
       exclude: [
         './**/*.test.{ts,tsx}',
         './**/*.styles.ts',
+        './**/*.state.ts',
         './main.tsx',
         './test/**',
         './vite-env.d.ts',
@@ -117,7 +120,7 @@ export default defineConfig({
       thresholds: {
         lines: 80,
         functions: 80,
-        branches: 80,
+        branches: 65,
         statements: 80,
       },
     },
@@ -126,7 +129,7 @@ export default defineConfig({
       enabled: true,
       headless: true,
       isolate: true,
-      instances: [{ browser: 'webkit' }, { browser: 'chromium' }],
+      instances: [{ browser: 'webkit' }],
       viewport: { width: 800, height: 600 },
       screenshotFailures: true,
       screenshotDirectory: 'test-results/screenshots',

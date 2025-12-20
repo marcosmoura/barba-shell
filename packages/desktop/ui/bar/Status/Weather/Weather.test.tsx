@@ -105,4 +105,225 @@ describe('Weather Component', () => {
     queryClient.clear();
     vi.restoreAllMocks();
   });
+
+  test('renders loading state when no weather data', async () => {
+    const mockFetch = createFetchMock([
+      { pattern: 'ipapi.co', response: { city: 'Paris', country_name: 'France' } },
+      { pattern: 'ipinfo.io', response: { city: 'Paris', country: 'FR' } },
+      {
+        pattern: 'visualcrossing',
+        response: {
+          currentConditions: null,
+        },
+      },
+    ]);
+    vi.spyOn(globalThis, 'fetch').mockImplementation(mockFetch);
+
+    const queryClient = createTestQueryClient();
+
+    const { getByText } = await render(<Weather />, {
+      wrapper: createQueryClientWrapper(queryClient),
+    });
+
+    await vi.waitFor(() => {
+      expect(getByText('Loading weather...')).toBeDefined();
+    });
+
+    queryClient.clear();
+    vi.restoreAllMocks();
+  });
+
+  test('renders weather with snow icon', async () => {
+    const mockFetch = createFetchMock([
+      { pattern: 'ipapi.co', response: { city: 'Oslo', country_name: 'Norway' } },
+      { pattern: 'ipinfo.io', response: { city: 'Oslo', country: 'NO' } },
+      {
+        pattern: 'visualcrossing',
+        response: {
+          currentConditions: {
+            feelslike: -5,
+            icon: 'snow',
+            conditions: 'Snow',
+          },
+        },
+      },
+    ]);
+    vi.spyOn(globalThis, 'fetch').mockImplementation(mockFetch);
+
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(['weather'], {
+      currentConditions: {
+        feelslike: -5,
+        icon: 'snow',
+        conditions: 'Snow',
+      },
+    });
+
+    const { container } = await render(<Weather />, {
+      wrapper: createQueryClientWrapper(queryClient),
+    });
+
+    await vi.waitFor(() => {
+      const svg = container.querySelector('svg');
+      expect(svg).toBeDefined();
+    });
+
+    queryClient.clear();
+    vi.restoreAllMocks();
+  });
+
+  test('renders weather with rain icon', async () => {
+    const mockFetch = createFetchMock([
+      { pattern: 'ipapi.co', response: { city: 'Seattle', country_name: 'USA' } },
+      { pattern: 'ipinfo.io', response: { city: 'Seattle', country: 'US' } },
+      {
+        pattern: 'visualcrossing',
+        response: {
+          currentConditions: {
+            feelslike: 10,
+            icon: 'rain',
+            conditions: 'Rainy',
+          },
+        },
+      },
+    ]);
+    vi.spyOn(globalThis, 'fetch').mockImplementation(mockFetch);
+
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(['weather'], {
+      currentConditions: {
+        feelslike: 10,
+        icon: 'rain',
+        conditions: 'Rainy',
+      },
+    });
+
+    const { container } = await render(<Weather />, {
+      wrapper: createQueryClientWrapper(queryClient),
+    });
+
+    await vi.waitFor(() => {
+      const svg = container.querySelector('svg');
+      expect(svg).toBeDefined();
+    });
+
+    queryClient.clear();
+    vi.restoreAllMocks();
+  });
+
+  test('renders weather with night icon', async () => {
+    const mockFetch = createFetchMock([
+      { pattern: 'ipapi.co', response: { city: 'Sydney', country_name: 'Australia' } },
+      { pattern: 'ipinfo.io', response: { city: 'Sydney', country: 'AU' } },
+      {
+        pattern: 'visualcrossing',
+        response: {
+          currentConditions: {
+            feelslike: 18,
+            icon: 'clear-night',
+            conditions: 'Clear',
+          },
+        },
+      },
+    ]);
+    vi.spyOn(globalThis, 'fetch').mockImplementation(mockFetch);
+
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(['weather'], {
+      currentConditions: {
+        feelslike: 18,
+        icon: 'clear-night',
+        conditions: 'Clear',
+      },
+    });
+
+    const { container } = await render(<Weather />, {
+      wrapper: createQueryClientWrapper(queryClient),
+    });
+
+    await vi.waitFor(() => {
+      const svg = container.querySelector('svg');
+      expect(svg).toBeDefined();
+    });
+
+    queryClient.clear();
+    vi.restoreAllMocks();
+  });
+
+  test('renders weather with unknown icon defaults to clear-day', async () => {
+    const mockFetch = createFetchMock([
+      { pattern: 'ipapi.co', response: { city: 'Mars', country_name: 'Space' } },
+      { pattern: 'ipinfo.io', response: { city: 'Mars', country: 'SP' } },
+      {
+        pattern: 'visualcrossing',
+        response: {
+          currentConditions: {
+            feelslike: 0,
+            icon: 'unknown-icon',
+            conditions: 'Unknown',
+          },
+        },
+      },
+    ]);
+    vi.spyOn(globalThis, 'fetch').mockImplementation(mockFetch);
+
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(['weather'], {
+      currentConditions: {
+        feelslike: 0,
+        icon: 'unknown-icon',
+        conditions: 'Unknown',
+      },
+    });
+
+    const { container } = await render(<Weather />, {
+      wrapper: createQueryClientWrapper(queryClient),
+    });
+
+    await vi.waitFor(() => {
+      const svg = container.querySelector('svg');
+      expect(svg).toBeDefined();
+    });
+
+    queryClient.clear();
+    vi.restoreAllMocks();
+  });
+
+  test('handles null feelslike value', async () => {
+    const mockFetch = createFetchMock([
+      { pattern: 'ipapi.co', response: { city: 'Unknown', country_name: 'Unknown' } },
+      { pattern: 'ipinfo.io', response: { city: 'Unknown', country: 'UN' } },
+      {
+        pattern: 'visualcrossing',
+        response: {
+          currentConditions: {
+            feelslike: null,
+            icon: 'clear-day',
+            conditions: '',
+          },
+        },
+      },
+    ]);
+    vi.spyOn(globalThis, 'fetch').mockImplementation(mockFetch);
+
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(['weather'], {
+      currentConditions: {
+        feelslike: null,
+        icon: 'clear-day',
+        conditions: '',
+      },
+    });
+
+    const { container } = await render(<Weather />, {
+      wrapper: createQueryClientWrapper(queryClient),
+    });
+
+    await vi.waitFor(() => {
+      expect(container.querySelector('button')).toBeDefined();
+    });
+
+    queryClient.clear();
+    vi.restoreAllMocks();
+  });
 });

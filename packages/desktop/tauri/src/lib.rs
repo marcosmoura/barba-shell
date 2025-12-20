@@ -20,12 +20,12 @@ pub fn run() {
     wallpaper::init();
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_process::init())
-        .manage(bar::components::keepawake::KeepAwakeController::default())
         .plugin(tauri_plugin_single_instance::init(|_app, _args, _| {
             // Single instance plugin ensures only one instance runs
             // CLI communication is handled via IPC socket
         }))
+        .plugin(tauri_plugin_process::init())
+        .manage(bar::components::keepawake::KeepAwakeController::default())
         .plugin(tauri_plugin_shell::init())
         .plugin(hotkey::create_hotkey_plugin())
         .invoke_handler(tauri::generate_handler![

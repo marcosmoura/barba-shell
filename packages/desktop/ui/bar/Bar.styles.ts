@@ -3,10 +3,12 @@ import { css } from '@linaria/core';
 import { motion } from '@/design-system';
 
 export const bar = css`
-  position: fixed;
-  inset: 0;
-
   overflow: hidden;
+  display: grid;
+  grid-auto-flow: column;
+  align-items: center;
+  justify-content: space-between;
+  justify-items: center;
 
   width: 100%;
   height: 100%;

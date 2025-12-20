@@ -98,7 +98,7 @@ export const Spaces = () => {
   }
 
   return (
-    <Stack className={styles.spaces} data-test-id="spaces-container">
+    <Stack data-test-id="spaces-container">
       <Surface className={styles.workspaces}>
         {workspaces.map(({ key, name, isFocused }) => (
           <Button

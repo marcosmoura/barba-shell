@@ -2,13 +2,6 @@ import { css } from '@linaria/core';
 
 import { colors, motion } from '@/design-system';
 
-export const spaces = css`
-  position: fixed;
-  top: 0;
-  bottom: 0;
-  left: 0;
-`;
-
 export const workspaces = css`
   display: grid;
   grid-auto-flow: column;

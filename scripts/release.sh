@@ -166,6 +166,9 @@ main() {
 	run_with_privilege rm -rf "${INSTALL_PATH}"
 	run_with_privilege ditto "${BUNDLE_PATH}" "${INSTALL_PATH}"
 
+	progress "Stopping any running ${APP_NAME} instances"
+	pkill -f "${APP_NAME}" 2>/dev/null || true
+
 	succeed "Release complete!"
 }
 

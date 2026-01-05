@@ -42,8 +42,8 @@ export const ScrollingLabel = ({
 
   const isScrolling = scrollDistance < 0;
   const scrollStyles = useMemo(() => {
-    // Calculate duration: base 2s + scrollSpeed px per second for readable scrolling
-    const scrollDuration = Math.max(3, 2 + Math.abs(scrollDistance) / scrollSpeed);
+    // Calculate duration: base 1s + scrollSpeed px per second for readable scrolling
+    const scrollDuration = Math.max(1, 1 + Math.abs(scrollDistance) / scrollSpeed);
 
     return {
       '--scroll-distance': `${scrollDistance}px`,

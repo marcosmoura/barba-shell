@@ -3,6 +3,7 @@ fn main() {
     // Use framework search mode so the linker can resolve the framework
     println!("cargo:rustc-link-search=framework=/System/Library/PrivateFrameworks");
     println!("cargo:rustc-link-lib=framework=SkyLight");
+    println!("cargo:rustc-link-lib=framework=CoreLocation");
 
     // Read tauri.conf.json to extract the app identifier at compile time
     let config_path = std::path::Path::new("tauri.conf.json");

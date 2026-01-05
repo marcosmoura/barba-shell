@@ -49,8 +49,16 @@ class MediaQueryRegistry {
 
 const registry = new MediaQueryRegistry();
 
+// Get initial value synchronously to avoid hydration mismatch and extra render
+const getInitialValue = (query: string): boolean => {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  return window.matchMedia(query).matches;
+};
+
 export const useMediaQuery = (query: string) => {
-  const [matches, setMatches] = useState(false);
+  const [matches, setMatches] = useState(() => getInitialValue(query));
 
   useEffect(() => registry.subscribe(query, setMatches), [query]);
 

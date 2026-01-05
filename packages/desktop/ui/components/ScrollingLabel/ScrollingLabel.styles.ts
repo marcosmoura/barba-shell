@@ -48,21 +48,30 @@ export const label = css`
 `;
 
 export const scrollingLabel = css`
-  display: inline-flex;
+  display: flex;
   align-items: center;
 
-  padding-right: 8px;
   padding-left: 8px;
 
   animation: scroll-text var(--scroll-duration, 5s) linear infinite alternate;
 
+  /* Hack to add spacing at the end of the scrolling text */
+  &::after {
+    content: '\u00A0';
+
+    display: block;
+    flex-shrink: 0;
+
+    width: 8px;
+  }
+
   @keyframes scroll-text {
     0%,
-    5% {
+    15% {
       transform: translateX(0);
     }
 
-    95%,
+    85%,
     100% {
       transform: translateX(var(--scroll-distance, 0px));
     }

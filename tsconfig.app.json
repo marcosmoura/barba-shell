@@ -33,7 +33,10 @@
     "plugins": [
       {
         "name": "@styled/typescript-styled-plugin",
-        "tags": ["css"]
+        "tags": ["css"],
+        "lint": {
+          "vendorPrefix": "ignore"
+        }
       }
     ]
   },

@@ -4,9 +4,15 @@
   "version": "0.9.0",
   "identifier": "com.marcosmoura.barba",
   "build": {
-    "beforeDevCommand": { "script": "pnpm dev", "cwd": "../../.." },
+    "beforeDevCommand": {
+      "script": "killall barba-app; pnpm dev",
+      "cwd": "../../.."
+    },
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": { "script": "./scripts/generate-schema.sh && pnpm format && pnpm build", "cwd": "../../.." },
+    "beforeBuildCommand": {
+      "script": "./scripts/generate-schema.sh && pnpm format && pnpm build",
+      "cwd": "../../.."
+    },
     "frontendDist": "../ui/dist"
   },
   "app": {
@@ -63,7 +69,7 @@
         "alwaysOnTop": true,
         "browserExtensionsEnabled": false,
         "closable": false,
-        "create": false,
+        "create": true,
         "decorations": false,
         "dragDropEnabled": false,
         "focus": false,
@@ -107,6 +113,7 @@
     ],
     "macOS": {
       "minimumSystemVersion": "10.15",
+      "infoPlist": "Info.plist",
       "files": {
         "lib": "resources/lib",
         "Frameworks": "resources/Frameworks"

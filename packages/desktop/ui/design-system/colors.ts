@@ -25,4 +25,6 @@ export const colors = {
   base: '#1e1e2e',
   mantle: '#181825',
   crust: '#11111b',
+  crustFaded: 'rgba(17, 17, 27, 0.9)',
+  crustTransparent: 'rgba(17, 17, 27, 0)',
 };

@@ -8,6 +8,7 @@ mod ipc;
 mod notunes;
 mod utils;
 mod wallpaper;
+mod widgets;
 
 /// Runs the Tauri application.
 ///
@@ -25,6 +26,7 @@ pub fn run() {
             // CLI communication is handled via IPC socket
         }))
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_zustand::init())
         .manage(bar::components::keepawake::KeepAwakeController::default())
         .plugin(tauri_plugin_shell::init())
         .plugin(hotkey::create_hotkey_plugin())
@@ -42,8 +44,12 @@ pub fn run() {
             bar::components::keepawake::toggle_system_awake,
             bar::components::media::get_current_media_info,
             bar::components::weather::get_weather_config,
+            bar::window::get_bar_window_frame,
         ])
         .setup(move |app| {
+            // Make the app not appear in the dock
+            let _ = app.handle().set_activation_policy(tauri::ActivationPolicy::Prohibited);
+
             // Start watching the config file for changes
             config::watch_config_file(app.handle().clone());
 
@@ -52,6 +58,9 @@ pub fn run() {
 
             // Initialize Bar components
             bar::init(app);
+
+            // Initialize Widgets components
+            widgets::init(app);
 
             // Start wallpaper manager (set initial wallpaper and start timer)
             wallpaper::start();

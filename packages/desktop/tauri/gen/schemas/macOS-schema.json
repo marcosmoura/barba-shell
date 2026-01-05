@@ -2515,6 +2515,312 @@
           "type": "string",
           "const": "shell:deny-stdin-write",
           "markdownDescription": "Denies the stdin_write command without any pre-configured scope."
+        },
+        {
+          "description": "Default permissions for tauri-plugin-zustand.\n#### This default permission set includes:\n\n- `allow-allow-save`\n- `allow-allow-sync`\n- `allow-clear-autosave`\n- `allow-deny-save`\n- `allow-deny-sync`\n- `allow-destroy`\n- `allow-get-default-save-strategy`\n- `allow-get-save-strategy`\n- `allow-get-store-collection-path`\n- `allow-get-store-ids`\n- `allow-get-store-path`\n- `allow-get-store-state`\n- `allow-load`\n- `allow-patch`\n- `allow-save`\n- `allow-save-all`\n- `allow-save-all-now`\n- `allow-save-now`\n- `allow-save-some`\n- `allow-save-some-now`\n- `allow-set-autosave`\n- `allow-set-save-strategy`\n- `allow-set-store-collection-path`\n- `allow-set-store-options`\n- `allow-unload`",
+          "type": "string",
+          "const": "zustand:default",
+          "markdownDescription": "Default permissions for tauri-plugin-zustand.\n#### This default permission set includes:\n\n- `allow-allow-save`\n- `allow-allow-sync`\n- `allow-clear-autosave`\n- `allow-deny-save`\n- `allow-deny-sync`\n- `allow-destroy`\n- `allow-get-default-save-strategy`\n- `allow-get-save-strategy`\n- `allow-get-store-collection-path`\n- `allow-get-store-ids`\n- `allow-get-store-path`\n- `allow-get-store-state`\n- `allow-load`\n- `allow-patch`\n- `allow-save`\n- `allow-save-all`\n- `allow-save-all-now`\n- `allow-save-now`\n- `allow-save-some`\n- `allow-save-some-now`\n- `allow-set-autosave`\n- `allow-set-save-strategy`\n- `allow-set-store-collection-path`\n- `allow-set-store-options`\n- `allow-unload`"
+        },
+        {
+          "description": "Enables the allow_save command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:allow-allow-save",
+          "markdownDescription": "Enables the allow_save command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the allow_sync command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:allow-allow-sync",
+          "markdownDescription": "Enables the allow_sync command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the clear_autosave command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:allow-clear-autosave",
+          "markdownDescription": "Enables the clear_autosave command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the deny_save command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:allow-deny-save",
+          "markdownDescription": "Enables the deny_save command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the deny_sync command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:allow-deny-sync",
+          "markdownDescription": "Enables the deny_sync command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the destroy command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:allow-destroy",
+          "markdownDescription": "Enables the destroy command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_default_save_strategy command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:allow-get-default-save-strategy",
+          "markdownDescription": "Enables the get_default_save_strategy command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_save_strategy command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:allow-get-save-strategy",
+          "markdownDescription": "Enables the get_save_strategy command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_store_collection_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:allow-get-store-collection-path",
+          "markdownDescription": "Enables the get_store_collection_path command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_store_ids command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:allow-get-store-ids",
+          "markdownDescription": "Enables the get_store_ids command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_store_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:allow-get-store-path",
+          "markdownDescription": "Enables the get_store_path command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_store_state command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:allow-get-store-state",
+          "markdownDescription": "Enables the get_store_state command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the load command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:allow-load",
+          "markdownDescription": "Enables the load command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the patch command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:allow-patch",
+          "markdownDescription": "Enables the patch command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:allow-save",
+          "markdownDescription": "Enables the save command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_all command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:allow-save-all",
+          "markdownDescription": "Enables the save_all command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_all_now command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:allow-save-all-now",
+          "markdownDescription": "Enables the save_all_now command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_now command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:allow-save-now",
+          "markdownDescription": "Enables the save_now command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_some command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:allow-save-some",
+          "markdownDescription": "Enables the save_some command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_some_now command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:allow-save-some-now",
+          "markdownDescription": "Enables the save_some_now command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_autosave command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:allow-set-autosave",
+          "markdownDescription": "Enables the set_autosave command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_save_strategy command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:allow-set-save-strategy",
+          "markdownDescription": "Enables the set_save_strategy command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_store_collection_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:allow-set-store-collection-path",
+          "markdownDescription": "Enables the set_store_collection_path command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_store_options command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:allow-set-store-options",
+          "markdownDescription": "Enables the set_store_options command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the unload command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:allow-unload",
+          "markdownDescription": "Enables the unload command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the allow_save command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:deny-allow-save",
+          "markdownDescription": "Denies the allow_save command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the allow_sync command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:deny-allow-sync",
+          "markdownDescription": "Denies the allow_sync command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the clear_autosave command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:deny-clear-autosave",
+          "markdownDescription": "Denies the clear_autosave command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the deny_save command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:deny-deny-save",
+          "markdownDescription": "Denies the deny_save command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the deny_sync command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:deny-deny-sync",
+          "markdownDescription": "Denies the deny_sync command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the destroy command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:deny-destroy",
+          "markdownDescription": "Denies the destroy command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_default_save_strategy command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:deny-get-default-save-strategy",
+          "markdownDescription": "Denies the get_default_save_strategy command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_save_strategy command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:deny-get-save-strategy",
+          "markdownDescription": "Denies the get_save_strategy command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_store_collection_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:deny-get-store-collection-path",
+          "markdownDescription": "Denies the get_store_collection_path command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_store_ids command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:deny-get-store-ids",
+          "markdownDescription": "Denies the get_store_ids command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_store_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:deny-get-store-path",
+          "markdownDescription": "Denies the get_store_path command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_store_state command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:deny-get-store-state",
+          "markdownDescription": "Denies the get_store_state command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the load command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:deny-load",
+          "markdownDescription": "Denies the load command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the patch command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:deny-patch",
+          "markdownDescription": "Denies the patch command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:deny-save",
+          "markdownDescription": "Denies the save command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_all command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:deny-save-all",
+          "markdownDescription": "Denies the save_all command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_all_now command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:deny-save-all-now",
+          "markdownDescription": "Denies the save_all_now command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_now command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:deny-save-now",
+          "markdownDescription": "Denies the save_now command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_some command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:deny-save-some",
+          "markdownDescription": "Denies the save_some command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_some_now command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:deny-save-some-now",
+          "markdownDescription": "Denies the save_some_now command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_autosave command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:deny-set-autosave",
+          "markdownDescription": "Denies the set_autosave command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_save_strategy command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:deny-set-save-strategy",
+          "markdownDescription": "Denies the set_save_strategy command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_store_collection_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:deny-set-store-collection-path",
+          "markdownDescription": "Denies the set_store_collection_path command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_store_options command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:deny-set-store-options",
+          "markdownDescription": "Denies the set_store_options command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the unload command without any pre-configured scope.",
+          "type": "string",
+          "const": "zustand:deny-unload",
+          "markdownDescription": "Denies the unload command without any pre-configured scope."
         }
       ]
     },

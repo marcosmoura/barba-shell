@@ -1,10 +1,10 @@
 {
+  "css.lint.vendorPrefix": "ignore",
   "editor.codeActionsOnSave": {
     "source.addMissingImports.ts": "always",
     "source.fixAll.eslint": "always",
     "source.fixAll.stylelint": "always",
     "source.fixAll.ts": "always",
-    "source.removeUnused.ts": "always",
     "source.removeUnusedImports": "always"
   },
   "editor.experimental.preferTreeSitter.typescript": false,

@@ -1,17 +1,19 @@
 pub mod components;
-mod constants;
+pub mod constants;
 mod menubar;
 mod screen;
-mod window;
+pub mod window;
 
 use tauri::{App, Manager};
+
+use crate::utils::window::{set_window_below_menu, set_window_sticky};
 
 pub fn init(app: &App) {
     let app_handle = app.app_handle().clone();
     let webview_window = app_handle.get_webview_window("bar").unwrap();
 
-    window::set_window_sticky(&webview_window);
-    window::set_window_below_menu(&webview_window);
+    set_window_sticky(&webview_window);
+    set_window_below_menu(&webview_window);
     window::set_window_position(&webview_window);
 
     let webview_watcher_clone = webview_window.clone();
@@ -22,8 +24,7 @@ pub fn init(app: &App) {
     // Initialize components
     components::init(&webview_window);
 
-    // Make the app not appear in the dock
-    let _ = app_handle.set_activation_policy(tauri::ActivationPolicy::Prohibited);
+    // Show the window
     let _ = webview_window.show();
 
     // Open devtools if in dev mode

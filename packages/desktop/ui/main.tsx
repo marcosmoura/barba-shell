@@ -1,26 +1,25 @@
-import { StrictMode } from 'react';
+import { StrictMode, Suspense, lazy } from 'react';
 import { createRoot } from 'react-dom/client';
-
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import './main.css';
 
-import { Bar } from './bar';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      refetchOnReconnect: true,
-      refetchIntervalInBackground: true,
-      retry: true,
-    },
-  },
+const resolveModule = (moduleName: string) => (module: Record<string, React.ComponentType>) => ({
+  default: module[moduleName],
 });
+const Bar = lazy(() => import('./renderer/bar').then(resolveModule('Bar')));
+const Widgets = lazy(() => import('./renderer/widgets').then(resolveModule('Widgets')));
+
+const windowName = getCurrentWindow().label;
+
+console.log('Current window name:', windowName);
 
 createRoot(document.getElementById('root') as HTMLElement).render(
   <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <Bar />
-    </QueryClientProvider>
+    <Suspense fallback={null}>
+      {windowName === 'bar' && <Bar />}
+      {windowName === 'widgets' && <Widgets />}
+    </Suspense>
   </StrictMode>,
 );

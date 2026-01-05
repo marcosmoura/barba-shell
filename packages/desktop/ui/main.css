@@ -79,6 +79,7 @@ canvas {
   color-scheme: light dark;
   -webkit-font-smoothing: subpixel-antialiased;
   -moz-osx-font-smoothing: grayscale;
+  -webkit-touch-callout: none;
 }
 
 html,

@@ -30,7 +30,7 @@ describe('useTauriEventQuery', () => {
     });
 
     await vi.waitFor(() => {
-      expect(listenMock).toHaveBeenCalledWith(eventName, expect.any(Function));
+      expect(listenMock).toHaveBeenCalledWith(eventName, expect.any(Function), undefined);
     });
 
     await unmount();

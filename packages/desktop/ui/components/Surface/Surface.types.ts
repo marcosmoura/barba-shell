@@ -1,4 +1,4 @@
-import type { ComponentPropsWithoutRef, ElementType, PropsWithChildren } from 'react';
+import type { ComponentPropsWithRef, ElementType, PropsWithChildren } from 'react';
 
 export type SurfaceOwnProps<T extends ElementType = 'div'> = PropsWithChildren<{
   as?: T;
@@ -6,4 +6,4 @@ export type SurfaceOwnProps<T extends ElementType = 'div'> = PropsWithChildren<{
 }>;
 
 export type SurfaceProps<T extends ElementType = 'div'> = SurfaceOwnProps<T> &
-  Omit<ComponentPropsWithoutRef<T>, keyof SurfaceOwnProps<T>>;
+  Omit<ComponentPropsWithRef<T>, keyof SurfaceOwnProps<T>>;

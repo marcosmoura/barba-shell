@@ -3,26 +3,16 @@
   "identifier": "default",
   "description": "Capability for default features",
   "windows": [
-    "bar"
+    "bar",
+    "widgets"
   ],
   "platforms": [
     "macOS"
   ],
   "permissions": [
     "core:default",
-    "global-shortcut:allow-register",
-    "global-shortcut:allow-unregister",
-    "global-shortcut:allow-is-registered",
+    "core:event:default",
     "process:allow-restart",
-    {
-      "identifier": "shell:allow-spawn",
-      "allow": [
-        {
-          "name": "binaries/media-control",
-          "sidecar": true,
-          "args": ["stream", "--no-diff"]
-        }
-      ]
-    }
+    "zustand:default"
   ]
 }

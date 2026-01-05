@@ -21,6 +21,7 @@ export default {
   plugins: ['stylelint-high-performance-animation'],
   rules: {
     'nesting-selector-no-missing-scoping-root': null,
+    'property-no-vendor-prefix': null,
     'plugin/no-low-performance-animation-properties': [
       true,
       {

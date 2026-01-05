@@ -122,7 +122,8 @@ describe('useMediaQuery', () => {
     const first = await renderHook(() => useMediaQuery(query));
     const second = await renderHook(() => useMediaQuery(query));
 
-    expect(matchMediaMock).toHaveBeenCalledTimes(1);
+    // Each hook call performs an initial synchronous match plus one shared subscription.
+    expect(matchMediaMock).toHaveBeenCalledTimes(3);
 
     const mql = mediaQueries.get(query)!;
 

@@ -52,9 +52,12 @@ export default defineConfig({
       '@hugeicons/react',
       '@tanstack/react-query',
       '@tauri-apps/api/webviewWindow',
+      '@tauri-store/zustand',
       'react-dom',
       'react',
       'vitest-browser-react',
+      'zustand',
+      'zustand/middleware/immer',
     ],
   },
   clearScreen: false,
@@ -79,12 +82,40 @@ export default defineConfig({
     sourcemap: 'hidden',
     modulePreload: { polyfill: false },
     reportCompressedSize: true,
-    chunkSizeWarningLimit: 200,
+    chunkSizeWarningLimit: 300,
     outDir: path.resolve(__dirname, `${UI_DIR}/dist`),
     rolldownOptions: {
       output: {
         advancedChunks: {
-          groups: [{ name: 'react', test: /[\\/]node_modules[\\/](react|react-dom)[\\/]/ }],
+          groups: [
+            // React and React DOM in a separate chunk
+            {
+              name: 'react',
+              test: /[\\/]node_modules[\\/](react|react-dom)[\\/]/,
+            },
+            // Other vendor dependencies (icons stay in main bundle)
+            {
+              name: 'vendor',
+              test(id: string) {
+                // Ignore non-node_modules
+                if (!id.includes('node_modules')) {
+                  return false;
+                }
+
+                // Exclude icon libraries - they stay in main bundle
+                if (/@hugeicons|@fortawesome|hugeicons|fontawesome/.test(id)) {
+                  return false;
+                }
+
+                // Exclude react (handled above)
+                if (/[\\/](react|react-dom)[\\/]/.test(id)) {
+                  return false;
+                }
+
+                return true;
+              },
+            },
+          ],
         },
       },
     },

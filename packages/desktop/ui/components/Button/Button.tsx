@@ -8,9 +8,11 @@ export const Button = ({
   active = false,
   children,
   className,
+  ref,
   ...rest
 }: ButtonProps) => (
   <button
+    ref={ref}
     type={type}
     className={cx(styles.button, active && styles.buttonActive, className)}
     {...rest}

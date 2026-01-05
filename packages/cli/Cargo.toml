@@ -16,7 +16,7 @@ path = "src/main.rs"
 [dependencies]
 barba-shared = { path = "../shared" }
 clap = { version = "4.5.53", features = ["derive", "env", "string"] }
-clap_complete = "4.5.61"
+clap_complete = "4.5.62"
 
 # Shared with desktop app
 dirs = "6.0"
@@ -24,7 +24,7 @@ dirs = "6.0"
 # For IPC with the desktop app
 interprocess = { version = "2.2.3", features = ["tokio"] }
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.145"
+serde_json = "1.0.147"
 tokio = { version = "1.48.0", features = ["rt", "macros", "io-util", "net"] }
 
 [build-dependencies]

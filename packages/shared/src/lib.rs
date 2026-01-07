@@ -8,7 +8,8 @@ pub mod schema;
 
 pub use cache::{APP_BUNDLE_ID, clear_cache, format_bytes, get_cache_dir, get_cache_subdir};
 pub use config::{
-    BarConfig, BarbaConfig, ConfigError, ShortcutCommands, WallpaperConfig, WallpaperMode,
-    WeatherConfig, load_config,
+    BarConfig, BarbaConfig, ConfigError, MenuAnywhereConfig, MenuAnywhereModifier,
+    MenuAnywhereMouseButton, ShortcutCommands, WallpaperConfig, WallpaperMode, WeatherConfig,
+    load_config,
 };
 pub use schema::{generate_schema, print_schema};

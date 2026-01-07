@@ -45,7 +45,6 @@ fn is_music_app(bundle_id: &str) -> bool {
 /// Tidal instead.
 pub fn init() {
     if IS_RUNNING.swap(true, Ordering::SeqCst) {
-        eprintln!("barba: notunes: module is already running");
         return;
     }
 
@@ -54,8 +53,6 @@ pub fn init() {
         // Also terminate any already-running instances
         terminate_music_apps();
     });
-
-    eprintln!("barba: notunes: initialized - Apple Music/iTunes will be blocked");
 }
 
 /// Terminates any currently running Apple Music or iTunes instances.

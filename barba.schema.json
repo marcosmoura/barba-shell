@@ -23,6 +23,15 @@
       },
       "default": {}
     },
+    "menuAnywhere": {
+      "description": "`MenuAnywhere` configuration.\n\nAllows summoning the current application's menu bar at the cursor position.\n\nExample:\n```json\n{\n  \"menuAnywhere\": {\n    \"enabled\": true,\n    \"modifiers\": [\"control\", \"command\"],\n    \"mouseButton\": \"rightClick\"\n  }\n}\n```",
+      "$ref": "#/$defs/MenuAnywhereConfig",
+      "default": {
+        "enabled": false,
+        "modifiers": ["control", "command"],
+        "mouseButton": "rightClick"
+      }
+    },
     "wallpapers": {
       "description": "Desktop wallpaper configuration.\n\nControls dynamic wallpaper rotation, effects, and display.\n\nExample:\n```json\n{\n  \"wallpapers\": {\n    \"path\": \"/path/to/wallpapers\",\n    \"mode\": \"random\",\n    \"interval\": 300,\n    \"radius\": 12,\n    \"blur\": 8\n  }\n}\n```",
       "$ref": "#/$defs/WallpaperConfig",
@@ -50,6 +59,70 @@
           }
         }
       }
+    },
+    "MenuAnywhereConfig": {
+      "description": "Configuration for the `MenuAnywhere` feature.\n\n`MenuAnywhere` allows you to summon the current application's menu bar\nat any location on screen using a configurable keyboard + mouse trigger.\n\nExample:\n```json\n{\n  \"menuAnywhere\": {\n    \"enabled\": true,\n    \"modifiers\": [\"control\", \"command\"],\n    \"mouseButton\": \"rightClick\"\n  }\n}\n```",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Whether `MenuAnywhere` is enabled.\nDefault: false",
+          "type": "boolean",
+          "default": false
+        },
+        "modifiers": {
+          "description": "Keyboard modifiers that must be held when clicking.\nDefault: `[\"control\", \"command\"]`",
+          "type": "array",
+          "default": ["control", "command"],
+          "items": {
+            "$ref": "#/$defs/MenuAnywhereModifier"
+          }
+        },
+        "mouseButton": {
+          "description": "Mouse button that triggers the menu.\nDefault: `\"rightClick\"`",
+          "$ref": "#/$defs/MenuAnywhereMouseButton",
+          "default": "rightClick"
+        }
+      }
+    },
+    "MenuAnywhereModifier": {
+      "description": "Keyboard modifier options for `MenuAnywhere` trigger.",
+      "oneOf": [
+        {
+          "description": "Control key (^).",
+          "type": "string",
+          "const": "control"
+        },
+        {
+          "description": "Option/Alt key (⌥).",
+          "type": "string",
+          "const": "option"
+        },
+        {
+          "description": "Command key (⌘).",
+          "type": "string",
+          "const": "command"
+        },
+        {
+          "description": "Shift key (⇧).",
+          "type": "string",
+          "const": "shift"
+        }
+      ]
+    },
+    "MenuAnywhereMouseButton": {
+      "description": "Mouse button options for `MenuAnywhere` trigger.",
+      "oneOf": [
+        {
+          "description": "Trigger on right mouse button click.",
+          "type": "string",
+          "const": "rightClick"
+        },
+        {
+          "description": "Trigger on middle mouse button click.",
+          "type": "string",
+          "const": "middleClick"
+        }
+      ]
     },
     "ShortcutCommands": {
       "description": "Commands to execute for a keyboard shortcut.\n\nCan be either a single command string or an array of commands\nthat will be executed sequentially.",

@@ -5,6 +5,7 @@ mod config;
 mod constants;
 mod hotkey;
 mod ipc;
+mod menu_anywhere;
 mod notunes;
 mod utils;
 mod wallpaper;
@@ -73,6 +74,9 @@ pub fn run() {
 
             // Initialize hold-to-quit (⌘Q) handler
             cmd_q::init(app.handle().clone());
+
+            // Initialize MenuAnywhere (summon menu bar at cursor)
+            menu_anywhere::init(app.handle().clone());
 
             Ok(())
         })

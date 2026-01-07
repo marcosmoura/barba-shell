@@ -63,21 +63,15 @@ mod watcher;
 use crate::config::get_config;
 
 /// Initializes the audio module.
-///
-/// Sets up device watchers and applies initial device configuration.
-/// Uses the proxy audio configuration from the barba config file if available.
+///\n/// Sets up device watchers and applies initial device configuration.
+/// Only starts if proxy audio is enabled in the config.
 pub fn init() {
     let config = get_config();
 
-    // Only use proxy audio config if it's enabled
-    let proxy_config = if config.proxy_audio.is_enabled() {
-        Some(config.proxy_audio.clone())
-    } else {
-        None
-    };
-
-    // Start the audio device watcher
-    watcher::start(proxy_config);
+    // Only start if proxy audio is enabled
+    if config.proxy_audio.is_enabled() {
+        watcher::start(config.proxy_audio.clone());
+    }
 }
 
 #[cfg(test)]

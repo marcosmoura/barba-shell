@@ -83,20 +83,14 @@ fn set_default_input_device(device_id: AudioDeviceID) -> bool {
     status == kAudioHardwareNoError
 }
 
-/// Handles output device changes by applying priority rules.
-///
-/// Uses the provided config if available, otherwise falls back to legacy rules.
-fn handle_output_device_change(config: Option<&ProxyAudioConfig>) {
+/// Handles output device changes by applying priority rules from config.
+fn handle_output_device_change(config: &ProxyAudioConfig) {
     let Some(current) = get_default_output_device() else {
         return;
     };
 
     let devices = get_output_devices();
-
-    let target = config.map_or_else(
-        || priority::legacy::get_target_output_device(&current, &devices),
-        |cfg| priority::get_target_output_device(&current, &devices, cfg),
-    );
+    let target = priority::get_target_output_device(&current, &devices, config);
 
     let Some(target) = target else {
         return;
@@ -113,20 +107,14 @@ fn handle_output_device_change(config: Option<&ProxyAudioConfig>) {
     }
 }
 
-/// Handles input device changes by applying priority rules.
-///
-/// Uses the provided config if available, otherwise falls back to legacy rules.
-fn handle_input_device_change(config: Option<&ProxyAudioConfig>) {
+/// Handles input device changes by applying priority rules from config.
+fn handle_input_device_change(config: &ProxyAudioConfig) {
     let Some(current) = get_default_input_device() else {
         return;
     };
 
     let devices = get_input_devices();
-
-    let target = config.map_or_else(
-        || priority::legacy::get_target_input_device(&current, &devices),
-        |cfg| priority::get_target_input_device(&current, &devices, cfg),
-    );
+    let target = priority::get_target_input_device(&current, &devices, config);
 
     let Some(target) = target else {
         return;
@@ -146,8 +134,8 @@ fn handle_input_device_change(config: Option<&ProxyAudioConfig>) {
 /// Handles all audio device changes.
 ///
 /// This is called whenever an audio device is connected, disconnected,
-/// or when the default device changes.
-pub fn on_audio_device_change(config: Option<&ProxyAudioConfig>) {
+/// or when the default device changes. Requires config to be present.
+fn on_audio_device_change(config: &ProxyAudioConfig) {
     handle_output_device_change(config);
     handle_input_device_change(config);
 }
@@ -239,8 +227,8 @@ fn register_audio_listeners(tx: Sender<()>) {
 ///
 /// # Arguments
 ///
-/// * `config` - Optional proxy audio configuration. If `None`, legacy rules are used.
-pub fn init_audio_device_watcher(config: Option<ProxyAudioConfig>) {
+/// * `config` - Proxy audio configuration for device priority rules.
+pub fn init_audio_device_watcher(config: ProxyAudioConfig) {
     spawn_named_thread("audio-device-watcher", move || {
         let (tx, rx) = channel();
 
@@ -249,7 +237,7 @@ pub fn init_audio_device_watcher(config: Option<ProxyAudioConfig>) {
 
         // Wait for device change events
         while rx.recv().is_ok() {
-            on_audio_device_change(config.as_ref());
+            on_audio_device_change(&config);
         }
     });
 }
@@ -260,14 +248,14 @@ pub fn init_audio_device_watcher(config: Option<ProxyAudioConfig>) {
 ///
 /// # Arguments
 ///
-/// * `config` - Optional proxy audio configuration. If `None`, legacy rules are used.
-pub fn start(config: Option<ProxyAudioConfig>) {
+/// * `config` - Proxy audio configuration for device priority rules.
+pub fn start(config: ProxyAudioConfig) {
     if AUDIO_WATCHER_ONCE.set(()).is_err() {
         return;
     }
 
     // Apply initial device configuration
-    on_audio_device_change(config.as_ref());
+    on_audio_device_change(&config);
 
     // Start watching for device changes
     init_audio_device_watcher(config);

@@ -141,7 +141,7 @@ ensure_signing_certificate() {
 	local password="barba-temp-pwd"
 
 	# Create OpenSSL config for code signing
-	cat > "${temp_dir}/cert.conf" << EOF
+	cat >"${temp_dir}/cert.conf" <<EOF
 [req]
 distinguished_name = req_distinguished_name
 x509_extensions = v3_req

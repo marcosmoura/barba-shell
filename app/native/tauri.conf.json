@@ -108,7 +108,7 @@
       "icons/icon.png"
     ],
     "macOS": {
-      "minimumSystemVersion": "10.15",
+      "minimumSystemVersion": "14.0",
       "infoPlist": "Info.plist",
       "files": {
         "lib": "resources/lib",

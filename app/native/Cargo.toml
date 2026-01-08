@@ -70,6 +70,7 @@ starship-battery = { version = "0.10.3", default-features = false }
 sysinfo = { version = "0.37.2", default-features = false, features = [
     "system",
 ] }
+thiserror = "2.0.17"
 
 # Tauri and plugins
 tauri = { version = "2.9.5", default-features = false, features = [

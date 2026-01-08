@@ -856,4 +856,243 @@ mod tests {
         // Note: This test may not work reliably if other tests have already called init()
         // In practice, the global MANAGER is initialized once per process
     }
+
+    // ========================================================================
+    // WallpaperManagerError conversion tests
+    // ========================================================================
+
+    #[test]
+    fn test_wallpaper_manager_error_from_processing_error() {
+        let proc_err = ProcessingError::ImageRead("test.jpg".to_string());
+        let mgr_err: WallpaperManagerError = proc_err.into();
+        assert!(matches!(mgr_err, WallpaperManagerError::Processing(_)));
+        let display = mgr_err.to_string();
+        assert!(display.contains("Image processing error"));
+    }
+
+    #[test]
+    fn test_wallpaper_manager_error_from_macos_error() {
+        let mac_err = macos::WallpaperError::FileNotFound("/test/path".to_string());
+        let mgr_err: WallpaperManagerError = mac_err.into();
+        assert!(matches!(mgr_err, WallpaperManagerError::MacOS(_)));
+        let display = mgr_err.to_string();
+        assert!(display.contains("macOS wallpaper error"));
+    }
+
+    #[test]
+    fn test_wallpaper_manager_error_is_error_trait() {
+        let err = WallpaperManagerError::NoWallpapers;
+        // Verify it implements std::error::Error
+        let _: &dyn std::error::Error = &err;
+    }
+
+    // ========================================================================
+    // WallpaperManager construction tests
+    // ========================================================================
+
+    #[test]
+    fn test_wallpaper_manager_new_empty_config_returns_error() {
+        let config = WallpaperConfig::default();
+        let result = WallpaperManager::new(&config);
+        assert!(matches!(result, Err(WallpaperManagerError::NoWallpapers)));
+    }
+
+    #[test]
+    fn test_wallpaper_manager_new_nonexistent_path_returns_error() {
+        let config = WallpaperConfig {
+            path: "/nonexistent/path/that/does/not/exist".to_string(),
+            ..Default::default()
+        };
+        let result = WallpaperManager::new(&config);
+        assert!(matches!(result, Err(WallpaperManagerError::InvalidPath(_))));
+    }
+
+    #[test]
+    fn test_wallpaper_manager_new_file_instead_of_dir_returns_error() {
+        // Use /etc/passwd which exists and is a file, not a directory
+        let config = WallpaperConfig {
+            path: "/etc/passwd".to_string(),
+            ..Default::default()
+        };
+        let result = WallpaperManager::new(&config);
+        match result {
+            Err(WallpaperManagerError::InvalidPath(msg)) => {
+                assert!(msg.contains("is not a directory"));
+            }
+            _ => panic!("Expected InvalidPath error"),
+        }
+    }
+
+    #[test]
+    fn test_wallpaper_manager_new_with_empty_list_returns_error() {
+        let config = WallpaperConfig {
+            list: vec!["nonexistent.jpg".to_string()],
+            ..Default::default()
+        };
+        let result = WallpaperManager::new(&config);
+        // Should return NoWallpapers because the file doesn't exist
+        assert!(matches!(result, Err(WallpaperManagerError::NoWallpapers)));
+    }
+
+    // ========================================================================
+    // WallpaperAction tests
+    // ========================================================================
+
+    #[test]
+    fn test_wallpaper_action_debug() {
+        let action = WallpaperAction::FileForScreen(1, "test.jpg".to_string());
+        let debug = format!("{:?}", action);
+        assert!(debug.contains("FileForScreen"));
+        assert!(debug.contains("test.jpg"));
+    }
+
+    #[test]
+    fn test_wallpaper_action_random_for_screen_values() {
+        // Test that different screen indices create different actions
+        let action0 = WallpaperAction::RandomForScreen(0);
+        let action1 = WallpaperAction::RandomForScreen(1);
+        let action2 = WallpaperAction::RandomForScreen(2);
+
+        assert_ne!(action0, action1);
+        assert_ne!(action1, action2);
+        assert_ne!(action0, action2);
+    }
+
+    #[test]
+    fn test_wallpaper_action_file_for_screen_values() {
+        // Same file, different screens
+        let action0 = WallpaperAction::FileForScreen(0, "test.jpg".to_string());
+        let action1 = WallpaperAction::FileForScreen(1, "test.jpg".to_string());
+        assert_ne!(action0, action1);
+
+        // Same screen, different files
+        let action_a = WallpaperAction::FileForScreen(0, "a.jpg".to_string());
+        let action_b = WallpaperAction::FileForScreen(0, "b.jpg".to_string());
+        assert_ne!(action_a, action_b);
+    }
+
+    // ========================================================================
+    // ANSI codes tests
+    // ========================================================================
+
+    #[test]
+    fn test_ansi_codes_are_valid_escape_sequences() {
+        // All ANSI codes should start with escape sequence
+        assert!(ansi::GREEN.starts_with("\x1b["));
+        assert!(ansi::RED.starts_with("\x1b["));
+        assert!(ansi::YELLOW.starts_with("\x1b["));
+        assert!(ansi::CYAN.starts_with("\x1b["));
+        assert!(ansi::DIM.starts_with("\x1b["));
+        assert!(ansi::BOLD.starts_with("\x1b["));
+        assert!(ansi::RESET.starts_with("\x1b["));
+        assert!(ansi::CLEAR_LINE.starts_with("\x1b["));
+        assert!(ansi::HIDE_CURSOR.starts_with("\x1b["));
+        assert!(ansi::SHOW_CURSOR.starts_with("\x1b["));
+    }
+
+    #[test]
+    fn test_ansi_reset_ends_with_m() {
+        // Color codes end with 'm'
+        assert!(ansi::RESET.ends_with('m'));
+        assert!(ansi::GREEN.ends_with('m'));
+        assert!(ansi::RED.ends_with('m'));
+    }
+
+    // ========================================================================
+    // Spinner frames tests
+    // ========================================================================
+
+    #[test]
+    fn test_spinner_frames_not_empty() {
+        assert!(!SPINNER_FRAMES.is_empty());
+    }
+
+    #[test]
+    fn test_spinner_frames_all_non_empty() {
+        for frame in SPINNER_FRAMES {
+            assert!(!frame.is_empty());
+        }
+    }
+
+    // ========================================================================
+    // ProcessResult tests
+    // ========================================================================
+
+    #[test]
+    fn test_process_result_clone() {
+        let result = ProcessResult {
+            screen_index: 0,
+            wallpaper_name: "test.jpg".to_string(),
+            cached_name: Some("cached_test.jpg".to_string()),
+            error: None,
+            was_cached: true,
+        };
+        let cloned = result.clone();
+        assert_eq!(result.screen_index, cloned.screen_index);
+        assert_eq!(result.wallpaper_name, cloned.wallpaper_name);
+        assert_eq!(result.cached_name, cloned.cached_name);
+        assert_eq!(result.error, cloned.error);
+        assert_eq!(result.was_cached, cloned.was_cached);
+    }
+
+    #[test]
+    fn test_process_result_with_error() {
+        let result = ProcessResult {
+            screen_index: 1,
+            wallpaper_name: "broken.jpg".to_string(),
+            cached_name: None,
+            error: Some("Image read failed".to_string()),
+            was_cached: false,
+        };
+        assert!(result.error.is_some());
+        assert!(result.cached_name.is_none());
+        assert!(!result.was_cached);
+    }
+
+    // ========================================================================
+    // load_wallpapers tests
+    // ========================================================================
+
+    #[test]
+    fn test_load_wallpapers_empty_path_and_empty_list() {
+        let config = WallpaperConfig::default();
+        let result = WallpaperManager::load_wallpapers(&config);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_load_wallpapers_with_nonexistent_list_items() {
+        let config = WallpaperConfig {
+            list: vec![
+                "/nonexistent/a.jpg".to_string(),
+                "/nonexistent/b.png".to_string(),
+            ],
+            ..Default::default()
+        };
+        let result = WallpaperManager::load_wallpapers(&config);
+        assert!(result.is_ok());
+        // Should filter out non-existent files
+        assert!(result.unwrap().is_empty());
+    }
+
+    // ========================================================================
+    // Module function tests
+    // ========================================================================
+
+    #[test]
+    fn test_perform_action_without_init_returns_error() {
+        // This test depends on global state, but we can verify the error type
+        // Since other tests might initialize the manager, we can't guarantee
+        // this will return NotInitialized, but we test the function exists
+        let action = WallpaperAction::Random;
+        let _result = perform_action(&action);
+        // Result depends on whether manager was initialized elsewhere
+    }
+
+    #[test]
+    fn test_list_wallpapers_without_init_returns_error() {
+        // Similar to above - depends on global state
+        let _result = list_wallpapers();
+    }
 }

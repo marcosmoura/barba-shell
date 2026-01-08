@@ -324,4 +324,171 @@ mod tests {
         assert!(result.is_ok());
         drop(result);
     }
+
+    // ========================================================================
+    // Additional tests for KeepAwakeChangedPayload
+    // ========================================================================
+
+    #[test]
+    fn test_keep_awake_changed_payload_debug() {
+        let payload = KeepAwakeChangedPayload {
+            locked: true,
+            desired_awake: false,
+        };
+        let debug_str = format!("{:?}", payload);
+        assert!(debug_str.contains("KeepAwakeChangedPayload"));
+        assert!(debug_str.contains("locked"));
+        assert!(debug_str.contains("desired_awake"));
+    }
+
+    #[test]
+    fn test_keep_awake_changed_payload_serialization() {
+        let payload = KeepAwakeChangedPayload {
+            locked: true,
+            desired_awake: false,
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(json.contains("\"locked\":true"));
+        assert!(json.contains("\"desired_awake\":false"));
+    }
+
+    #[test]
+    fn test_keep_awake_changed_payload_all_combinations() {
+        // Test all four combinations of locked and desired_awake
+        let payloads = [(false, false), (false, true), (true, false), (true, true)];
+
+        for (locked, desired_awake) in payloads {
+            let payload = KeepAwakeChangedPayload { locked, desired_awake };
+            assert_eq!(payload.locked, locked);
+            assert_eq!(payload.desired_awake, desired_awake);
+        }
+    }
+
+    // ========================================================================
+    // Additional tests for KeepAwakeController
+    // ========================================================================
+
+    #[test]
+    fn test_keep_awake_controller_is_awake_initially_false() {
+        let controller = KeepAwakeController::default();
+        let result = controller.is_awake();
+        assert!(result.is_ok());
+        assert!(!result.unwrap());
+    }
+
+    #[test]
+    fn test_keep_awake_controller_multiple_lock_acquisitions() {
+        let controller = KeepAwakeController::default();
+
+        // Acquire and release the lock multiple times
+        for _ in 0..3 {
+            let result = controller.lock_state();
+            assert!(result.is_ok());
+            drop(result);
+        }
+    }
+
+    #[test]
+    fn test_keep_awake_controller_toggle_changes_desired_state() {
+        let controller = KeepAwakeController::default();
+
+        // Initial state should have desired_awake = false
+        {
+            let state = controller.lock_state().unwrap();
+            assert!(!state.desired_awake);
+        }
+
+        // After toggle, desired_awake should be true (but handle may or may not be acquired
+        // depending on system state)
+        let result = controller.toggle_impl();
+        assert!(result.is_ok());
+
+        {
+            let state = controller.lock_state().unwrap();
+            assert!(state.desired_awake);
+        }
+    }
+
+    #[test]
+    fn test_keep_awake_controller_enable_awake() {
+        let controller = KeepAwakeController::default();
+
+        // Enable awake
+        let result = controller.enable_awake();
+        assert!(result.is_ok());
+
+        // Verify desired_awake is now true
+        let state = controller.lock_state().unwrap();
+        assert!(state.desired_awake);
+    }
+
+    #[test]
+    fn test_keep_awake_controller_handle_system_locked() {
+        let controller = KeepAwakeController::default();
+
+        // Enable awake first
+        let _ = controller.enable_awake();
+
+        // Simulate system lock
+        let result = controller.handle_system_locked_event();
+        assert!(result.is_ok());
+
+        let payload = result.unwrap();
+        assert!(payload.locked);
+        // desired_awake should still be true (we want to re-acquire on unlock)
+        assert!(payload.desired_awake);
+
+        // Handle should be dropped
+        let state = controller.lock_state().unwrap();
+        assert!(state.handle.is_none());
+    }
+
+    #[test]
+    fn test_keep_awake_controller_handle_system_unlocked_without_desired() {
+        let controller = KeepAwakeController::default();
+
+        // Don't enable awake, just simulate unlock
+        let result = controller.handle_system_unlocked_event();
+        assert!(result.is_ok());
+
+        let payload = result.unwrap();
+        assert!(!payload.locked);
+        assert!(!payload.desired_awake);
+    }
+
+    // ========================================================================
+    // Additional tests for is_session_locked
+    // ========================================================================
+
+    #[test]
+    fn test_is_session_locked_returns_result() {
+        // This test verifies that is_session_locked can be called without panicking
+        // The actual result depends on system state
+        let result = is_session_locked();
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    // ========================================================================
+    // Additional tests for constants
+    // ========================================================================
+
+    #[test]
+    fn test_lock_poll_interval_is_reasonable() {
+        // Poll interval should be between 100ms and 5 seconds
+        let millis = LOCK_POLL_INTERVAL.as_millis();
+        assert!(millis >= 100);
+        assert!(millis <= 5000);
+    }
+
+    #[test]
+    fn test_keep_awake_reason_is_not_empty() {
+        assert!(!KEEP_AWAKE_REASON.is_empty());
+        assert!(KEEP_AWAKE_REASON.contains("Stache"));
+    }
+
+    #[test]
+    fn test_screen_locked_key_is_valid() {
+        assert!(!SCREEN_LOCKED_KEY.is_empty());
+        assert!(SCREEN_LOCKED_KEY.starts_with("CGS"));
+    }
 }

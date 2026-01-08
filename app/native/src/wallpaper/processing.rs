@@ -13,8 +13,8 @@ use natord::compare;
 use objc::runtime::{Class, Object};
 use objc::{msg_send, sel, sel_impl};
 
+use crate::cache::get_cache_subdir;
 use crate::config::WallpaperConfig;
-use crate::utils::cache::get_cache_subdir;
 
 /// Supported image file extensions.
 const SUPPORTED_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp"];
@@ -171,7 +171,11 @@ pub fn get_screen_count() -> usize {
         }
 
         let count: usize = msg_send![screens, count];
-        if count == 0 { 1 } else { count }
+        if count == 0 {
+            1
+        } else {
+            count
+        }
     }
 }
 
@@ -646,5 +650,416 @@ mod tests {
         // Should be exactly screen size
         assert_eq!(w, 100);
         assert_eq!(h, 100);
+    }
+
+    // ========================================================================
+    // ScreenSize tests
+    // ========================================================================
+
+    #[test]
+    fn test_screen_size_copy_and_clone() {
+        let original = ScreenSize { width: 1920, height: 1080 };
+        let copied = original; // Copy
+        let cloned = original.clone();
+
+        assert_eq!(original.width, copied.width);
+        assert_eq!(original.height, copied.height);
+        assert_eq!(original.width, cloned.width);
+        assert_eq!(original.height, cloned.height);
+    }
+
+    // ========================================================================
+    // ProcessingError tests
+    // ========================================================================
+
+    #[test]
+    fn test_processing_error_display_image_read() {
+        let err = ProcessingError::ImageRead("/path/to/image.jpg".to_string());
+        let display = err.to_string();
+        assert!(display.contains("Failed to read image"));
+        assert!(display.contains("/path/to/image.jpg"));
+    }
+
+    #[test]
+    fn test_processing_error_display_image_save() {
+        let err = ProcessingError::ImageSave("/cache/output.jpg".to_string());
+        let display = err.to_string();
+        assert!(display.contains("Failed to save processed image"));
+        assert!(display.contains("/cache/output.jpg"));
+    }
+
+    #[test]
+    fn test_processing_error_display_cache_directory() {
+        let err = ProcessingError::CacheDirectory("permission denied".to_string());
+        let display = err.to_string();
+        assert!(display.contains("Failed to create cache directory"));
+        assert!(display.contains("permission denied"));
+    }
+
+    #[test]
+    fn test_processing_error_is_debug() {
+        let err = ProcessingError::ImageRead("test.jpg".to_string());
+        let debug = format!("{:?}", err);
+        assert!(debug.contains("ImageRead"));
+    }
+
+    // ========================================================================
+    // Cache filename tests
+    // ========================================================================
+
+    #[test]
+    fn test_cache_filename_different_configs_produce_different_names() {
+        let screen = ScreenSize { width: 1920, height: 1080 };
+        let path = Path::new("/test/image.jpg");
+
+        let config1 = WallpaperConfig {
+            radius: 10,
+            blur: 5,
+            ..Default::default()
+        };
+        let config2 = WallpaperConfig {
+            radius: 20,
+            blur: 5,
+            ..Default::default()
+        };
+        let config3 = WallpaperConfig {
+            radius: 10,
+            blur: 10,
+            ..Default::default()
+        };
+
+        let name1 = cache_filename(path, &config1, screen);
+        let name2 = cache_filename(path, &config2, screen);
+        let name3 = cache_filename(path, &config3, screen);
+
+        assert_ne!(name1, name2);
+        assert_ne!(name1, name3);
+        assert_ne!(name2, name3);
+    }
+
+    #[test]
+    fn test_cache_filename_different_screens_produce_different_names() {
+        let config = WallpaperConfig {
+            radius: 10,
+            blur: 5,
+            ..Default::default()
+        };
+        let path = Path::new("/test/image.jpg");
+
+        let screen1 = ScreenSize { width: 1920, height: 1080 };
+        let screen2 = ScreenSize { width: 2560, height: 1440 };
+
+        let name1 = cache_filename(path, &config, screen1);
+        let name2 = cache_filename(path, &config, screen2);
+
+        assert_ne!(name1, name2);
+    }
+
+    #[test]
+    fn test_cache_filename_for_screen_includes_screen_index() {
+        let config = WallpaperConfig {
+            radius: 10,
+            blur: 5,
+            ..Default::default()
+        };
+        let path = Path::new("/test/image.jpg");
+
+        let name0 =
+            cache_filename_for_screen(path, &config, ScreenSize { width: 1920, height: 1080 }, 0);
+        let name1 =
+            cache_filename_for_screen(path, &config, ScreenSize { width: 1920, height: 1080 }, 1);
+
+        assert!(name0.contains("_s0_"));
+        assert!(name1.contains("_s1_"));
+        assert_ne!(name0, name1);
+    }
+
+    #[test]
+    fn test_cache_filename_handles_no_extension() {
+        let config = WallpaperConfig::default();
+        let screen = ScreenSize { width: 1920, height: 1080 };
+        let path = Path::new("/test/imagefile");
+
+        let name = cache_filename(path, &config, screen);
+        // Should use the stem (filename without extension) or full filename
+        assert!(name.contains("imagefile"));
+        assert!(name.ends_with(".jpg"));
+    }
+
+    // ========================================================================
+    // is_supported_image edge cases
+    // ========================================================================
+
+    #[test]
+    fn test_is_supported_image_mixed_case() {
+        assert!(is_supported_image(Path::new("test.JpG")));
+        assert!(is_supported_image(Path::new("test.PNG")));
+        assert!(is_supported_image(Path::new("test.WeBp")));
+        assert!(is_supported_image(Path::new("test.JPEG")));
+    }
+
+    #[test]
+    fn test_is_supported_image_no_extension() {
+        assert!(!is_supported_image(Path::new("imagefile")));
+        assert!(!is_supported_image(Path::new(".")));
+        assert!(!is_supported_image(Path::new("..")));
+    }
+
+    #[test]
+    fn test_is_supported_image_hidden_file() {
+        assert!(is_supported_image(Path::new(".hidden.jpg")));
+        assert!(!is_supported_image(Path::new(".hidden")));
+    }
+
+    #[test]
+    fn test_is_supported_image_double_extension() {
+        // Should only check last extension
+        assert!(is_supported_image(Path::new("test.tar.jpg")));
+        assert!(!is_supported_image(Path::new("test.jpg.tar")));
+    }
+
+    // ========================================================================
+    // resize_to_screen edge cases
+    // ========================================================================
+
+    #[test]
+    fn test_resize_to_screen_tall_image() {
+        // Create a 100x200 image (1:2 aspect ratio, taller than wide)
+        let img =
+            DynamicImage::ImageRgb8(RgbImage::from_fn(100, 200, |_, _| Rgb([128u8, 128, 128])));
+
+        // Target screen is 100x100 (1:1 aspect ratio)
+        let screen = ScreenSize { width: 100, height: 100 };
+
+        let resized = resize_to_screen(&img, screen);
+        let (w, h) = resized.dimensions();
+
+        // Should be exactly screen size (cover scaling)
+        assert_eq!(w, 100);
+        assert_eq!(h, 100);
+    }
+
+    #[test]
+    fn test_resize_to_screen_same_aspect_ratio() {
+        // Create a 1920x1080 image (16:9)
+        let img =
+            DynamicImage::ImageRgb8(RgbImage::from_fn(1920, 1080, |_, _| Rgb([64u8, 64, 64])));
+
+        // Target screen is also 16:9 but different size
+        let screen = ScreenSize { width: 3840, height: 2160 };
+
+        let resized = resize_to_screen(&img, screen);
+        let (w, h) = resized.dimensions();
+
+        assert_eq!(w, 3840);
+        assert_eq!(h, 2160);
+    }
+
+    #[test]
+    fn test_resize_to_screen_square_image() {
+        let img =
+            DynamicImage::ImageRgb8(RgbImage::from_fn(500, 500, |_, _| Rgb([200u8, 200, 200])));
+
+        let screen = ScreenSize { width: 1920, height: 1080 };
+
+        let resized = resize_to_screen(&img, screen);
+        let (w, h) = resized.dimensions();
+
+        assert_eq!(w, 1920);
+        assert_eq!(h, 1080);
+    }
+
+    // ========================================================================
+    // apply_fast_blur tests
+    // ========================================================================
+
+    #[test]
+    fn test_apply_fast_blur_small_radius() {
+        let img =
+            DynamicImage::ImageRgb8(RgbImage::from_fn(100, 100, |_, _| Rgb([128u8, 128, 128])));
+
+        let blurred = apply_fast_blur(&img, 3);
+        let (w, h) = blurred.dimensions();
+
+        // Dimensions should be preserved
+        assert_eq!(w, 100);
+        assert_eq!(h, 100);
+    }
+
+    #[test]
+    fn test_apply_fast_blur_large_radius_uses_scale() {
+        let img =
+            DynamicImage::ImageRgb8(RgbImage::from_fn(200, 200, |_, _| Rgb([100u8, 100, 100])));
+
+        let blurred = apply_fast_blur(&img, 20);
+        let (w, h) = blurred.dimensions();
+
+        // Dimensions should be preserved after scale down and up
+        assert_eq!(w, 200);
+        assert_eq!(h, 200);
+    }
+
+    #[test]
+    fn test_apply_fast_blur_zero_radius() {
+        let img = DynamicImage::ImageRgb8(RgbImage::from_fn(50, 50, |x, y| {
+            Rgb([(x as u8), (y as u8), 128])
+        }));
+
+        // Zero radius should be handled (no blur applied due to condition)
+        // But the function doesn't guard against 0, so it would call blur(0.0)
+        // which is essentially a no-op
+        let result = apply_fast_blur(&img, 0);
+        assert_eq!(result.dimensions(), (50, 50));
+    }
+
+    // ========================================================================
+    // apply_rounded_corners edge cases
+    // ========================================================================
+
+    #[test]
+    fn test_apply_rounded_corners_zero_radius() {
+        let img =
+            DynamicImage::ImageRgb8(RgbImage::from_fn(100, 100, |_, _| Rgb([255u8, 255, 255])));
+
+        let result = apply_rounded_corners(&img, 0);
+        let rgb = result.to_rgb8();
+
+        // With zero radius, corners should remain unchanged (white)
+        let corner = rgb.get_pixel(0, 0);
+        assert_eq!(corner, &Rgb([255u8, 255, 255]));
+    }
+
+    #[test]
+    fn test_apply_rounded_corners_max_radius_cap() {
+        // Create a small 20x20 image
+        let img = DynamicImage::ImageRgb8(RgbImage::from_fn(20, 20, |_, _| Rgb([255u8, 255, 255])));
+
+        // Request radius larger than half the image size
+        let result = apply_rounded_corners(&img, 100);
+
+        // Should not panic and should handle the cap correctly
+        let (w, h) = result.dimensions();
+        assert_eq!(w, 20);
+        assert_eq!(h, 20);
+    }
+
+    #[test]
+    fn test_apply_rounded_corners_all_corners_affected() {
+        let img =
+            DynamicImage::ImageRgb8(RgbImage::from_fn(100, 100, |_, _| Rgb([255u8, 255, 255])));
+
+        let result = apply_rounded_corners(&img, 16);
+        let rgb = result.to_rgb8();
+
+        // All four corners should be black
+        assert_eq!(rgb.get_pixel(0, 0), &Rgb([0u8, 0, 0]), "Top-left");
+        assert_eq!(rgb.get_pixel(99, 0), &Rgb([0u8, 0, 0]), "Top-right");
+        assert_eq!(rgb.get_pixel(0, 99), &Rgb([0u8, 0, 0]), "Bottom-left");
+        assert_eq!(rgb.get_pixel(99, 99), &Rgb([0u8, 0, 0]), "Bottom-right");
+    }
+
+    // ========================================================================
+    // apply_effects tests
+    // ========================================================================
+
+    #[test]
+    fn test_apply_effects_no_effects() {
+        let img = DynamicImage::ImageRgb8(RgbImage::from_fn(50, 50, |_, _| Rgb([128u8, 128, 128])));
+
+        let result = apply_effects(img.clone(), 0, 0);
+
+        // Should be essentially unchanged
+        assert_eq!(result.dimensions(), (50, 50));
+    }
+
+    #[test]
+    fn test_apply_effects_blur_only() {
+        let img = DynamicImage::ImageRgb8(RgbImage::from_fn(50, 50, |_, _| Rgb([128u8, 128, 128])));
+
+        let result = apply_effects(img, 0, 5);
+        assert_eq!(result.dimensions(), (50, 50));
+    }
+
+    #[test]
+    fn test_apply_effects_radius_only() {
+        let img = DynamicImage::ImageRgb8(RgbImage::from_fn(50, 50, |_, _| Rgb([255u8, 255, 255])));
+
+        let result = apply_effects(img, 10, 0);
+        let rgb = result.to_rgb8();
+
+        // Corner should be black due to rounded corners
+        assert_eq!(rgb.get_pixel(0, 0), &Rgb([0u8, 0, 0]));
+    }
+
+    #[test]
+    fn test_apply_effects_both() {
+        let img =
+            DynamicImage::ImageRgb8(RgbImage::from_fn(100, 100, |_, _| Rgb([200u8, 200, 200])));
+
+        let result = apply_effects(img, 10, 5);
+        let rgb = result.to_rgb8();
+
+        // Dimensions preserved
+        assert_eq!(result.dimensions(), (100, 100));
+        // Corner should be black
+        assert_eq!(rgb.get_pixel(0, 0), &Rgb([0u8, 0, 0]));
+    }
+
+    // ========================================================================
+    // get_screen_size tests
+    // ========================================================================
+
+    #[test]
+    fn test_get_screen_size_zero_index() {
+        let screen = get_screen_size(0);
+        // Should return valid dimensions
+        assert!(screen.width > 0);
+        assert!(screen.height > 0);
+    }
+
+    #[test]
+    fn test_get_screen_size_high_index_fallback() {
+        // Very high index should fall back to default
+        let screen = get_screen_size(999);
+        // Should still return valid dimensions (fallback)
+        assert!(screen.width > 0);
+        assert!(screen.height > 0);
+    }
+
+    // ========================================================================
+    // get_screen_count tests
+    // ========================================================================
+
+    #[test]
+    fn test_get_screen_count_returns_at_least_one() {
+        let count = get_screen_count();
+        assert!(count >= 1);
+    }
+
+    // ========================================================================
+    // Constants tests
+    // ========================================================================
+
+    #[test]
+    fn test_supported_extensions_not_empty() {
+        assert!(!SUPPORTED_EXTENSIONS.is_empty());
+    }
+
+    #[test]
+    fn test_supported_extensions_are_lowercase() {
+        for ext in SUPPORTED_EXTENSIONS {
+            assert_eq!(
+                *ext,
+                ext.to_lowercase(),
+                "Extension should be lowercase: {}",
+                ext
+            );
+        }
+    }
+
+    #[test]
+    fn test_aa_samples_is_reasonable() {
+        assert!(AA_SAMPLES >= 2);
+        assert!(AA_SAMPLES <= 16);
     }
 }

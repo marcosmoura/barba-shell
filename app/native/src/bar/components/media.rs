@@ -21,8 +21,8 @@ use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::CommandEvent;
 
+use crate::cache::get_cache_subdir_str;
 use crate::events;
-use crate::utils::cache::get_cache_subdir_str;
 use crate::utils::thread::spawn_named_thread;
 
 /// Resize the provided image to 128x128 and encode it as PNG.
@@ -569,5 +569,296 @@ mod tests {
         assert_eq!(result, payload);
 
         set_last_media_payload(None);
+    }
+
+    // ========================================================================
+    // Additional cleanup_string_for_filename tests
+    // ========================================================================
+
+    #[test]
+    fn test_cleanup_string_unicode() {
+        // Unicode alphanumeric characters are preserved (is_alphanumeric returns true for them)
+        assert_eq!(cleanup_string_for_filename("Café"), "café");
+        // Japanese characters are alphanumeric in Unicode
+        assert_eq!(cleanup_string_for_filename("日本語"), "日本語");
+    }
+
+    #[test]
+    fn test_cleanup_string_mixed_unicode_ascii() {
+        // Unicode alphanumeric characters are preserved
+        assert_eq!(cleanup_string_for_filename("Hello世界World"), "hello世界world");
+    }
+
+    #[test]
+    fn test_cleanup_string_dashes_preserved() {
+        assert_eq!(cleanup_string_for_filename("test-file-name"), "test-file-name");
+        assert_eq!(cleanup_string_for_filename("a-b-c"), "a-b-c");
+    }
+
+    #[test]
+    fn test_cleanup_string_numbers() {
+        assert_eq!(cleanup_string_for_filename("Track01"), "track01");
+        assert_eq!(cleanup_string_for_filename("2024"), "2024");
+        assert_eq!(cleanup_string_for_filename("123abc456"), "123abc456");
+    }
+
+    #[test]
+    fn test_cleanup_string_leading_trailing_special() {
+        assert_eq!(cleanup_string_for_filename("!!!hello!!!"), "hello");
+        assert_eq!(cleanup_string_for_filename("@#$test@#$"), "test");
+    }
+
+    // ========================================================================
+    // Additional calculate_state_hash tests
+    // ========================================================================
+
+    #[test]
+    fn test_calculate_state_hash_empty_map() {
+        let state = Map::new();
+        let hash = calculate_state_hash(&state);
+        // Empty map should have a consistent hash
+        assert_eq!(hash, calculate_state_hash(&Map::new()));
+    }
+
+    #[test]
+    fn test_calculate_state_hash_same_data_same_hash() {
+        let mut state1 = Map::new();
+        state1.insert("artist".to_string(), Value::String("Test".into()));
+
+        let mut state2 = Map::new();
+        state2.insert("artist".to_string(), Value::String("Test".into()));
+
+        assert_eq!(calculate_state_hash(&state1), calculate_state_hash(&state2));
+    }
+
+    #[test]
+    fn test_calculate_state_hash_different_keys_different_hash() {
+        let mut state1 = Map::new();
+        state1.insert("artist".to_string(), Value::String("Test".into()));
+
+        let mut state2 = Map::new();
+        state2.insert("title".to_string(), Value::String("Test".into()));
+
+        assert_ne!(calculate_state_hash(&state1), calculate_state_hash(&state2));
+    }
+
+    #[test]
+    fn test_calculate_state_hash_different_values_different_hash() {
+        let mut state1 = Map::new();
+        state1.insert("artist".to_string(), Value::String("Artist1".into()));
+
+        let mut state2 = Map::new();
+        state2.insert("artist".to_string(), Value::String("Artist2".into()));
+
+        assert_ne!(calculate_state_hash(&state1), calculate_state_hash(&state2));
+    }
+
+    // ========================================================================
+    // Additional parse_json tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_json_invalid() {
+        assert!(parse_json("not valid json").is_none());
+        assert!(parse_json("{incomplete").is_none());
+        assert!(parse_json("").is_none());
+    }
+
+    #[test]
+    fn test_parse_json_array() {
+        let result = parse_json("[1, 2, 3]");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), json!([1, 2, 3]));
+    }
+
+    #[test]
+    fn test_parse_json_nested() {
+        let result = parse_json(r#"{"outer": {"inner": "value"}}"#);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_parse_json_with_numbers() {
+        let result = parse_json(r#"{"int": 42, "float": 3.14}"#);
+        assert!(result.is_some());
+    }
+
+    // ========================================================================
+    // Additional parse_output tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_output_without_payload() {
+        let result = parse_output(r#"{"data": "value"}"#);
+        assert!(result.is_some());
+        // Should still return the object even without payload field
+        let obj = result.unwrap();
+        assert!(obj.is_object());
+    }
+
+    #[test]
+    fn test_parse_output_null_payload() {
+        let result = parse_output(r#"{"payload": null}"#);
+        // payload is null, so it won't match as_object()
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_parse_output_array_payload() {
+        let result = parse_output(r#"{"payload": []}"#);
+        // payload is array, not object
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_parse_output_whitespace_only() {
+        assert!(parse_output("   \n\t   ").is_none());
+    }
+
+    #[test]
+    fn test_parse_output_newlines() {
+        assert!(parse_output("\n\n\n").is_none());
+    }
+
+    // ========================================================================
+    // Additional image_format_from_mime tests
+    // ========================================================================
+
+    #[test]
+    fn test_image_format_from_mime_whitespace() {
+        assert_eq!(image_format_from_mime("  image/png  "), Some(ImageFormat::Png));
+        assert_eq!(image_format_from_mime("\timage/jpeg\n"), Some(ImageFormat::Jpeg));
+    }
+
+    #[test]
+    fn test_image_format_from_mime_application_type() {
+        // Application types should not match
+        assert_eq!(image_format_from_mime("application/png"), None);
+        assert_eq!(image_format_from_mime("application/octet-stream"), None);
+    }
+
+    #[test]
+    fn test_image_format_from_mime_video_type() {
+        // Video types should not match
+        assert_eq!(image_format_from_mime("video/mp4"), None);
+    }
+
+    #[test]
+    fn test_image_format_from_mime_audio_type() {
+        // Audio types should not match
+        assert_eq!(image_format_from_mime("audio/mpeg"), None);
+    }
+
+    // ========================================================================
+    // Additional get_cache_path tests
+    // ========================================================================
+
+    #[test]
+    fn test_get_cache_path_long_names() {
+        let mut state = Map::new();
+        state.insert(
+            "artist".to_string(),
+            Value::String("A Very Long Artist Name That Goes On And On".to_string()),
+        );
+        state.insert(
+            "title".to_string(),
+            Value::String("An Equally Long Song Title".to_string()),
+        );
+
+        let path = get_cache_path(&state, "txt");
+        assert!(path.contains("a_very_long_artist_name"));
+        assert!(path.ends_with(".txt"));
+    }
+
+    #[test]
+    fn test_get_cache_path_different_extensions() {
+        let state = Map::new();
+
+        let txt_path = get_cache_path(&state, "txt");
+        let png_path = get_cache_path(&state, "png");
+        let jpg_path = get_cache_path(&state, "jpg");
+
+        assert!(txt_path.ends_with(".txt"));
+        assert!(png_path.ends_with(".png"));
+        assert!(jpg_path.ends_with(".jpg"));
+    }
+
+    #[test]
+    fn test_get_cache_path_only_artist() {
+        let mut state = Map::new();
+        state.insert("artist".to_string(), Value::String("Solo Artist".to_string()));
+
+        let path = get_cache_path(&state, "txt");
+        assert!(path.contains("solo_artist-unknown"));
+    }
+
+    #[test]
+    fn test_get_cache_path_only_title() {
+        let mut state = Map::new();
+        state.insert("title".to_string(), Value::String("Untitled Song".to_string()));
+
+        let path = get_cache_path(&state, "txt");
+        assert!(path.contains("unknown-untitled_song"));
+    }
+
+    // ========================================================================
+    // set_last_media_payload and get_last_media_payload tests
+    // ========================================================================
+
+    #[test]
+    fn test_set_and_get_media_payload_complex() {
+        set_last_media_payload(None);
+
+        let payload = json!({
+            "artist": "Complex Artist",
+            "title": "Complex Song",
+            "album": "Album Name",
+            "playing": true,
+            "duration": 240.5,
+            "position": 120.0,
+            "artwork": "base64data"
+        });
+
+        set_last_media_payload(Some(payload.clone()));
+
+        let result = get_current_media_info().unwrap();
+        assert_eq!(result["artist"], "Complex Artist");
+        assert_eq!(result["duration"], 240.5);
+
+        set_last_media_payload(None);
+    }
+
+    #[test]
+    fn test_set_media_payload_overwrite() {
+        set_last_media_payload(None);
+
+        let payload1 = json!({"artist": "First"});
+        let payload2 = json!({"artist": "Second"});
+
+        set_last_media_payload(Some(payload1));
+        set_last_media_payload(Some(payload2.clone()));
+
+        let result = get_current_media_info().unwrap();
+        assert_eq!(result, payload2);
+
+        set_last_media_payload(None);
+    }
+
+    // ========================================================================
+    // get_cache_dir consistency test
+    // ========================================================================
+
+    #[test]
+    fn test_get_cache_dir_consistent() {
+        let dir1 = get_cache_dir();
+        let dir2 = get_cache_dir();
+        assert_eq!(dir1, dir2);
+    }
+
+    #[test]
+    fn test_get_cache_dir_ends_with_separator() {
+        let dir = get_cache_dir();
+        // Should end with path separator for easy concatenation
+        assert!(dir.ends_with('/') || dir.ends_with('\\'));
     }
 }

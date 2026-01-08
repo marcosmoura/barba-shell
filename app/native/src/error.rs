@@ -3,60 +3,51 @@
 //! This module provides unified error types used throughout the application.
 //! These types implement the necessary traits to be returned from Tauri commands.
 
-use std::fmt;
-
 use serde::Serialize;
+use thiserror::Error;
 
 /// Errors that can occur during application execution.
 ///
 /// This enum implements `Serialize` and `Into<tauri::ipc::InvokeError>` to be
 /// used as a return type for Tauri commands, providing structured error information
 /// to the frontend.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Error, Serialize)]
 #[serde(tag = "kind", content = "message")]
 pub enum StacheError {
     /// Invalid command arguments.
+    #[error("{0}")]
     InvalidArguments(String),
     /// Cache operation failed.
+    #[error("Cache error: {0}")]
     CacheError(String),
     /// Audio operation failed.
+    #[error("Audio error: {0}")]
     AudioError(String),
     /// Wallpaper operation failed.
+    #[error("Wallpaper error: {0}")]
     WallpaperError(String),
     /// Configuration error.
+    #[error("Configuration error: {0}")]
     ConfigError(String),
     /// IPC communication error.
+    #[error("IPC error: {0}")]
     IpcError(String),
     /// IO error.
+    #[error("IO error: {0}")]
     IoError(String),
     /// Battery operation failed.
+    #[error("Battery error: {0}")]
     BatteryError(String),
     /// Hyprspace/AeroSpace operation failed.
+    #[error("Hyprspace error: {0}")]
     HyprspaceError(String),
     /// Shell command execution failed.
+    #[error("Shell error: {0}")]
     ShellError(String),
     /// Generic command error.
+    #[error("{0}")]
     CommandError(String),
 }
-
-impl fmt::Display for StacheError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::CacheError(msg) => write!(f, "Cache error: {msg}"),
-            Self::AudioError(msg) => write!(f, "Audio error: {msg}"),
-            Self::WallpaperError(msg) => write!(f, "Wallpaper error: {msg}"),
-            Self::ConfigError(msg) => write!(f, "Configuration error: {msg}"),
-            Self::IpcError(msg) => write!(f, "IPC error: {msg}"),
-            Self::IoError(msg) => write!(f, "IO error: {msg}"),
-            Self::BatteryError(msg) => write!(f, "Battery error: {msg}"),
-            Self::HyprspaceError(msg) => write!(f, "Hyprspace error: {msg}"),
-            Self::ShellError(msg) => write!(f, "Shell error: {msg}"),
-            Self::InvalidArguments(msg) | Self::CommandError(msg) => write!(f, "{msg}"),
-        }
-    }
-}
-
-impl std::error::Error for StacheError {}
 
 impl From<std::io::Error> for StacheError {
     fn from(err: std::io::Error) -> Self { Self::IoError(err.to_string()) }

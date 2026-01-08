@@ -59,10 +59,16 @@ pub fn init() {
     // Cache the target app setting
     let _ = TARGET_APP.set(config.notunes.target_app.clone());
 
-    spawn_named_thread("notunes-init", move || unsafe {
-        setup_workspace_observer();
-        // Also terminate any already-running instances
-        terminate_music_apps();
+    spawn_named_thread("notunes-init", move || {
+        // SAFETY: These functions interact with NSWorkspace and NSNotificationCenter APIs:
+        // - All Objective-C calls use valid selectors and message passing
+        // - Pointers are checked for null before dereferencing
+        // - The observer is retained by NSNotificationCenter automatically
+        unsafe {
+            setup_workspace_observer();
+            // Also terminate any already-running instances
+            terminate_music_apps();
+        }
     });
 }
 
@@ -72,6 +78,12 @@ fn get_target_app() -> &'static TargetMusicApp {
 }
 
 /// Terminates any currently running Apple Music or iTunes instances.
+///
+/// # Safety
+///
+/// Caller must ensure:
+/// - This is called within a valid Objective-C runtime context
+/// - `NSWorkspace` and its `runningApplications` array are valid and accessible
 unsafe fn terminate_music_apps() {
     let workspace: *mut Object = msg_send![class!(NSWorkspace), sharedWorkspace];
     let running_apps: *mut Object = msg_send![workspace, runningApplications];
@@ -90,6 +102,13 @@ unsafe fn terminate_music_apps() {
 }
 
 /// Sets up the `NSWorkspace` observer for app launch notifications.
+///
+/// # Safety
+///
+/// Caller must ensure:
+/// - This is called within a valid Objective-C runtime context
+/// - `NSWorkspace` and its notification center are accessible
+/// - This should only be called once (idempotent due to class registration check)
 unsafe fn setup_workspace_observer() {
     // Get the workspace and notification center
     let workspace: *mut Object = msg_send![class!(NSWorkspace), sharedWorkspace];
@@ -111,6 +130,13 @@ unsafe fn setup_workspace_observer() {
 }
 
 /// Creates an Objective-C observer object that handles the notification.
+///
+/// # Safety
+///
+/// Caller must ensure:
+/// - This is called within a valid Objective-C runtime context
+/// - The returned object is retained by `NSNotificationCenter` (do not release manually)
+/// - The `NoTunesObserver` class is only registered once (handled via `Class::get` check)
 unsafe fn create_observer_object() -> *mut Object {
     // Dynamically create a class for our observer
     let superclass = class!(NSObject);

@@ -82,6 +82,10 @@ impl StacheNotification {
 ///
 /// `true` if the notification was sent successfully, `false` otherwise.
 pub fn send_notification(notification: &StacheNotification) -> bool {
+    // SAFETY: We are calling well-defined Objective-C APIs via FFI:
+    // - NSDistributedNotificationCenter is thread-safe and can be called from any thread
+    // - All pointers are checked for null before use
+    // - The notification center handles memory management for posted notifications
     unsafe {
         let center: *mut Object = msg_send![class!(NSDistributedNotificationCenter), defaultCenter];
 
@@ -112,6 +116,12 @@ pub fn send_notification(notification: &StacheNotification) -> bool {
 }
 
 /// Creates an `NSDictionary` from key-value pairs.
+///
+/// # Safety
+///
+/// Caller must ensure:
+/// - This is called within a valid Objective-C runtime context
+/// - The returned pointer is either used immediately or properly retained
 unsafe fn create_ns_dictionary(pairs: &[(&str, &str)]) -> *mut Object {
     let dict_class = class!(NSMutableDictionary);
     let dict: *mut Object = msg_send![dict_class, new];
@@ -156,6 +166,11 @@ where F: Fn(StacheNotification) + Send + Sync + 'static {
 ///
 /// This function should be called once during desktop app initialization.
 pub fn start_notification_listener() {
+    // SAFETY: We are setting up NSDistributedNotificationCenter observers:
+    // - The notification center is obtained via the standard defaultCenter method
+    // - The observer object is retained by the notification center
+    // - All string parameters are valid NSStrings created via nsstring()
+    // - This function is idempotent and can be called multiple times safely
     unsafe {
         let center: *mut Object = msg_send![class!(NSDistributedNotificationCenter), defaultCenter];
 
@@ -189,6 +204,13 @@ pub fn start_notification_listener() {
 }
 
 /// Creates an Objective-C observer object for handling notifications.
+///
+/// # Safety
+///
+/// Caller must ensure:
+/// - This is called within a valid Objective-C runtime context
+/// - The returned object is retained by `NSNotificationCenter` (do not release manually)
+/// - The class is only registered once (handled internally via `Class::get` check)
 unsafe fn create_notification_observer() -> *mut Object {
     let superclass = class!(NSObject);
     let class_name = "StacheNotificationObserver";
@@ -252,6 +274,12 @@ extern "C" fn handle_notification(_self: &Object, _cmd: Sel, notification: *mut 
 }
 
 /// Parses an `NSDictionary` into a `HashMap`.
+///
+/// # Safety
+///
+/// Caller must ensure:
+/// - `dict` is a valid pointer to an `NSDictionary` (or null, which returns empty `HashMap`)
+/// - The dictionary contains only `NSString` keys and values
 unsafe fn parse_ns_dictionary(dict: *mut Object) -> std::collections::HashMap<String, String> {
     let mut result = std::collections::HashMap::new();
 

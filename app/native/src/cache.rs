@@ -32,8 +32,37 @@ pub fn get_cache_dir() -> PathBuf {
 ///
 /// A `PathBuf` pointing to `~/Library/Caches/{APP_BUNDLE_ID}/{subdir}` on macOS,
 /// or `/tmp/{APP_BUNDLE_ID}/{subdir}` if the cache directory is unavailable.
+///
+/// # Example
+///
+/// ```ignore
+/// let wallpaper_cache = get_cache_subdir("wallpapers");
+/// // Returns: ~/Library/Caches/com.marcosmoura.stache/wallpapers
+/// ```
 #[must_use]
 pub fn get_cache_subdir(subdir: &str) -> PathBuf { get_cache_dir().join(subdir) }
+
+/// Returns a cache subdirectory as a string with a trailing separator.
+///
+/// This is useful when building cache paths via string concatenation.
+///
+/// # Arguments
+///
+/// * `subdir` - The subdirectory name within the app's cache directory
+///
+/// # Returns
+///
+/// A `String` path ending with a `/` separator.
+#[must_use]
+pub fn get_cache_subdir_str(subdir: &str) -> String {
+    let path = get_cache_subdir(subdir);
+    let path_str = path.to_string_lossy().into_owned();
+    if path_str.ends_with('/') {
+        path_str
+    } else {
+        format!("{path_str}/")
+    }
+}
 
 /// Clears the entire cache directory.
 ///
@@ -155,5 +184,30 @@ mod tests {
     #[test]
     fn test_format_bytes_gb() {
         assert_eq!(format_bytes(1024 * 1024 * 1024), "1.00 GB");
+    }
+
+    #[test]
+    fn test_get_cache_subdir_str_ends_with_separator() {
+        let path_str = get_cache_subdir_str("artwork");
+        assert!(path_str.ends_with('/'), "Path should end with /: {path_str}");
+        assert!(
+            path_str.contains(APP_BUNDLE_ID),
+            "Path should contain bundle ID: {path_str}"
+        );
+    }
+
+    #[test]
+    fn test_different_subdirs_produce_different_paths() {
+        let path1 = get_cache_subdir("wallpapers");
+        let path2 = get_cache_subdir("media_artwork");
+        assert_ne!(path1, path2);
+    }
+
+    #[test]
+    fn test_cache_subdir_is_absolute_or_tmp() {
+        let path = get_cache_subdir("test");
+        let path_str = path.to_string_lossy();
+        // Should either be in user's cache dir or /tmp
+        assert!(path_str.starts_with('/'), "Path should be absolute: {path_str}");
     }
 }

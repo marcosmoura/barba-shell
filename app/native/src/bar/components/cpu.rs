@@ -279,4 +279,127 @@ mod tests {
         assert!((info.usage - 0.0).abs() < f32::EPSILON);
         assert!(info.temperature.is_none());
     }
+
+    // ========================================================================
+    // Additional edge case tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_ismc_cpu_temps_invalid_json() {
+        let result = parse_ismc_cpu_temps("not valid json");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_ismc_cpu_temps_empty_json() {
+        let result = parse_ismc_cpu_temps("{}");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_ismc_cpu_temps_array_json() {
+        // JSON array instead of object
+        let result = parse_ismc_cpu_temps("[]");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_ismc_cpu_temps_missing_quantity() {
+        // CPU sensor without quantity field
+        let json = r#"{"CPU Core 1":{"key":"Tp01","type":"flt","value":"54.5 °C","unit":"°C"}}"#;
+        let result = parse_ismc_cpu_temps(json);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_ismc_cpu_temps_quantity_not_number() {
+        // CPU sensor with non-numeric quantity
+        let json = r#"{"CPU Core 1":{"key":"Tp01","type":"flt","value":"54.5 °C","quantity":"fifty","unit":"°C"}}"#;
+        let result = parse_ismc_cpu_temps(json);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_ismc_cpu_temps_single_cpu_sensor() {
+        let json = r#"{"CPU Core 1":{"key":"Tp01","type":"flt","value":"45.0 °C","quantity":45.0,"unit":"°C"}}"#;
+        let result = parse_ismc_cpu_temps(json).unwrap();
+        assert!((result - 45.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_parse_ismc_cpu_temps_multiple_cpu_sensors() {
+        let json = r#"{"CPU Core 1":{"quantity":40.0},"CPU Core 2":{"quantity":50.0},"CPU Core 3":{"quantity":60.0},"CPU Core 4":{"quantity":70.0}}"#;
+        let result = parse_ismc_cpu_temps(json).unwrap();
+        // Average of 40, 50, 60, 70 = 55
+        assert!((result - 55.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_is_valid_temp_boundary_values() {
+        // Just above minimum
+        assert!(is_valid_temp(0.001));
+        // Just below maximum
+        assert!(is_valid_temp(149.999));
+        // Negative zero
+        assert!(!is_valid_temp(-0.0));
+        // Very high temperature
+        assert!(!is_valid_temp(1000.0));
+        // Very low temperature
+        assert!(!is_valid_temp(-273.15));
+    }
+
+    #[test]
+    fn test_average_temps_large_values() {
+        let temps = vec![100.0, 100.0, 100.0, 100.0];
+        let avg = average_temps(&temps);
+        assert!((avg - 100.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_average_temps_varying_values() {
+        let temps = vec![10.0, 20.0, 30.0, 40.0, 50.0];
+        let avg = average_temps(&temps);
+        assert!((avg - 30.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_cpu_info_debug() {
+        let info = CpuInfo {
+            usage: 50.0,
+            temperature: Some(70.0),
+        };
+        let debug_str = format!("{:?}", info);
+        assert!(debug_str.contains("CpuInfo"));
+        assert!(debug_str.contains("50"));
+        assert!(debug_str.contains("70"));
+    }
+
+    #[test]
+    fn test_cpu_info_serialization() {
+        let info = CpuInfo {
+            usage: 45.5,
+            temperature: Some(65.2),
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("usage"));
+        assert!(json.contains("temperature"));
+        assert!(json.contains("45.5"));
+        assert!(json.contains("65.2"));
+    }
+
+    #[test]
+    fn test_cpu_info_serialization_no_temperature() {
+        let info = CpuInfo {
+            usage: 45.5,
+            temperature: None,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("null") || json.contains("temperature"));
+    }
+
+    #[test]
+    fn test_temp_constants() {
+        assert!((TEMP_MIN - 0.0).abs() < f64::EPSILON);
+        assert!((TEMP_MAX - 150.0).abs() < f64::EPSILON);
+    }
 }

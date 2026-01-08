@@ -105,3 +105,21 @@ pub fn watch_config_file<R: tauri::Runtime>(app_handle: AppHandle<R>) {
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_debounce_duration_is_reasonable() {
+        // Debounce should be at least 100ms but not more than 1 second
+        assert!(CONFIG_DEBOUNCE_MS >= 100);
+        assert!(CONFIG_DEBOUNCE_MS <= 1000);
+    }
+
+    #[test]
+    fn debounce_duration_creates_valid_duration() {
+        let duration = Duration::from_millis(CONFIG_DEBOUNCE_MS);
+        assert_eq!(duration.as_millis(), u128::from(CONFIG_DEBOUNCE_MS));
+    }
+}

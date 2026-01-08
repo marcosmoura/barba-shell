@@ -4195,6 +4195,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tauri-plugin-zustand",
  "tempfile",
+ "thiserror 2.0.17",
  "wallpaper",
 ]
 

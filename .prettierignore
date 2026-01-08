@@ -2,6 +2,5 @@
 **/dist
 /coverage
 /node_modules
-/packages/desktop/tauri
-/packages/cli
+/app/native
 /target

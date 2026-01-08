@@ -4,12 +4,10 @@ import { ErrorBoundary } from 'react-error-boundary';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { motion } from 'motion/react';
 
+import { resolveModule } from '@/utils/resolveModule';
+
 import { useWidgets } from './Widgets.state';
 import * as styles from './Widgets.styles';
-
-const resolveModule = (moduleName: string) => (module: Record<string, React.ComponentType>) => ({
-  default: module[moduleName],
-});
 
 const Calendar = lazy(() => import('./components/Calendar').then(resolveModule('Calendar')));
 const Battery = lazy(() => import('./components/Battery').then(resolveModule('Battery')));

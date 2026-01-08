@@ -5,7 +5,7 @@
   "identifier": "com.marcosmoura.stache",
   "build": {
     "beforeDevCommand": {
-      "script": "killall stache; pnpm dev",
+      "script": "killall stache 2>/dev/null || true; pnpm dev",
       "cwd": "../.."
     },
     "devUrl": "http://localhost:1420",

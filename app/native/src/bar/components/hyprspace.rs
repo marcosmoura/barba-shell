@@ -204,7 +204,7 @@ fn to_camel_case(input: &str) -> String {
 mod tests {
     use serde_json::json;
 
-    use super::{parse_json_array, to_camel_case};
+    use super::{format_command, normalize_map, normalize_value, parse_json_array, to_camel_case};
 
     #[test]
     fn parse_empty_output_is_ok() {
@@ -247,5 +247,255 @@ mod tests {
         // This test is removed because go_to_workspace now requires an AppHandle
         // and testing it would require setting up a full Tauri app context.
         // The validation logic is still present in the function.
+    }
+
+    // ========================================================================
+    // Additional tests for to_camel_case
+    // ========================================================================
+
+    #[test]
+    fn to_camel_case_underscore() {
+        assert_eq!(to_camel_case("app_name"), "appName");
+        assert_eq!(to_camel_case("window_id"), "windowId");
+        assert_eq!(to_camel_case("my_long_variable_name"), "myLongVariableName");
+    }
+
+    #[test]
+    fn to_camel_case_space() {
+        assert_eq!(to_camel_case("app name"), "appName");
+        assert_eq!(to_camel_case("window id"), "windowId");
+    }
+
+    #[test]
+    fn to_camel_case_mixed_separators() {
+        assert_eq!(to_camel_case("app-name_test"), "appNameTest");
+        assert_eq!(to_camel_case("my_var-name test"), "myVarNameTest");
+    }
+
+    #[test]
+    fn to_camel_case_no_separator() {
+        assert_eq!(to_camel_case("appname"), "appname");
+        assert_eq!(to_camel_case("APPNAME"), "APPNAME");
+        assert_eq!(to_camel_case("AppName"), "AppName");
+    }
+
+    #[test]
+    fn to_camel_case_empty_string() {
+        assert_eq!(to_camel_case(""), "");
+    }
+
+    #[test]
+    fn to_camel_case_single_char() {
+        assert_eq!(to_camel_case("a"), "a");
+        assert_eq!(to_camel_case("A"), "A");
+    }
+
+    #[test]
+    fn to_camel_case_leading_separator() {
+        assert_eq!(to_camel_case("-app-name"), "AppName");
+        assert_eq!(to_camel_case("_app_name"), "AppName");
+    }
+
+    #[test]
+    fn to_camel_case_trailing_separator() {
+        assert_eq!(to_camel_case("app-name-"), "appName");
+        assert_eq!(to_camel_case("app_name_"), "appName");
+    }
+
+    #[test]
+    fn to_camel_case_multiple_consecutive_separators() {
+        assert_eq!(to_camel_case("app--name"), "appName");
+        assert_eq!(to_camel_case("app__name"), "appName");
+        assert_eq!(to_camel_case("app---name"), "appName");
+    }
+
+    // ========================================================================
+    // Additional tests for normalize_value
+    // ========================================================================
+
+    #[test]
+    fn normalize_value_primitive_string() {
+        let value = json!("hello");
+        let normalized = normalize_value(value.clone());
+        assert_eq!(normalized, value);
+    }
+
+    #[test]
+    fn normalize_value_primitive_number() {
+        let value = json!(42);
+        let normalized = normalize_value(value.clone());
+        assert_eq!(normalized, value);
+    }
+
+    #[test]
+    fn normalize_value_primitive_bool() {
+        let value = json!(true);
+        let normalized = normalize_value(value.clone());
+        assert_eq!(normalized, value);
+    }
+
+    #[test]
+    fn normalize_value_primitive_null() {
+        let value = json!(null);
+        let normalized = normalize_value(value.clone());
+        assert_eq!(normalized, value);
+    }
+
+    #[test]
+    fn normalize_value_nested_object() {
+        let value = json!({"outer-key": {"inner-key": "value"}});
+        let normalized = normalize_value(value);
+        assert_eq!(normalized, json!({"outerKey": {"innerKey": "value"}}));
+    }
+
+    #[test]
+    fn normalize_value_array_of_objects() {
+        let value = json!([{"app-name": "test"}, {"window-id": 1}]);
+        let normalized = normalize_value(value);
+        assert_eq!(normalized, json!([{"appName": "test"}, {"windowId": 1}]));
+    }
+
+    #[test]
+    fn normalize_value_array_of_primitives() {
+        let value = json!([1, 2, 3, "hello"]);
+        let normalized = normalize_value(value.clone());
+        assert_eq!(normalized, value);
+    }
+
+    #[test]
+    fn normalize_value_deeply_nested() {
+        let value = json!({
+            "level-one": {
+                "level-two": {
+                    "level-three": {
+                        "deep-value": "found"
+                    }
+                }
+            }
+        });
+        let normalized = normalize_value(value);
+        assert_eq!(
+            normalized,
+            json!({
+                "levelOne": {
+                    "levelTwo": {
+                        "levelThree": {
+                            "deepValue": "found"
+                        }
+                    }
+                }
+            })
+        );
+    }
+
+    // ========================================================================
+    // Additional tests for normalize_map
+    // ========================================================================
+
+    #[test]
+    fn normalize_map_empty() {
+        let map = serde_json::Map::new();
+        let normalized = normalize_map(map);
+        assert!(normalized.is_empty());
+    }
+
+    #[test]
+    fn normalize_map_single_key() {
+        let mut map = serde_json::Map::new();
+        map.insert("app-name".to_string(), json!("test"));
+        let normalized = normalize_map(map);
+        assert_eq!(normalized.get("appName"), Some(&json!("test")));
+    }
+
+    #[test]
+    fn normalize_map_multiple_keys() {
+        let mut map = serde_json::Map::new();
+        map.insert("app-name".to_string(), json!("test"));
+        map.insert("window-id".to_string(), json!(42));
+        map.insert("is-focused".to_string(), json!(true));
+        let normalized = normalize_map(map);
+        assert_eq!(normalized.len(), 3);
+        assert_eq!(normalized.get("appName"), Some(&json!("test")));
+        assert_eq!(normalized.get("windowId"), Some(&json!(42)));
+        assert_eq!(normalized.get("isFocused"), Some(&json!(true)));
+    }
+
+    // ========================================================================
+    // Additional tests for parse_json_array
+    // ========================================================================
+
+    #[test]
+    fn parse_json_array_invalid_json() {
+        let result = parse_json_array("not valid json");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_json_array_primitive_string() {
+        let result = parse_json_array(r#""hello""#).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], json!("hello"));
+    }
+
+    #[test]
+    fn parse_json_array_primitive_number() {
+        let result = parse_json_array("42").unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], json!(42));
+    }
+
+    #[test]
+    fn parse_json_array_nested_arrays() {
+        let result = parse_json_array(r#"[[{"a":1}],[{"b":2}]]"#).unwrap();
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn parse_json_array_empty_array() {
+        let result = parse_json_array("[]").unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn parse_json_array_whitespace_only() {
+        let result = parse_json_array("   \n\t   ").unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn parse_json_array_newlines() {
+        let result = parse_json_array("\n").unwrap();
+        assert!(result.is_empty());
+    }
+
+    // ========================================================================
+    // Additional tests for format_command
+    // ========================================================================
+
+    #[test]
+    fn format_command_no_args() {
+        use std::path::Path;
+        let binary = Path::new("/usr/bin/hyprspace");
+        let args: &[&str] = &[];
+        let formatted = format_command(binary, args);
+        assert_eq!(formatted, "/usr/bin/hyprspace");
+    }
+
+    #[test]
+    fn format_command_with_args() {
+        use std::path::Path;
+        let binary = Path::new("/usr/bin/hyprspace");
+        let args = &["list-workspaces", "--all", "--json"];
+        let formatted = format_command(binary, args);
+        assert_eq!(formatted, "/usr/bin/hyprspace list-workspaces --all --json");
+    }
+
+    #[test]
+    fn format_command_with_single_arg() {
+        use std::path::Path;
+        let binary = Path::new("hyprspace");
+        let args = &["version"];
+        let formatted = format_command(binary, args);
+        assert_eq!(formatted, "hyprspace version");
     }
 }

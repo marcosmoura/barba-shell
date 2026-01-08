@@ -38,6 +38,69 @@ pub enum AudioDeviceType {
     Other,
 }
 
+impl AudioDeviceType {
+    /// Detects the device type based on its name.
+    ///
+    /// This is the single source of truth for device type detection.
+    /// Uses case-insensitive substring matching against known device name patterns.
+    #[must_use]
+    pub fn detect(name: &str) -> Self {
+        let name_lower = name.to_lowercase();
+
+        // AirPlay devices
+        if name_lower.contains("airplay") {
+            return Self::AirPlay;
+        }
+
+        // Bluetooth devices (AirPods, Beats, etc.)
+        if name_lower.contains("airpods")
+            || name_lower.contains("beats")
+            || name_lower.contains("bluetooth")
+        {
+            return Self::Bluetooth;
+        }
+
+        // Virtual/aggregate devices
+        if name_lower.contains("virtual")
+            || name_lower.contains("proxy")
+            || name_lower.contains("aggregate")
+            || name_lower.contains("multi-output")
+            || name_lower.contains("blackhole")
+            || name_lower.contains("soundflower")
+            || name_lower.contains("loopback")
+        {
+            return Self::Virtual;
+        }
+
+        // USB devices
+        if name_lower.contains("usb") {
+            return Self::Usb;
+        }
+
+        // Built-in devices
+        if name_lower.contains("macbook") || name_lower.contains("built-in") {
+            return Self::BuiltIn;
+        }
+
+        Self::Other
+    }
+
+    /// Returns the string representation of the device type.
+    ///
+    /// Useful for serialization and CLI output.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AirPlay => "airplay",
+            Self::Bluetooth => "bluetooth",
+            Self::Virtual => "virtual",
+            Self::Usb => "usb",
+            Self::BuiltIn => "builtin",
+            Self::Other => "other",
+        }
+    }
+}
+
 impl AudioDevice {
     /// Creates a new `AudioDevice` from a device ID.
     ///
@@ -55,51 +118,7 @@ impl AudioDevice {
 
     /// Detects the device type based on its name and characteristics.
     #[must_use]
-    pub fn device_type(&self) -> AudioDeviceType {
-        let name_lower = self.name.to_lowercase();
-
-        // AirPlay devices
-        if name_lower.contains("airplay") {
-            return AudioDeviceType::AirPlay;
-        }
-
-        // Bluetooth devices (AirPods, Beats, etc.)
-        if name_lower.contains("airpods")
-            || name_lower.contains("beats")
-            || name_lower.contains("bluetooth")
-        {
-            return AudioDeviceType::Bluetooth;
-        }
-
-        // Virtual/aggregate devices
-        if name_lower.contains("virtual")
-            || name_lower.contains("proxy")
-            || name_lower.contains("aggregate")
-            || name_lower.contains("multi-output")
-            || name_lower.contains("blackhole")
-            || name_lower.contains("soundflower")
-            || name_lower.contains("loopback")
-        {
-            return AudioDeviceType::Virtual;
-        }
-
-        // USB devices
-        if name_lower.contains("usb")
-            || name_lower.contains("minifuse")
-            || name_lower.contains("focusrite")
-            || name_lower.contains("scarlett")
-            || name_lower.contains("at2020")
-        {
-            return AudioDeviceType::Usb;
-        }
-
-        // Built-in devices
-        if name_lower.contains("macbook") || name_lower.contains("built-in") {
-            return AudioDeviceType::BuiltIn;
-        }
-
-        AudioDeviceType::Other
-    }
+    pub fn device_type(&self) -> AudioDeviceType { AudioDeviceType::detect(&self.name) }
 
     /// Returns whether this is an `AirPlay` device.
     #[must_use]
@@ -225,6 +244,84 @@ pub fn find_device_by_priority<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn audio_device_type_detect_airplay() {
+        assert_eq!(
+            AudioDeviceType::detect("Living Room AirPlay"),
+            AudioDeviceType::AirPlay
+        );
+        assert_eq!(
+            AudioDeviceType::detect("AIRPLAY Speaker"),
+            AudioDeviceType::AirPlay
+        );
+    }
+
+    #[test]
+    fn audio_device_type_detect_bluetooth() {
+        assert_eq!(
+            AudioDeviceType::detect("AirPods Pro"),
+            AudioDeviceType::Bluetooth
+        );
+        assert_eq!(AudioDeviceType::detect("Beats Solo"), AudioDeviceType::Bluetooth);
+        assert_eq!(
+            AudioDeviceType::detect("Bluetooth Headphones"),
+            AudioDeviceType::Bluetooth
+        );
+    }
+
+    #[test]
+    fn audio_device_type_detect_virtual() {
+        assert_eq!(
+            AudioDeviceType::detect("BlackHole 2ch"),
+            AudioDeviceType::Virtual
+        );
+        assert_eq!(
+            AudioDeviceType::detect("Multi-Output Device"),
+            AudioDeviceType::Virtual
+        );
+        assert_eq!(
+            AudioDeviceType::detect("Soundflower (2ch)"),
+            AudioDeviceType::Virtual
+        );
+        assert_eq!(
+            AudioDeviceType::detect("Loopback Audio"),
+            AudioDeviceType::Virtual
+        );
+    }
+
+    #[test]
+    fn audio_device_type_detect_usb() {
+        assert_eq!(AudioDeviceType::detect("usb"), AudioDeviceType::Usb);
+    }
+
+    #[test]
+    fn audio_device_type_detect_builtin() {
+        assert_eq!(
+            AudioDeviceType::detect("MacBook Pro Speakers"),
+            AudioDeviceType::BuiltIn
+        );
+        assert_eq!(
+            AudioDeviceType::detect("Built-in Output"),
+            AudioDeviceType::BuiltIn
+        );
+    }
+
+    #[test]
+    fn audio_device_type_detect_other() {
+        assert_eq!(AudioDeviceType::detect("Unknown Device"), AudioDeviceType::Other);
+        assert_eq!(AudioDeviceType::detect("Random Speaker"), AudioDeviceType::Other);
+    }
+
+    #[test]
+    fn audio_device_type_as_str() {
+        assert_eq!(AudioDeviceType::AirPlay.as_str(), "airplay");
+        assert_eq!(AudioDeviceType::Bluetooth.as_str(), "bluetooth");
+        assert_eq!(AudioDeviceType::Virtual.as_str(), "virtual");
+        assert_eq!(AudioDeviceType::Usb.as_str(), "usb");
+        assert_eq!(AudioDeviceType::BuiltIn.as_str(), "builtin");
+        assert_eq!(AudioDeviceType::Other.as_str(), "other");
+    }
 
     #[test]
     fn audio_device_name_contains_case_insensitive() {

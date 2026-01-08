@@ -574,6 +574,10 @@ unsafe fn activate_frontmost_app() {
 mod tests {
     use super::*;
 
+    // ========================================================================
+    // ax_modifiers_to_ns tests
+    // ========================================================================
+
     #[test]
     fn test_ax_modifiers_default() {
         assert_eq!(ax_modifiers_to_ns(None), 1 << 20);
@@ -587,5 +591,243 @@ mod tests {
     #[test]
     fn test_ax_modifiers_combined() {
         assert_eq!(ax_modifiers_to_ns(Some(9)), (1 << 17) | (1 << 20));
+    }
+
+    #[test]
+    fn test_ax_modifiers_option() {
+        // Option/Alt is bit 2 (0x02), maps to 1 << 19
+        assert_eq!(ax_modifiers_to_ns(Some(2)), 1 << 19);
+    }
+
+    #[test]
+    fn test_ax_modifiers_control() {
+        // Control is bit 4 (0x04), maps to 1 << 18
+        assert_eq!(ax_modifiers_to_ns(Some(4)), 1 << 18);
+    }
+
+    #[test]
+    fn test_ax_modifiers_command() {
+        // Command is bit 8 (0x08), maps to 1 << 20
+        assert_eq!(ax_modifiers_to_ns(Some(8)), 1 << 20);
+    }
+
+    #[test]
+    fn test_ax_modifiers_shift_option() {
+        // Shift + Option = 1 + 2 = 3
+        let expected = (1 << 17) | (1 << 19);
+        assert_eq!(ax_modifiers_to_ns(Some(3)), expected);
+    }
+
+    #[test]
+    fn test_ax_modifiers_shift_control() {
+        // Shift + Control = 1 + 4 = 5
+        let expected = (1 << 17) | (1 << 18);
+        assert_eq!(ax_modifiers_to_ns(Some(5)), expected);
+    }
+
+    #[test]
+    fn test_ax_modifiers_option_control() {
+        // Option + Control = 2 + 4 = 6
+        let expected = (1 << 19) | (1 << 18);
+        assert_eq!(ax_modifiers_to_ns(Some(6)), expected);
+    }
+
+    #[test]
+    fn test_ax_modifiers_all() {
+        // All modifiers: Shift(1) + Option(2) + Control(4) + Command(8) = 15
+        let expected = (1 << 17) | (1 << 19) | (1 << 18) | (1 << 20);
+        assert_eq!(ax_modifiers_to_ns(Some(15)), expected);
+    }
+
+    #[test]
+    fn test_ax_modifiers_zero_returns_command() {
+        // Zero should default to Command
+        assert_eq!(ax_modifiers_to_ns(Some(0)), 1 << 20);
+    }
+
+    #[test]
+    fn test_ax_modifiers_shift_option_command() {
+        // Shift + Option + Command = 1 + 2 + 8 = 11
+        let expected = (1 << 17) | (1 << 19) | (1 << 20);
+        assert_eq!(ax_modifiers_to_ns(Some(11)), expected);
+    }
+
+    #[test]
+    fn test_ax_modifiers_control_command() {
+        // Control + Command = 4 + 8 = 12
+        let expected = (1 << 18) | (1 << 20);
+        assert_eq!(ax_modifiers_to_ns(Some(12)), expected);
+    }
+
+    // ========================================================================
+    // Constant tests
+    // ========================================================================
+
+    #[test]
+    fn test_k_ax_error_success_is_zero() {
+        assert_eq!(K_AX_ERROR_SUCCESS, 0);
+    }
+
+    // ========================================================================
+    // CFString cache function tests (verifying they don't panic)
+    // ========================================================================
+
+    #[test]
+    fn test_cf_menu_bar_returns_valid_pointer() {
+        let ptr = cf_menu_bar();
+        assert!(!ptr.is_null());
+    }
+
+    #[test]
+    fn test_cf_children_returns_valid_pointer() {
+        let ptr = cf_children();
+        assert!(!ptr.is_null());
+    }
+
+    #[test]
+    fn test_cf_title_returns_valid_pointer() {
+        let ptr = cf_title();
+        assert!(!ptr.is_null());
+    }
+
+    #[test]
+    fn test_cf_role_returns_valid_pointer() {
+        let ptr = cf_role();
+        assert!(!ptr.is_null());
+    }
+
+    #[test]
+    fn test_cf_enabled_returns_valid_pointer() {
+        let ptr = cf_enabled();
+        assert!(!ptr.is_null());
+    }
+
+    #[test]
+    fn test_cf_mark_char_returns_valid_pointer() {
+        let ptr = cf_mark_char();
+        assert!(!ptr.is_null());
+    }
+
+    #[test]
+    fn test_cf_cmd_char_returns_valid_pointer() {
+        let ptr = cf_cmd_char();
+        assert!(!ptr.is_null());
+    }
+
+    #[test]
+    fn test_cf_cmd_mods_returns_valid_pointer() {
+        let ptr = cf_cmd_mods();
+        assert!(!ptr.is_null());
+    }
+
+    #[test]
+    fn test_cf_press_returns_valid_pointer() {
+        let ptr = cf_press();
+        assert!(!ptr.is_null());
+    }
+
+    // ========================================================================
+    // Cached CFStrings are consistent across calls
+    // ========================================================================
+
+    #[test]
+    fn test_cf_menu_bar_is_consistent() {
+        let ptr1 = cf_menu_bar();
+        let ptr2 = cf_menu_bar();
+        assert_eq!(ptr1, ptr2);
+    }
+
+    #[test]
+    fn test_cf_children_is_consistent() {
+        let ptr1 = cf_children();
+        let ptr2 = cf_children();
+        assert_eq!(ptr1, ptr2);
+    }
+
+    #[test]
+    fn test_cf_title_is_consistent() {
+        let ptr1 = cf_title();
+        let ptr2 = cf_title();
+        assert_eq!(ptr1, ptr2);
+    }
+
+    // ========================================================================
+    // ns_string tests
+    // ========================================================================
+
+    #[test]
+    fn test_ns_string_empty() {
+        unsafe {
+            let ns = ns_string("");
+            assert!(!ns.is_null());
+        }
+    }
+
+    #[test]
+    fn test_ns_string_ascii() {
+        unsafe {
+            let ns = ns_string("hello");
+            assert!(!ns.is_null());
+        }
+    }
+
+    #[test]
+    fn test_ns_string_unicode() {
+        unsafe {
+            let ns = ns_string("hello 世界");
+            assert!(!ns.is_null());
+        }
+    }
+
+    #[test]
+    fn test_ns_string_with_special_chars() {
+        unsafe {
+            let ns = ns_string("File → Edit → View");
+            assert!(!ns.is_null());
+        }
+    }
+
+    #[test]
+    fn test_ns_string_with_emoji() {
+        unsafe {
+            let ns = ns_string("Hello 🎉");
+            assert!(!ns.is_null());
+        }
+    }
+
+    // ========================================================================
+    // get_ax_*_attr with null element tests
+    // ========================================================================
+
+    #[test]
+    fn test_get_ax_string_attr_null_element() {
+        unsafe {
+            let result = get_ax_string_attr(std::ptr::null_mut(), cf_title());
+            assert!(result.is_none());
+        }
+    }
+
+    #[test]
+    fn test_get_ax_bool_attr_null_element() {
+        unsafe {
+            let result = get_ax_bool_attr(std::ptr::null_mut(), cf_enabled());
+            assert!(result.is_none());
+        }
+    }
+
+    #[test]
+    fn test_get_ax_int_attr_null_element() {
+        unsafe {
+            let result = get_ax_int_attr(std::ptr::null_mut(), cf_cmd_mods());
+            assert!(result.is_none());
+        }
+    }
+
+    #[test]
+    fn test_get_ax_children_null_element() {
+        unsafe {
+            let result = get_ax_children(std::ptr::null_mut());
+            assert!(result.is_none());
+        }
     }
 }

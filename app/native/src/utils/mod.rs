@@ -1,4 +1,3 @@
-pub mod cache;
 pub mod command;
 pub mod ipc;
 pub mod objc;

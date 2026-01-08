@@ -644,6 +644,8 @@ pub fn load_config() -> Result<(StacheConfig, PathBuf), ConfigError> {
 
 #[cfg(test)]
 mod tests {
+    use std::error::Error;
+
     use super::*;
 
     #[test]
@@ -731,5 +733,463 @@ mod tests {
     fn test_wallpaper_mode_default() {
         let mode = WallpaperMode::default();
         assert_eq!(mode, WallpaperMode::Random);
+    }
+
+    // ========================================================================
+    // MatchStrategy tests
+    // ========================================================================
+
+    #[test]
+    fn test_match_strategy_default_is_exact() {
+        assert_eq!(MatchStrategy::default(), MatchStrategy::Exact);
+    }
+
+    #[test]
+    fn test_match_strategy_serialization() {
+        assert_eq!(
+            serde_json::to_string(&MatchStrategy::Exact).unwrap(),
+            r#""exact""#
+        );
+        assert_eq!(
+            serde_json::to_string(&MatchStrategy::Contains).unwrap(),
+            r#""contains""#
+        );
+        assert_eq!(
+            serde_json::to_string(&MatchStrategy::StartsWith).unwrap(),
+            r#""startsWith""#
+        );
+        assert_eq!(
+            serde_json::to_string(&MatchStrategy::Regex).unwrap(),
+            r#""regex""#
+        );
+    }
+
+    #[test]
+    fn test_match_strategy_deserialization() {
+        assert_eq!(
+            serde_json::from_str::<MatchStrategy>(r#""exact""#).unwrap(),
+            MatchStrategy::Exact
+        );
+        assert_eq!(
+            serde_json::from_str::<MatchStrategy>(r#""contains""#).unwrap(),
+            MatchStrategy::Contains
+        );
+        assert_eq!(
+            serde_json::from_str::<MatchStrategy>(r#""startsWith""#).unwrap(),
+            MatchStrategy::StartsWith
+        );
+        assert_eq!(
+            serde_json::from_str::<MatchStrategy>(r#""regex""#).unwrap(),
+            MatchStrategy::Regex
+        );
+    }
+
+    // ========================================================================
+    // TargetMusicApp tests
+    // ========================================================================
+
+    #[test]
+    fn test_target_music_app_default_is_tidal() {
+        assert_eq!(TargetMusicApp::default(), TargetMusicApp::Tidal);
+    }
+
+    #[test]
+    fn test_target_music_app_app_path() {
+        assert_eq!(TargetMusicApp::Tidal.app_path(), Some("/Applications/TIDAL.app"));
+        assert_eq!(
+            TargetMusicApp::Spotify.app_path(),
+            Some("/Applications/Spotify.app")
+        );
+        assert_eq!(TargetMusicApp::None.app_path(), None);
+    }
+
+    #[test]
+    fn test_target_music_app_bundle_id() {
+        assert_eq!(TargetMusicApp::Tidal.bundle_id(), Some("com.tidal.desktop"));
+        assert_eq!(TargetMusicApp::Spotify.bundle_id(), Some("com.spotify.client"));
+        assert_eq!(TargetMusicApp::None.bundle_id(), None);
+    }
+
+    #[test]
+    fn test_target_music_app_display_name() {
+        assert_eq!(TargetMusicApp::Tidal.display_name(), "Tidal");
+        assert_eq!(TargetMusicApp::Spotify.display_name(), "Spotify");
+        assert_eq!(TargetMusicApp::None.display_name(), "None");
+    }
+
+    #[test]
+    fn test_target_music_app_serialization() {
+        assert_eq!(
+            serde_json::to_string(&TargetMusicApp::Tidal).unwrap(),
+            r#""tidal""#
+        );
+        assert_eq!(
+            serde_json::to_string(&TargetMusicApp::Spotify).unwrap(),
+            r#""spotify""#
+        );
+        assert_eq!(
+            serde_json::to_string(&TargetMusicApp::None).unwrap(),
+            r#""none""#
+        );
+    }
+
+    // ========================================================================
+    // MenuAnywhereConfig tests
+    // ========================================================================
+
+    #[test]
+    fn test_menu_anywhere_config_default() {
+        let config = MenuAnywhereConfig::default();
+        assert!(!config.enabled);
+        assert_eq!(config.modifiers, vec![
+            MenuAnywhereModifier::Control,
+            MenuAnywhereModifier::Command
+        ]);
+        assert_eq!(config.mouse_button, MenuAnywhereMouseButton::RightClick);
+    }
+
+    #[test]
+    fn test_menu_anywhere_config_is_enabled() {
+        let disabled = MenuAnywhereConfig::default();
+        assert!(!disabled.is_enabled());
+
+        let enabled = MenuAnywhereConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        assert!(enabled.is_enabled());
+    }
+
+    #[test]
+    fn test_menu_anywhere_required_modifier_flags_control() {
+        let config = MenuAnywhereConfig {
+            modifiers: vec![MenuAnywhereModifier::Control],
+            ..Default::default()
+        };
+        assert_eq!(config.required_modifier_flags(), 0x0004_0000);
+    }
+
+    #[test]
+    fn test_menu_anywhere_required_modifier_flags_option() {
+        let config = MenuAnywhereConfig {
+            modifiers: vec![MenuAnywhereModifier::Option],
+            ..Default::default()
+        };
+        assert_eq!(config.required_modifier_flags(), 0x0008_0000);
+    }
+
+    #[test]
+    fn test_menu_anywhere_required_modifier_flags_command() {
+        let config = MenuAnywhereConfig {
+            modifiers: vec![MenuAnywhereModifier::Command],
+            ..Default::default()
+        };
+        assert_eq!(config.required_modifier_flags(), 0x0010_0000);
+    }
+
+    #[test]
+    fn test_menu_anywhere_required_modifier_flags_shift() {
+        let config = MenuAnywhereConfig {
+            modifiers: vec![MenuAnywhereModifier::Shift],
+            ..Default::default()
+        };
+        assert_eq!(config.required_modifier_flags(), 0x0002_0000);
+    }
+
+    #[test]
+    fn test_menu_anywhere_required_modifier_flags_combined() {
+        let config = MenuAnywhereConfig {
+            modifiers: vec![MenuAnywhereModifier::Control, MenuAnywhereModifier::Command],
+            ..Default::default()
+        };
+        assert_eq!(config.required_modifier_flags(), 0x0004_0000 | 0x0010_0000);
+    }
+
+    #[test]
+    fn test_menu_anywhere_required_modifier_flags_empty() {
+        let config = MenuAnywhereConfig {
+            modifiers: vec![],
+            ..Default::default()
+        };
+        assert_eq!(config.required_modifier_flags(), 0);
+    }
+
+    #[test]
+    fn test_menu_anywhere_required_modifier_flags_all() {
+        let config = MenuAnywhereConfig {
+            modifiers: vec![
+                MenuAnywhereModifier::Control,
+                MenuAnywhereModifier::Option,
+                MenuAnywhereModifier::Command,
+                MenuAnywhereModifier::Shift,
+            ],
+            ..Default::default()
+        };
+        let expected = 0x0004_0000 | 0x0008_0000 | 0x0010_0000 | 0x0002_0000;
+        assert_eq!(config.required_modifier_flags(), expected);
+    }
+
+    // ========================================================================
+    // ProxyAudioConfig tests
+    // ========================================================================
+
+    #[test]
+    fn test_proxy_audio_config_default() {
+        let config = ProxyAudioConfig::default();
+        assert!(!config.enabled);
+        assert_eq!(config.input.name, "Stache Virtual Input");
+        assert_eq!(config.output.name, "Stache Virtual Output");
+        assert_eq!(config.output.buffer_size, 256);
+    }
+
+    #[test]
+    fn test_proxy_audio_config_is_enabled() {
+        let disabled = ProxyAudioConfig::default();
+        assert!(!disabled.is_enabled());
+
+        let enabled = ProxyAudioConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        assert!(enabled.is_enabled());
+    }
+
+    // ========================================================================
+    // WeatherConfig tests
+    // ========================================================================
+
+    #[test]
+    fn test_weather_config_default() {
+        let config = WeatherConfig::default();
+        assert!(config.api_keys.is_empty());
+        assert!(config.default_location.is_empty());
+    }
+
+    #[test]
+    fn test_weather_config_is_enabled() {
+        let disabled = WeatherConfig::default();
+        assert!(!disabled.is_enabled());
+
+        let enabled = WeatherConfig {
+            api_keys: ".env".to_string(),
+            ..Default::default()
+        };
+        assert!(enabled.is_enabled());
+    }
+
+    // ========================================================================
+    // NoTunesConfig tests
+    // ========================================================================
+
+    #[test]
+    fn test_notunes_config_default() {
+        let config = NoTunesConfig::default();
+        assert!(config.enabled);
+        assert_eq!(config.target_app, TargetMusicApp::Tidal);
+    }
+
+    #[test]
+    fn test_notunes_config_is_enabled() {
+        let enabled = NoTunesConfig::default();
+        assert!(enabled.is_enabled());
+
+        let disabled = NoTunesConfig {
+            enabled: false,
+            ..Default::default()
+        };
+        assert!(!disabled.is_enabled());
+    }
+
+    // ========================================================================
+    // ShortcutCommands tests
+    // ========================================================================
+
+    #[test]
+    fn test_shortcut_commands_display_single() {
+        let cmd = ShortcutCommands::Single("stache reload".to_string());
+        assert_eq!(cmd.commands_display(), "stache reload");
+    }
+
+    #[test]
+    fn test_shortcut_commands_display_multiple() {
+        let cmd = ShortcutCommands::Multiple(vec![
+            "cmd1".to_string(),
+            "cmd2".to_string(),
+            "cmd3".to_string(),
+        ]);
+        assert_eq!(cmd.commands_display(), "[3 commands]");
+    }
+
+    #[test]
+    fn test_shortcut_commands_get_commands_trims_whitespace() {
+        let cmd = ShortcutCommands::Single("  stache reload  ".to_string());
+        assert_eq!(cmd.get_commands(), vec!["stache reload"]);
+    }
+
+    #[test]
+    fn test_shortcut_commands_multiple_filters_empty() {
+        let cmd = ShortcutCommands::Multiple(vec![
+            "cmd1".to_string(),
+            "".to_string(),
+            "  ".to_string(),
+            "cmd2".to_string(),
+        ]);
+        assert_eq!(cmd.get_commands(), vec!["cmd1", "cmd2"]);
+    }
+
+    // ========================================================================
+    // ConfigError tests
+    // ========================================================================
+
+    #[test]
+    fn test_config_error_display_not_found() {
+        let err = ConfigError::NotFound;
+        let display = format!("{err}");
+        assert!(display.contains("No configuration file found"));
+    }
+
+    #[test]
+    fn test_config_error_display_io_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "access denied");
+        let err = ConfigError::IoError(io_err);
+        let display = format!("{err}");
+        assert!(display.contains("Failed to read configuration file"));
+        assert!(display.contains("access denied"));
+    }
+
+    #[test]
+    fn test_config_error_display_parse_error() {
+        let json_err = serde_json::from_str::<StacheConfig>("invalid json").unwrap_err();
+        let err = ConfigError::ParseError(json_err);
+        let display = format!("{err}");
+        assert!(display.contains("Failed to parse configuration file"));
+    }
+
+    #[test]
+    fn test_config_error_source_not_found() {
+        let err = ConfigError::NotFound;
+        assert!(err.source().is_none());
+    }
+
+    #[test]
+    fn test_config_error_source_io_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        let err = ConfigError::IoError(io_err);
+        assert!(err.source().is_some());
+    }
+
+    #[test]
+    fn test_config_error_source_parse_error() {
+        let json_err =
+            serde_json::from_str::<StacheConfig>("{}}").expect_err("Should fail to parse");
+        let err = ConfigError::ParseError(json_err);
+        assert!(err.source().is_some());
+    }
+
+    #[test]
+    fn test_config_error_from_io_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "test");
+        let config_err: ConfigError = io_err.into();
+        assert!(matches!(config_err, ConfigError::IoError(_)));
+    }
+
+    #[test]
+    fn test_config_error_from_json_error() {
+        let json_err = serde_json::from_str::<StacheConfig>("not json").unwrap_err();
+        let config_err: ConfigError = json_err.into();
+        assert!(matches!(config_err, ConfigError::ParseError(_)));
+    }
+
+    // ========================================================================
+    // AudioDeviceDependency tests
+    // ========================================================================
+
+    #[test]
+    fn test_audio_device_dependency_default() {
+        let dep = AudioDeviceDependency::default();
+        assert!(dep.name.is_empty());
+        assert_eq!(dep.strategy, MatchStrategy::Exact);
+    }
+
+    #[test]
+    fn test_audio_device_dependency_serialization() {
+        let dep = AudioDeviceDependency {
+            name: "MiniFuse".to_string(),
+            strategy: MatchStrategy::StartsWith,
+        };
+        let json = serde_json::to_string(&dep).unwrap();
+        assert!(json.contains("MiniFuse"));
+        assert!(json.contains("startsWith"));
+    }
+
+    // ========================================================================
+    // AudioDevicePriority tests
+    // ========================================================================
+
+    #[test]
+    fn test_audio_device_priority_default() {
+        let priority = AudioDevicePriority::default();
+        assert!(priority.name.is_empty());
+        assert_eq!(priority.strategy, MatchStrategy::Exact);
+        assert!(priority.depends_on.is_none());
+    }
+
+    #[test]
+    fn test_audio_device_priority_with_dependency() {
+        let json = r#"{
+            "name": "External Speakers",
+            "strategy": "exact",
+            "dependsOn": {
+                "name": "MiniFuse",
+                "strategy": "startsWith"
+            }
+        }"#;
+
+        let priority: AudioDevicePriority = serde_json::from_str(json).unwrap();
+        assert_eq!(priority.name, "External Speakers");
+        assert!(priority.depends_on.is_some());
+        let dep = priority.depends_on.unwrap();
+        assert_eq!(dep.name, "MiniFuse");
+        assert_eq!(dep.strategy, MatchStrategy::StartsWith);
+    }
+
+    // ========================================================================
+    // WallpaperMode tests
+    // ========================================================================
+
+    #[test]
+    fn test_wallpaper_mode_serialization() {
+        assert_eq!(
+            serde_json::to_string(&WallpaperMode::Random).unwrap(),
+            r#""random""#
+        );
+        assert_eq!(
+            serde_json::to_string(&WallpaperMode::Sequential).unwrap(),
+            r#""sequential""#
+        );
+    }
+
+    // ========================================================================
+    // MenuAnywhereMouseButton tests
+    // ========================================================================
+
+    #[test]
+    fn test_menu_anywhere_mouse_button_default() {
+        assert_eq!(
+            MenuAnywhereMouseButton::default(),
+            MenuAnywhereMouseButton::RightClick
+        );
+    }
+
+    #[test]
+    fn test_menu_anywhere_mouse_button_serialization() {
+        assert_eq!(
+            serde_json::to_string(&MenuAnywhereMouseButton::RightClick).unwrap(),
+            r#""rightClick""#
+        );
+        assert_eq!(
+            serde_json::to_string(&MenuAnywhereMouseButton::MiddleClick).unwrap(),
+            r#""middleClick""#
+        );
     }
 }

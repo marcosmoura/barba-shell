@@ -4,11 +4,13 @@
 
 use std::fmt::Write;
 
-use coreaudio::audio_unit::Scope;
 use coreaudio::audio_unit::macos_helpers::{
     get_audio_device_ids, get_audio_device_supports_scope, get_device_name,
 };
+use coreaudio::audio_unit::Scope;
 use serde::Serialize;
+
+use super::device::AudioDeviceType;
 
 /// Represents an audio device with its properties for CLI output.
 #[derive(Debug, Clone, Serialize)]
@@ -35,53 +37,6 @@ pub enum DeviceFilter {
     OutputOnly,
 }
 
-/// Detects the device type based on its name.
-fn detect_device_type(name: &str) -> &'static str {
-    let name_lower = name.to_lowercase();
-
-    // AirPlay devices
-    if name_lower.contains("airplay") {
-        return "airplay";
-    }
-
-    // Bluetooth devices (AirPods, Beats, etc.)
-    if name_lower.contains("airpods")
-        || name_lower.contains("beats")
-        || name_lower.contains("bluetooth")
-    {
-        return "bluetooth";
-    }
-
-    // Virtual/aggregate devices
-    if name_lower.contains("virtual")
-        || name_lower.contains("proxy")
-        || name_lower.contains("aggregate")
-        || name_lower.contains("multi-output")
-        || name_lower.contains("blackhole")
-        || name_lower.contains("soundflower")
-        || name_lower.contains("loopback")
-    {
-        return "virtual";
-    }
-
-    // USB devices
-    if name_lower.contains("usb")
-        || name_lower.contains("minifuse")
-        || name_lower.contains("focusrite")
-        || name_lower.contains("scarlett")
-        || name_lower.contains("at2020")
-    {
-        return "usb";
-    }
-
-    // Built-in devices
-    if name_lower.contains("macbook") || name_lower.contains("built-in") {
-        return "builtin";
-    }
-
-    "other"
-}
-
 /// Lists all audio devices matching the given filter.
 #[must_use]
 pub fn list_devices(filter: DeviceFilter) -> Vec<AudioDeviceInfo> {
@@ -104,7 +59,7 @@ pub fn list_devices(filter: DeviceFilter) -> Vec<AudioDeviceInfo> {
 
             Some(AudioDeviceInfo {
                 name: name.clone(),
-                device_type: detect_device_type(&name).to_string(),
+                device_type: AudioDeviceType::detect(&name).as_str().to_string(),
                 input: supports_input,
                 output: supports_output,
             })
@@ -163,39 +118,6 @@ pub fn format_devices_table(devices: &[AudioDeviceInfo]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_detect_device_type_airplay() {
-        assert_eq!(detect_device_type("Living Room AirPlay"), "airplay");
-    }
-
-    #[test]
-    fn test_detect_device_type_bluetooth() {
-        assert_eq!(detect_device_type("AirPods Pro"), "bluetooth");
-        assert_eq!(detect_device_type("Beats Solo"), "bluetooth");
-    }
-
-    #[test]
-    fn test_detect_device_type_virtual() {
-        assert_eq!(detect_device_type("BlackHole 2ch"), "virtual");
-        assert_eq!(detect_device_type("Multi-Output Device"), "virtual");
-    }
-
-    #[test]
-    fn test_detect_device_type_usb() {
-        assert_eq!(detect_device_type("AT2020USB+"), "usb");
-        assert_eq!(detect_device_type("MiniFuse 2"), "usb");
-    }
-
-    #[test]
-    fn test_detect_device_type_builtin() {
-        assert_eq!(detect_device_type("MacBook Pro Speakers"), "builtin");
-    }
-
-    #[test]
-    fn test_detect_device_type_other() {
-        assert_eq!(detect_device_type("Unknown Device"), "other");
-    }
 
     #[test]
     fn test_audio_device_info_serialization() {

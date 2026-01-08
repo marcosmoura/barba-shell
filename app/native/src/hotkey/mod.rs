@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tauri::Runtime;
 use tauri_plugin_global_shortcut::{Builder, Shortcut, ShortcutState};
 
-use crate::config::{ShortcutCommands, get_config};
+use crate::config::{get_config, ShortcutCommands};
 use crate::utils::command::resolve_binary;
 
 /// Maps registered shortcuts to their corresponding commands.
@@ -214,6 +214,10 @@ fn execute_single_command(command: &str, description: &str, index: usize, total:
 mod tests {
     use super::*;
 
+    // ========================================================================
+    // normalize_shortcut tests
+    // ========================================================================
+
     #[test]
     fn test_normalize_shortcut_ctrl() {
         assert_eq!(normalize_shortcut("Ctrl+Shift+S"), "Control+Shift+S");
@@ -260,5 +264,234 @@ mod tests {
         assert_eq!(normalize_shortcut("A"), "A");
         assert_eq!(normalize_shortcut("F12"), "F12");
         assert_eq!(normalize_shortcut("Space"), "Space");
+    }
+
+    // ========================================================================
+    // Additional normalize_shortcut tests
+    // ========================================================================
+
+    #[test]
+    fn test_normalize_shortcut_empty() {
+        assert_eq!(normalize_shortcut(""), "");
+    }
+
+    #[test]
+    fn test_normalize_shortcut_single_key() {
+        assert_eq!(normalize_shortcut("A"), "A");
+        assert_eq!(normalize_shortcut("Escape"), "Escape");
+        assert_eq!(normalize_shortcut("Enter"), "Enter");
+    }
+
+    #[test]
+    fn test_normalize_shortcut_function_keys() {
+        assert_eq!(normalize_shortcut("Cmd+F1"), "Command+F1");
+        assert_eq!(normalize_shortcut("Ctrl+F12"), "Control+F12");
+        assert_eq!(normalize_shortcut("Alt+F5"), "Option+F5");
+    }
+
+    #[test]
+    fn test_normalize_shortcut_all_modifiers() {
+        assert_eq!(
+            normalize_shortcut("Ctrl+Alt+Cmd+Shift+K"),
+            "Control+Option+Command+Shift+K"
+        );
+    }
+
+    #[test]
+    fn test_normalize_shortcut_preserves_case() {
+        // Key names should preserve their case
+        assert_eq!(normalize_shortcut("Cmd+a"), "Command+a");
+        assert_eq!(normalize_shortcut("Cmd+A"), "Command+A");
+    }
+
+    #[test]
+    fn test_normalize_shortcut_arrow_keys() {
+        assert_eq!(normalize_shortcut("Cmd+Left"), "Command+Left");
+        assert_eq!(normalize_shortcut("Alt+Up"), "Option+Up");
+        assert_eq!(normalize_shortcut("Ctrl+Down"), "Control+Down");
+    }
+
+    #[test]
+    fn test_normalize_shortcut_special_keys() {
+        assert_eq!(normalize_shortcut("Cmd+Tab"), "Command+Tab");
+        assert_eq!(normalize_shortcut("Cmd+Space"), "Command+Space");
+        assert_eq!(normalize_shortcut("Cmd+Escape"), "Command+Escape");
+    }
+
+    #[test]
+    fn test_normalize_shortcut_numbers() {
+        assert_eq!(normalize_shortcut("Cmd+1"), "Command+1");
+        assert_eq!(normalize_shortcut("Ctrl+0"), "Control+0");
+        assert_eq!(normalize_shortcut("Alt+9"), "Option+9");
+    }
+
+    #[test]
+    fn test_normalize_shortcut_only_modifiers() {
+        // Edge case: only modifiers, no key
+        assert_eq!(normalize_shortcut("Ctrl+Cmd"), "Control+Command");
+        assert_eq!(normalize_shortcut("Alt+Shift"), "Option+Shift");
+    }
+
+    // ========================================================================
+    // execute_shortcut_commands tests (empty commands)
+    // ========================================================================
+
+    #[test]
+    fn test_execute_shortcut_commands_empty_single() {
+        let commands = ShortcutCommands::Single(String::new());
+        // Should not panic with empty commands
+        execute_shortcut_commands(&commands);
+    }
+
+    #[test]
+    fn test_execute_shortcut_commands_empty_multiple() {
+        let commands = ShortcutCommands::Multiple(vec![]);
+        // Should not panic with empty array
+        execute_shortcut_commands(&commands);
+    }
+
+    #[test]
+    fn test_execute_shortcut_commands_whitespace_only() {
+        let commands = ShortcutCommands::Single("   ".to_string());
+        // Should not panic with whitespace-only commands
+        execute_shortcut_commands(&commands);
+    }
+
+    // ========================================================================
+    // execute_single_command tests (parsing)
+    // ========================================================================
+
+    #[test]
+    fn test_execute_single_command_empty() {
+        // Empty command should return false
+        let result = execute_single_command("", "test", 1, 1);
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_execute_single_command_whitespace() {
+        // Whitespace-only command should return false
+        let result = execute_single_command("   ", "test", 1, 1);
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_execute_single_command_nonexistent_binary() {
+        // Non-existent binary should return false
+        let result = execute_single_command("nonexistent_binary_xyz123", "test", 1, 1);
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_execute_single_command_echo() {
+        // Echo should succeed
+        let result = execute_single_command("echo hello", "test", 1, 1);
+        assert!(result);
+    }
+
+    #[test]
+    fn test_execute_single_command_true() {
+        // /usr/bin/true should succeed
+        let result = execute_single_command("true", "test", 1, 1);
+        assert!(result);
+    }
+
+    #[test]
+    fn test_execute_single_command_false() {
+        // /usr/bin/false should fail (non-zero exit)
+        let result = execute_single_command("false", "test", 1, 1);
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_execute_single_command_with_args() {
+        // Command with arguments
+        let result = execute_single_command("echo test arg1 arg2", "test", 1, 1);
+        assert!(result);
+    }
+
+    // ========================================================================
+    // ShortcutCommandMap type alias tests
+    // ========================================================================
+
+    #[test]
+    fn test_shortcut_command_map_creation() {
+        let map: HashMap<Shortcut, ShortcutCommands> = HashMap::new();
+        let arc_map: ShortcutCommandMap = Arc::new(map);
+        assert!(arc_map.is_empty());
+    }
+
+    #[test]
+    fn test_shortcut_command_map_insert_and_retrieve() {
+        let mut map: HashMap<Shortcut, ShortcutCommands> = HashMap::new();
+        let shortcut: Shortcut = "Command+K".parse().unwrap();
+        let commands = ShortcutCommands::Single("echo hello".to_string());
+        map.insert(shortcut, commands);
+
+        let arc_map: ShortcutCommandMap = Arc::new(map);
+        assert_eq!(arc_map.len(), 1);
+    }
+
+    // ========================================================================
+    // Integration-like tests
+    // ========================================================================
+
+    #[test]
+    fn test_normalize_and_parse_shortcut() {
+        // Test that normalized shortcuts can be parsed
+        let shortcuts = [
+            "Ctrl+S",
+            "Cmd+K",
+            "Alt+Tab",
+            "Opt+Space",
+            "Super+A",
+            "Meta+B",
+            "Command+Shift+`",
+        ];
+
+        for shortcut in shortcuts {
+            let normalized = normalize_shortcut(shortcut);
+            let parsed = normalized.parse::<Shortcut>();
+            assert!(
+                parsed.is_ok(),
+                "Failed to parse normalized shortcut: {normalized}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_shortcut_commands_get_commands_single() {
+        let commands = ShortcutCommands::Single("echo hello".to_string());
+        let cmds = commands.get_commands();
+        assert_eq!(cmds.len(), 1);
+        assert_eq!(cmds[0], "echo hello");
+    }
+
+    #[test]
+    fn test_shortcut_commands_get_commands_multiple() {
+        let commands =
+            ShortcutCommands::Multiple(vec!["echo first".to_string(), "echo second".to_string()]);
+        let cmds = commands.get_commands();
+        assert_eq!(cmds.len(), 2);
+        assert_eq!(cmds[0], "echo first");
+        assert_eq!(cmds[1], "echo second");
+    }
+
+    #[test]
+    fn test_shortcut_commands_display_single() {
+        let commands = ShortcutCommands::Single("stache reload".to_string());
+        let display = commands.commands_display();
+        assert_eq!(display, "stache reload");
+    }
+
+    #[test]
+    fn test_shortcut_commands_display_multiple() {
+        let commands = ShortcutCommands::Multiple(vec![
+            "cmd1".to_string(),
+            "cmd2".to_string(),
+            "cmd3".to_string(),
+        ]);
+        let display = commands.commands_display();
+        assert_eq!(display, "[3 commands]");
     }
 }

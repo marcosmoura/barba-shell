@@ -6,7 +6,7 @@ use std::io;
 use std::str::FromStr;
 
 use clap::{CommandFactory, Parser, Subcommand};
-use clap_complete::{Generator, Shell, generate};
+use clap_complete::{generate, Generator, Shell};
 
 use crate::error::StacheError;
 use crate::utils::ipc::{self, StacheNotification};
@@ -89,6 +89,37 @@ pub enum Commands {
     Desktop,
 }
 
+/// A 1-based screen index for targeting specific displays.
+///
+/// This newtype provides type safety and validation for screen indices,
+/// ensuring they are always 1-based (as users expect) rather than 0-based.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(transparent)]
+pub struct ScreenIndex(usize);
+
+impl ScreenIndex {
+    /// Creates a new `ScreenIndex` from a 1-based index.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - A 1-based screen index (1 = first screen, 2 = second, etc.)
+    #[must_use]
+    pub const fn new(index: usize) -> Self { Self(index) }
+
+    /// Returns the 1-based index value.
+    #[must_use]
+    #[allow(dead_code)] // Public API for consumers of ScreenIndex
+    pub const fn get(self) -> usize { self.0 }
+
+    /// Returns the 0-based index for internal use with arrays/APIs.
+    #[must_use]
+    pub const fn as_zero_based(self) -> usize { self.0.saturating_sub(1) }
+}
+
+impl std::fmt::Display for ScreenIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "{}", self.0) }
+}
+
 /// Screen target for wallpaper commands.
 ///
 /// Specifies which screen(s) should receive the wallpaper.
@@ -101,7 +132,7 @@ pub enum ScreenTarget {
     /// Apply to the main screen only.
     Main,
     /// Apply to a specific screen by 1-based index.
-    Index(usize),
+    Index(ScreenIndex),
 }
 
 impl FromStr for ScreenTarget {
@@ -111,7 +142,7 @@ impl FromStr for ScreenTarget {
         match s.to_lowercase().as_str() {
             "all" => Ok(Self::All),
             "main" => Ok(Self::Main),
-            _ => s.parse::<usize>().map(Self::Index).map_err(|_| {
+            _ => s.parse::<usize>().map(|idx| Self::Index(ScreenIndex::new(idx))).map_err(|_| {
                 format!(
                     "Invalid screen value '{s}'. Expected 'all', 'main', or a positive integer."
                 )
@@ -438,8 +469,7 @@ impl Cli {
             (None, true, ScreenTarget::All) => WallpaperAction::Random,
             (None, true, ScreenTarget::Main) => WallpaperAction::RandomForScreen(0),
             (None, true, ScreenTarget::Index(idx)) => {
-                // Convert 1-based CLI index to 0-based internal index
-                WallpaperAction::RandomForScreen(idx.saturating_sub(1))
+                WallpaperAction::RandomForScreen(idx.as_zero_based())
             }
             // Specific file
             (Some(file), false, ScreenTarget::All) => WallpaperAction::File(file.to_string()),
@@ -447,8 +477,7 @@ impl Cli {
                 WallpaperAction::FileForScreen(0, file.to_string())
             }
             (Some(file), false, ScreenTarget::Index(idx)) => {
-                // Convert 1-based CLI index to 0-based internal index
-                WallpaperAction::FileForScreen(idx.saturating_sub(1), file.to_string())
+                WallpaperAction::FileForScreen(idx.as_zero_based(), file.to_string())
             }
             // This case is handled by the validation above
             _ => unreachable!(),
@@ -495,6 +524,10 @@ impl Cli {
 mod tests {
     use super::*;
 
+    // ========================================================================
+    // ScreenTarget tests
+    // ========================================================================
+
     #[test]
     fn test_screen_target_from_str_all() {
         let target: ScreenTarget = "all".parse().unwrap();
@@ -510,7 +543,7 @@ mod tests {
     #[test]
     fn test_screen_target_from_str_index() {
         let target: ScreenTarget = "2".parse().unwrap();
-        assert_eq!(target, ScreenTarget::Index(2));
+        assert_eq!(target, ScreenTarget::Index(ScreenIndex::new(2)));
     }
 
     #[test]
@@ -533,12 +566,391 @@ mod tests {
     fn test_screen_target_display() {
         assert_eq!(ScreenTarget::All.to_string(), "all");
         assert_eq!(ScreenTarget::Main.to_string(), "main");
-        assert_eq!(ScreenTarget::Index(2).to_string(), "2");
+        assert_eq!(ScreenTarget::Index(ScreenIndex::new(2)).to_string(), "2");
     }
 
     #[test]
     fn test_screen_target_default() {
         let target = ScreenTarget::default();
         assert_eq!(target, ScreenTarget::All);
+    }
+
+    // ========================================================================
+    // ScreenIndex tests
+    // ========================================================================
+
+    #[test]
+    fn test_screen_index_new_and_get() {
+        let idx = ScreenIndex::new(3);
+        assert_eq!(idx.get(), 3);
+    }
+
+    #[test]
+    fn test_screen_index_as_zero_based() {
+        assert_eq!(ScreenIndex::new(1).as_zero_based(), 0);
+        assert_eq!(ScreenIndex::new(2).as_zero_based(), 1);
+        assert_eq!(ScreenIndex::new(5).as_zero_based(), 4);
+    }
+
+    #[test]
+    fn test_screen_index_as_zero_based_saturating() {
+        // Edge case: 0 should saturate to 0 (not underflow)
+        assert_eq!(ScreenIndex::new(0).as_zero_based(), 0);
+    }
+
+    #[test]
+    fn test_screen_index_display() {
+        assert_eq!(ScreenIndex::new(1).to_string(), "1");
+        assert_eq!(ScreenIndex::new(42).to_string(), "42");
+    }
+
+    // ========================================================================
+    // Additional ScreenTarget tests
+    // ========================================================================
+
+    #[test]
+    fn test_screen_target_from_str_mixed_case() {
+        let target: ScreenTarget = "AlL".parse().unwrap();
+        assert_eq!(target, ScreenTarget::All);
+
+        let target: ScreenTarget = "mAiN".parse().unwrap();
+        assert_eq!(target, ScreenTarget::Main);
+    }
+
+    #[test]
+    fn test_screen_target_from_str_numeric() {
+        let target: ScreenTarget = "1".parse().unwrap();
+        assert_eq!(target, ScreenTarget::Index(ScreenIndex::new(1)));
+
+        let target: ScreenTarget = "10".parse().unwrap();
+        assert_eq!(target, ScreenTarget::Index(ScreenIndex::new(10)));
+
+        let target: ScreenTarget = "99".parse().unwrap();
+        assert_eq!(target, ScreenTarget::Index(ScreenIndex::new(99)));
+    }
+
+    #[test]
+    fn test_screen_target_from_str_negative() {
+        let result: Result<ScreenTarget, _> = "-1".parse();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_screen_target_from_str_float() {
+        let result: Result<ScreenTarget, _> = "1.5".parse();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_screen_target_from_str_empty() {
+        let result: Result<ScreenTarget, _> = "".parse();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_screen_target_from_str_whitespace() {
+        // Whitespace is not trimmed, so this should fail
+        let result: Result<ScreenTarget, _> = " all ".parse();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_screen_target_serialization_all() {
+        let target = ScreenTarget::All;
+        let json = serde_json::to_string(&target).unwrap();
+        assert_eq!(json, "\"all\"");
+    }
+
+    #[test]
+    fn test_screen_target_serialization_main() {
+        let target = ScreenTarget::Main;
+        let json = serde_json::to_string(&target).unwrap();
+        assert_eq!(json, "\"main\"");
+    }
+
+    #[test]
+    fn test_screen_target_serialization_index() {
+        let target = ScreenTarget::Index(ScreenIndex::new(3));
+        let json = serde_json::to_string(&target).unwrap();
+        // Index variant serializes with the index object
+        assert!(json.contains("index") || json.contains("3"));
+    }
+
+    #[test]
+    fn test_screen_target_debug() {
+        let target = ScreenTarget::All;
+        let debug_str = format!("{:?}", target);
+        assert!(debug_str.contains("All"));
+    }
+
+    #[test]
+    fn test_screen_target_clone() {
+        let original = ScreenTarget::Index(ScreenIndex::new(5));
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+    }
+
+    // ========================================================================
+    // Additional ScreenIndex tests
+    // ========================================================================
+
+    #[test]
+    fn test_screen_index_copy() {
+        let idx = ScreenIndex::new(3);
+        let copied = idx; // Copy
+        assert_eq!(idx.get(), copied.get());
+    }
+
+    #[test]
+    fn test_screen_index_clone() {
+        let idx = ScreenIndex::new(3);
+        let cloned = idx.clone();
+        assert_eq!(idx.get(), cloned.get());
+    }
+
+    #[test]
+    fn test_screen_index_equality() {
+        let idx1 = ScreenIndex::new(5);
+        let idx2 = ScreenIndex::new(5);
+        let idx3 = ScreenIndex::new(6);
+
+        assert_eq!(idx1, idx2);
+        assert_ne!(idx1, idx3);
+    }
+
+    #[test]
+    fn test_screen_index_serialization() {
+        let idx = ScreenIndex::new(7);
+        let json = serde_json::to_string(&idx).unwrap();
+        assert_eq!(json, "7");
+    }
+
+    #[test]
+    fn test_screen_index_debug() {
+        let idx = ScreenIndex::new(42);
+        let debug_str = format!("{:?}", idx);
+        assert!(debug_str.contains("42"));
+    }
+
+    #[test]
+    fn test_screen_index_large_value() {
+        let idx = ScreenIndex::new(usize::MAX);
+        assert_eq!(idx.get(), usize::MAX);
+        // as_zero_based should handle large values with saturating subtraction
+        assert_eq!(idx.as_zero_based(), usize::MAX - 1);
+    }
+
+    // ========================================================================
+    // CLI parsing tests
+    // ========================================================================
+
+    #[test]
+    fn test_cli_parses_reload() {
+        let cli = Cli::try_parse_from(["stache", "reload"]).unwrap();
+        assert!(matches!(cli.command, Commands::Reload));
+    }
+
+    #[test]
+    fn test_cli_parses_schema() {
+        let cli = Cli::try_parse_from(["stache", "schema"]).unwrap();
+        assert!(matches!(cli.command, Commands::Schema));
+    }
+
+    #[test]
+    fn test_cli_parses_completions_bash() {
+        let cli = Cli::try_parse_from(["stache", "completions", "--shell", "bash"]).unwrap();
+        match cli.command {
+            Commands::Completions { shell } => assert_eq!(shell, Shell::Bash),
+            _ => panic!("Expected Completions command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_completions_zsh() {
+        let cli = Cli::try_parse_from(["stache", "completions", "--shell", "zsh"]).unwrap();
+        match cli.command {
+            Commands::Completions { shell } => assert_eq!(shell, Shell::Zsh),
+            _ => panic!("Expected Completions command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_completions_fish() {
+        let cli = Cli::try_parse_from(["stache", "completions", "--shell", "fish"]).unwrap();
+        match cli.command {
+            Commands::Completions { shell } => assert_eq!(shell, Shell::Fish),
+            _ => panic!("Expected Completions command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_cache_clear() {
+        let cli = Cli::try_parse_from(["stache", "cache", "clear"]).unwrap();
+        match cli.command {
+            Commands::Cache(CacheCommands::Clear) => {}
+            _ => panic!("Expected Cache Clear command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_cache_path() {
+        let cli = Cli::try_parse_from(["stache", "cache", "path"]).unwrap();
+        match cli.command {
+            Commands::Cache(CacheCommands::Path) => {}
+            _ => panic!("Expected Cache Path command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_audio_list() {
+        let cli = Cli::try_parse_from(["stache", "audio", "list"]).unwrap();
+        match cli.command {
+            Commands::Audio(AudioCommands::List { json, input, output }) => {
+                assert!(!json);
+                assert!(!input);
+                assert!(!output);
+            }
+            _ => panic!("Expected Audio List command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_audio_list_json() {
+        let cli = Cli::try_parse_from(["stache", "audio", "list", "--json"]).unwrap();
+        match cli.command {
+            Commands::Audio(AudioCommands::List { json, .. }) => {
+                assert!(json);
+            }
+            _ => panic!("Expected Audio List command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_audio_list_input() {
+        let cli = Cli::try_parse_from(["stache", "audio", "list", "--input"]).unwrap();
+        match cli.command {
+            Commands::Audio(AudioCommands::List { input, output, .. }) => {
+                assert!(input);
+                assert!(!output);
+            }
+            _ => panic!("Expected Audio List command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_audio_list_output() {
+        let cli = Cli::try_parse_from(["stache", "audio", "list", "--output"]).unwrap();
+        match cli.command {
+            Commands::Audio(AudioCommands::List { input, output, .. }) => {
+                assert!(!input);
+                assert!(output);
+            }
+            _ => panic!("Expected Audio List command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_event_window_focus_changed() {
+        let cli = Cli::try_parse_from(["stache", "event", "window-focus-changed"]).unwrap();
+        match cli.command {
+            Commands::Event(EventCommands::WindowFocusChanged) => {}
+            _ => panic!("Expected Event WindowFocusChanged command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_event_workspace_changed() {
+        let cli = Cli::try_parse_from(["stache", "event", "workspace-changed", "coding"]).unwrap();
+        match cli.command {
+            Commands::Event(EventCommands::WorkspaceChanged { name }) => {
+                assert_eq!(name, "coding");
+            }
+            _ => panic!("Expected Event WorkspaceChanged command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_wallpaper_list() {
+        let cli = Cli::try_parse_from(["stache", "wallpaper", "list"]).unwrap();
+        match cli.command {
+            Commands::Wallpaper(WallpaperCommands::List) => {}
+            _ => panic!("Expected Wallpaper List command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_wallpaper_generate_all() {
+        let cli = Cli::try_parse_from(["stache", "wallpaper", "generate-all"]).unwrap();
+        match cli.command {
+            Commands::Wallpaper(WallpaperCommands::GenerateAll) => {}
+            _ => panic!("Expected Wallpaper GenerateAll command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_wallpaper_set_path() {
+        let cli =
+            Cli::try_parse_from(["stache", "wallpaper", "set", "/path/to/image.jpg"]).unwrap();
+        match cli.command {
+            Commands::Wallpaper(WallpaperCommands::Set { path, random, screen }) => {
+                assert_eq!(path, Some("/path/to/image.jpg".to_string()));
+                assert!(!random);
+                assert_eq!(screen, ScreenTarget::All);
+            }
+            _ => panic!("Expected Wallpaper Set command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_wallpaper_set_random() {
+        let cli = Cli::try_parse_from(["stache", "wallpaper", "set", "--random"]).unwrap();
+        match cli.command {
+            Commands::Wallpaper(WallpaperCommands::Set { path, random, .. }) => {
+                assert!(path.is_none());
+                assert!(random);
+            }
+            _ => panic!("Expected Wallpaper Set command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_wallpaper_set_screen_main() {
+        let cli =
+            Cli::try_parse_from(["stache", "wallpaper", "set", "--random", "--screen", "main"])
+                .unwrap();
+        match cli.command {
+            Commands::Wallpaper(WallpaperCommands::Set { screen, .. }) => {
+                assert_eq!(screen, ScreenTarget::Main);
+            }
+            _ => panic!("Expected Wallpaper Set command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_wallpaper_set_screen_index() {
+        let cli = Cli::try_parse_from(["stache", "wallpaper", "set", "--random", "--screen", "2"])
+            .unwrap();
+        match cli.command {
+            Commands::Wallpaper(WallpaperCommands::Set { screen, .. }) => {
+                assert_eq!(screen, ScreenTarget::Index(ScreenIndex::new(2)));
+            }
+            _ => panic!("Expected Wallpaper Set command"),
+        }
+    }
+
+    // ========================================================================
+    // APP_VERSION constant test
+    // ========================================================================
+
+    #[test]
+    fn test_app_version_is_not_empty() {
+        assert!(!APP_VERSION.is_empty());
+    }
+
+    #[test]
+    fn test_app_version_format() {
+        // Version should be in semver format (X.Y.Z)
+        let parts: Vec<&str> = APP_VERSION.split('.').collect();
+        assert!(parts.len() >= 2, "Version should have at least major.minor");
     }
 }

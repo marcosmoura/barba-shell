@@ -1,6 +1,6 @@
 <!-- markdownlint-disable MD033 MD041 MD024 -->
 <p align="center">
-  <img src="app/native/icons/icon.png" alt="Stache Logo" width="128" height="128">
+  <img src="app/native/icons/icon.png" alt="Stache Logo" width="256" height="256">
 </p>
 
 <h1 align="center">Stache</h1>
@@ -9,19 +9,19 @@
   <strong>A macOS utility suite with status bar, automation, and desktop enhancements</strong>
 </p>
 
-<p align="center">
-  <a href="#features">Features</a> •
-  <a href="#installation">Installation</a> •
-  <a href="#configuration">Configuration</a> •
-  <a href="#cli-reference">CLI</a> •
-  <a href="#development">Development</a> •
-  <a href="#license">License</a>
-</p>
+\*<p align="center">
+<a href="#overview">Overview</a> •
+<a href="#features">Features</a> •
+<a href="#installation">Installation</a> •
+<a href="#configuration">Configuration</a> •
+<a href="#development">Development</a> •
+<a href="#license">License</a>
+
+</p>*
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-macOS-blue?style=flat-square" alt="Platform">
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License">
-  <img src="https://img.shields.io/badge/rust-2024-orange?style=flat-square" alt="Rust">
   <img src="https://img.shields.io/badge/tauri-2.x-purple?style=flat-square" alt="Tauri">
 </p>
 
@@ -145,13 +145,6 @@ Download the latest release from the [Releases](https://github.com/marcosmoura/s
    pnpm release
    ```
 
-3. **Install the CLI (optional):**
-
-   ```bash
-   pnpm build:cli
-   # Binary will be at target/release/stache
-   ```
-
 ---
 
 ## Configuration
@@ -200,91 +193,6 @@ A JSON Schema is provided for editor autocompletion and validation:
   },
 }
 ```
-
-### Configuration Reference
-
-<details>
-<summary><strong>Bar Configuration</strong></summary>
-
-#### Wallpapers
-
-| Option     | Type                         | Default    | Description                                            |
-| ---------- | ---------------------------- | ---------- | ------------------------------------------------------ |
-| `path`     | `string`                     | `""`       | Directory containing wallpaper images                  |
-| `list`     | `string[]`                   | `[]`       | Explicit list of wallpaper paths                       |
-| `interval` | `number`                     | `0`        | Seconds between wallpaper changes (0 = no auto-change) |
-| `mode`     | `"random"` \| `"sequential"` | `"random"` | Wallpaper selection mode                               |
-| `radius`   | `number`                     | `0`        | Corner radius in pixels                                |
-| `blur`     | `number`                     | `0`        | Gaussian blur amount in pixels                         |
-
-#### Weather
-
-| Option                 | Type     | Default | Description                                                        |
-| ---------------------- | -------- | ------- | ------------------------------------------------------------------ |
-| `visualCrossingApiKey` | `string` | `""`    | API key from [visualcrossing.com](https://www.visualcrossing.com/) |
-| `defaultLocation`      | `string` | `""`    | Fallback location when geolocation fails                           |
-
-</details>
-
----
-
-## CLI Reference
-
-Stache includes a powerful CLI for scripting and automation.
-
-### Installation
-
-The CLI binary (`stache`) communicates with the running desktop app via distributed notifications.
-
-```bash
-# Build the CLI
-cargo build --package stache --release
-```
-
-### Shell Completions
-
-```bash
-# Zsh (add to ~/.zshrc)
-eval "$(stache completions --shell zsh)"
-
-# Bash
-stache completions --shell bash > ~/.local/share/bash-completion/completions/stache
-
-# Fish
-stache completions --shell fish > ~/.config/fish/completions/stache.fish
-```
-
-### Commands
-
-#### General
-
-| Command                              | Description                          |
-| ------------------------------------ | ------------------------------------ |
-| `stache reload`                      | Reload configuration without restart |
-| `stache schema`                      | Output JSON schema to stdout         |
-| `stache completions --shell <SHELL>` | Generate shell completions           |
-
-#### Wallpaper Management
-
-```bash
-# Set specific wallpaper
-stache wallpaper set /path/to/image.jpg
-
-# Set random wallpaper
-stache wallpaper set --random
-
-# Target specific screen
-stache wallpaper set --random --screen main
-stache wallpaper set /path/to/image.jpg --screen 2
-
-# Pre-generate all wallpapers
-stache wallpaper generate-all
-
-# List available wallpapers
-stache wallpaper list
-```
-
----
 
 ## Development
 

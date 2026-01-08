@@ -1,4 +1,4 @@
-//! Configuration types for Barba Shell.
+//! Configuration types for Stache.
 //!
 //! This module provides the configuration types and loading functionality.
 //! The configuration file supports JSONC format (JSON with comments).
@@ -84,7 +84,7 @@ pub struct AudioDevicePriority {
 #[serde(default, rename_all = "camelCase")]
 pub struct ProxyAudioInputConfig {
     /// Name of the virtual input device (used if a virtual device is installed).
-    /// Default: "Barba Virtual Input"
+    /// Default: "Stache Virtual Input"
     pub name: String,
 
     /// Priority list for input device selection.
@@ -96,7 +96,7 @@ pub struct ProxyAudioInputConfig {
 impl Default for ProxyAudioInputConfig {
     fn default() -> Self {
         Self {
-            name: "Barba Virtual Input".to_string(),
+            name: "Stache Virtual Input".to_string(),
             priority: Vec::new(),
         }
     }
@@ -109,7 +109,7 @@ impl Default for ProxyAudioInputConfig {
 #[serde(default, rename_all = "camelCase")]
 pub struct ProxyAudioOutputConfig {
     /// Name of the virtual output device (used if a virtual device is installed).
-    /// Default: "Barba Virtual Output"
+    /// Default: "Stache Virtual Output"
     pub name: String,
 
     /// Audio buffer size in frames. Smaller values reduce latency but may cause artifacts.
@@ -126,7 +126,7 @@ pub struct ProxyAudioOutputConfig {
 impl Default for ProxyAudioOutputConfig {
     fn default() -> Self {
         Self {
-            name: "Barba Virtual Output".to_string(),
+            name: "Stache Virtual Output".to_string(),
             buffer_size: 256,
             priority: Vec::new(),
         }
@@ -225,7 +225,7 @@ pub struct WeatherConfig {
     /// The path can be:
     /// - Relative to the config file directory (e.g., `.env`, `secrets/.env`)
     /// - Absolute path (e.g., `/Users/username/.secrets/.env`)
-    /// - Use `~` for home directory (e.g., `~/.config/barba/.env`)
+    /// - Use `~` for home directory (e.g., `~/.config/stache/.env`)
     ///
     /// Example `.env` file:
     /// ```env
@@ -418,13 +418,13 @@ impl NoTunesConfig {
     pub const fn is_enabled(&self) -> bool { self.enabled }
 }
 
-/// Root configuration structure for Barba Shell.
+/// Root configuration structure for Stache.
 ///
 /// This structure is designed to be extended with additional sections
 /// as new features are added to the application.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
-pub struct BarbaConfig {
+pub struct StacheConfig {
     /// Bar configuration for status bar UI components.
     ///
     /// Contains settings for weather.
@@ -525,8 +525,8 @@ impl std::fmt::Display for ConfigError {
         match self {
             Self::NotFound => write!(
                 f,
-                "No configuration file found. Expected at ~/.config/barba/config.json, \
-                ~/Library/Application Support/barba/config.json, or ~/.barba.json"
+                "No configuration file found. Expected at ~/.config/stache/config.json, \
+                ~/Library/Application Support/stache/config.json, or ~/.stache.json"
             ),
             Self::IoError(err) => write!(f, "Failed to read configuration file: {err}"),
             Self::ParseError(err) => write!(f, "Failed to parse configuration file: {err}"),
@@ -556,14 +556,14 @@ impl From<serde_json::Error> for ConfigError {
 const CONFIG_FILE_NAMES: &[&str] = &["config.jsonc", "config.json"];
 
 /// Legacy configuration file names in home directory.
-const LEGACY_CONFIG_FILE_NAMES: &[&str] = &[".barba.jsonc", ".barba.json"];
+const LEGACY_CONFIG_FILE_NAMES: &[&str] = &[".stache.jsonc", ".stache.json"];
 
 /// Returns the possible configuration file paths in priority order.
 ///
 /// The function checks the following locations (both `.jsonc` and `.json` variants):
-/// 1. `~/.config/barba/config.jsonc` or `config.json`
-/// 2. `~/Library/Application Support/barba/config.jsonc` or `config.json` (macOS native)
-/// 3. `~/.barba.jsonc` or `~/.barba.json` (legacy/simple location)
+/// 1. `~/.config/stache/config.jsonc` or `config.json`
+/// 2. `~/Library/Application Support/stache/config.jsonc` or `config.json` (macOS native)
+/// 3. `~/.stache.jsonc` or `~/.stache.json` (legacy/simple location)
 ///
 /// If `$XDG_CONFIG_HOME` is set, it takes priority over `~/.config`.
 #[must_use]
@@ -572,17 +572,17 @@ pub fn config_paths() -> Vec<PathBuf> {
 
     // Check XDG_CONFIG_HOME first if explicitly set
     if let Ok(xdg_config) = std::env::var("XDG_CONFIG_HOME") {
-        let barba_dir = PathBuf::from(xdg_config).join("barba");
+        let stache_dir = PathBuf::from(xdg_config).join("stache");
         for filename in CONFIG_FILE_NAMES {
-            paths.push(barba_dir.join(filename));
+            paths.push(stache_dir.join(filename));
         }
     }
 
-    // Always check ~/.config/barba/ (common on macOS for CLI tools)
+    // Always check ~/.config/stache/ (common on macOS for CLI tools)
     if let Some(home) = dirs::home_dir() {
-        let barba_dir = home.join(".config").join("barba");
+        let stache_dir = home.join(".config").join("stache");
         for filename in CONFIG_FILE_NAMES {
-            let path = barba_dir.join(filename);
+            let path = stache_dir.join(filename);
             // Only add if not already in the list (XDG_CONFIG_HOME might be ~/.config)
             if !paths.contains(&path) {
                 paths.push(path);
@@ -590,18 +590,18 @@ pub fn config_paths() -> Vec<PathBuf> {
         }
     }
 
-    // macOS native: ~/Library/Application Support/barba/
+    // macOS native: ~/Library/Application Support/stache/
     if let Some(config_dir) = dirs::config_dir() {
-        let barba_dir = config_dir.join("barba");
+        let stache_dir = config_dir.join("stache");
         for filename in CONFIG_FILE_NAMES {
-            let path = barba_dir.join(filename);
+            let path = stache_dir.join(filename);
             if !paths.contains(&path) {
                 paths.push(path);
             }
         }
     }
 
-    // Legacy: $HOME/.barba.jsonc or $HOME/.barba.json
+    // Legacy: $HOME/.stache.jsonc or $HOME/.stache.json
     if let Some(home) = dirs::home_dir() {
         for filename in LEGACY_CONFIG_FILE_NAMES {
             paths.push(home.join(filename));
@@ -619,7 +619,7 @@ pub fn config_paths() -> Vec<PathBuf> {
 ///
 /// # Returns
 ///
-/// Returns `Ok((BarbaConfig, PathBuf))` if a configuration file was found and parsed successfully.
+/// Returns `Ok((StacheConfig, PathBuf))` if a configuration file was found and parsed successfully.
 /// Returns `Err(ConfigError::NotFound)` if no configuration file exists.
 /// Returns other `Err` variants for I/O or parsing errors.
 ///
@@ -628,13 +628,13 @@ pub fn config_paths() -> Vec<PathBuf> {
 /// Returns `ConfigError::NotFound` if no configuration file exists in any of the expected locations.
 /// Returns `ConfigError::IoError` if a configuration file exists but could not be read.
 /// Returns `ConfigError::ParseError` if the configuration file contains invalid JSON.
-pub fn load_config() -> Result<(BarbaConfig, PathBuf), ConfigError> {
+pub fn load_config() -> Result<(StacheConfig, PathBuf), ConfigError> {
     for path in config_paths() {
         if path.exists() {
             let file = fs::File::open(&path)?;
             // Strip comments from JSONC before parsing
             let reader = json_comments::StripComments::new(file);
-            let config: BarbaConfig = serde_json::from_reader(reader)?;
+            let config: StacheConfig = serde_json::from_reader(reader)?;
             return Ok((config, path));
         }
     }
@@ -648,7 +648,7 @@ mod tests {
 
     #[test]
     fn test_default_config_is_empty() {
-        let config = BarbaConfig::default();
+        let config = StacheConfig::default();
         assert!(config.keybindings.is_empty());
     }
 
@@ -656,15 +656,15 @@ mod tests {
     fn test_config_deserializes_single_command() {
         let json = r#"{
             "keybindings": {
-                "Ctrl+Shift+S": "barba reload"
+                "Ctrl+Shift+S": "stache reload"
             }
         }"#;
 
-        let config: BarbaConfig = serde_json::from_str(json).unwrap();
+        let config: StacheConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.keybindings.len(), 1);
 
         let commands = config.keybindings.get("Ctrl+Shift+S").unwrap();
-        assert_eq!(commands.get_commands(), vec!["barba reload"]);
+        assert_eq!(commands.get_commands(), vec!["stache reload"]);
     }
 
     #[test]
@@ -672,17 +672,20 @@ mod tests {
         let json = r#"{
             "keybindings": {
                 "Command+Control+R": [
-                    "barba reload",
+                    "stache reload",
                     "open -a Terminal"
                 ]
             }
         }"#;
 
-        let config: BarbaConfig = serde_json::from_str(json).unwrap();
+        let config: StacheConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.keybindings.len(), 1);
 
         let commands = config.keybindings.get("Command+Control+R").unwrap();
-        assert_eq!(commands.get_commands(), vec!["barba reload", "open -a Terminal"]);
+        assert_eq!(commands.get_commands(), vec![
+            "stache reload",
+            "open -a Terminal"
+        ]);
     }
 
     #[test]

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ###############################################################################
-# Barba – Release Automation
+# Stache – Release Automation
 #
 # Run the entire release flow with one command from the repo root:
 #
@@ -16,7 +16,7 @@ set -euo pipefail
 # 5. The resulting .app bundle is copied into /Applications (sudo only if needed).
 ###############################################################################
 
-APP_NAME="Barba"
+APP_NAME="Stache"
 APPLICATIONS_DIR="/Applications"
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TAURI_DIR="${PROJECT_ROOT}/app/native"
@@ -26,7 +26,7 @@ BUNDLE_NAME="${APP_NAME}.app"
 BUNDLE_PATH=""
 INSTALL_PATH="${APPLICATIONS_DIR}/${APP_NAME}.app"
 SUDO_REFRESHED=0
-SIGNING_IDENTITY="Barba App"
+SIGNING_IDENTITY="Stache App"
 
 log() {
 	echo ''
@@ -137,7 +137,7 @@ ensure_signing_certificate() {
 	local key_file="${temp_dir}/key.pem"
 	local cert_file="${temp_dir}/cert.pem"
 	local p12_file="${temp_dir}/cert.p12"
-	local password="barba-temp-pwd"
+	local password="stache-temp-pwd"
 
 	# Create OpenSSL config for code signing
 	cat >"${temp_dir}/cert.conf" <<EOF

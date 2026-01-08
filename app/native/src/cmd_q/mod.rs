@@ -1,4 +1,4 @@
-//! Hold-to-Quit Module for Barba Shell.
+//! Hold-to-Quit Module for Stache.
 //!
 //! This module provides a "hold ⌘Q to quit" feature that requires users to hold
 //! the ⌘Q key combination for 1.5 seconds before quitting the frontmost application.
@@ -185,14 +185,16 @@ fn start_event_tap() {
         );
 
         if tap.is_null() {
-            eprintln!("barba: cmd_q: failed to create event tap - check accessibility permissions");
+            eprintln!(
+                "stache: cmd_q: failed to create event tap - check accessibility permissions"
+            );
             return;
         }
 
         // Wrap the tap in a CFMachPort and create a run loop source
         let tap_port = CFMachPort::wrap_under_create_rule(tap.cast());
         let Ok(run_loop_source) = tap_port.create_runloop_source(0) else {
-            eprintln!("barba: cmd_q: failed to create run loop source");
+            eprintln!("stache: cmd_q: failed to create run loop source");
             return;
         };
 
@@ -330,21 +332,21 @@ fn get_frontmost_app_name() -> Option<String> {
 fn kill_frontmost_app() {
     unsafe {
         let Some(workspace_class) = Class::get("NSWorkspace") else {
-            eprintln!("barba: cmd_q: failed to get NSWorkspace class");
+            eprintln!("stache: cmd_q: failed to get NSWorkspace class");
             return;
         };
 
         let workspace: *mut Object = msg_send![workspace_class, sharedWorkspace];
 
         if workspace.is_null() {
-            eprintln!("barba: cmd_q: failed to get shared workspace");
+            eprintln!("stache: cmd_q: failed to get shared workspace");
             return;
         }
 
         let frontmost_app: *mut Object = msg_send![workspace, frontmostApplication];
 
         if frontmost_app.is_null() {
-            eprintln!("barba: cmd_q: no frontmost application");
+            eprintln!("stache: cmd_q: no frontmost application");
             return;
         }
 
@@ -365,14 +367,14 @@ fn kill_frontmost_app() {
         let terminated: BOOL = msg_send![frontmost_app, terminate];
 
         if terminated == YES {
-            println!("barba: cmd_q: quit application '{app_name}'");
+            println!("stache: cmd_q: quit application '{app_name}'");
         } else {
             // If terminate fails, try forceTerminate
             let force_terminated: BOOL = msg_send![frontmost_app, forceTerminate];
             if force_terminated == YES {
-                println!("barba: cmd_q: force quit application '{app_name}'");
+                println!("stache: cmd_q: force quit application '{app_name}'");
             } else {
-                eprintln!("barba: cmd_q: failed to quit application '{app_name}'");
+                eprintln!("stache: cmd_q: failed to quit application '{app_name}'");
             }
         }
     }
@@ -391,7 +393,7 @@ fn show_hold_to_quit_alert() {
     }
 
     // Fallback: print to console
-    println!("barba: {message}");
+    println!("stache: {message}");
 }
 
 #[cfg(test)]

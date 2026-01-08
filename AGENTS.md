@@ -1,10 +1,10 @@
-# AGENTS.md - AI Agent Instructions for Barba Shell
+# AGENTS.md - AI Agent Instructions for Stache
 
-This document provides instructions for AI coding agents (Claude, GPT, Copilot, Cursor, etc.) working on the Barba Shell codebase.
+This document provides instructions for AI coding agents (Claude, GPT, Copilot, Cursor, etc.) working on the Stache codebase.
 
 ## Project Summary
 
-**Barba Shell** is a macOS-only Tauri 2.x desktop application that provides:
+**Stache** is a macOS-only Tauri 2.x desktop application that provides:
 
 - A custom status bar with Hyprspace tiling window manager integration
 - Dynamic wallpaper management with effects (blur, rounded corners)
@@ -18,18 +18,18 @@ This document provides instructions for AI coding agents (Claude, GPT, Copilot, 
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
-│                    Barba Shell Binary                        │
+│                       Stache Binary                          │
 │  ┌─────────────────────┐    ┌─────────────────────────────┐ │
 │  │   CLI Mode          │    │      Desktop App Mode       │ │
 │  │   (with args)       │    │      (no args)              │ │
 │  │                     │    │                             │ │
-│  │  barba reload       │───►│  ┌─────────────────────┐   │ │
-│  │  barba wallpaper    │    │  │  IPC Listener       │   │ │
-│  │  barba audio        │    │  │  (NSDistributed     │   │ │
-│  │  barba event        │    │  │   NotificationCenter)│   │ │
+│  │  stache reload      │───►│  ┌─────────────────────┐   │ │
+│  │  stache wallpaper   │    │  │  IPC Listener       │   │ │
+│  │  stache audio       │    │  │  (NSDistributed     │   │ │
+│  │  stache event       │    │  │   NotificationCenter)│   │ │
 │  └─────────────────────┘    │  └──────────┬──────────┘   │ │
 │                              │             │              │ │
-│                              │  ┌──────────▼──────────┐   │ │
+│                              │  ┌──────────▼──────────┘   │ │
 │                              │  │   Tauri Backend     │   │ │
 │                              │  │   (Rust)            │   │ │
 │                              │  └──────────┬──────────┘   │ │
@@ -45,7 +45,7 @@ This document provides instructions for AI coding agents (Claude, GPT, Copilot, 
 ## Directory Structure
 
 ```text
-barba-shell/
+stache/
 ├── app/
 │   ├── native/                    # Rust backend
 │   │   ├── src/
@@ -116,7 +116,7 @@ barba-shell/
 │   └── sample.env                 # Example .env file
 ├── scripts/
 │   └── generate-schema.sh         # JSON Schema generator
-├── barba.schema.json              # Config JSON Schema
+├── stache.schema.json             # Config JSON Schema
 ├── Cargo.toml                     # Workspace root
 ├── package.json
 └── vite.config.ts
@@ -126,20 +126,20 @@ barba-shell/
 
 ### 1. Event Communication
 
-Events follow the naming convention: `barba://<module>/<event-name>`
+Events follow the naming convention: `stache://<module>/<event-name>`
 
 **Rust (events.rs):**
 
 ```rust
 pub mod media {
-    pub const PLAYBACK_CHANGED: &str = "barba://media/playback-changed";
+    pub const PLAYBACK_CHANGED: &str = "stache://media/playback-changed";
 }
 ```
 
 **TypeScript (tauri-events.ts):**
 
 ```typescript
-export const MEDIA_PLAYBACK_CHANGED = 'barba://media/playback-changed';
+export const MEDIA_PLAYBACK_CHANGED = 'stache://media/playback-changed';
 ```
 
 **Emitting (Rust):**
@@ -259,7 +259,7 @@ Use the centralized path utility for user-provided paths:
 use crate::utils::path::{expand, expand_and_resolve};
 
 // Tilde expansion only
-let home_path = expand("~/.config/barba");
+let home_path = expand("~/.config/stache");
 
 // Tilde expansion + relative path resolution
 let env_path = expand_and_resolve(".env", config_dir);
@@ -320,8 +320,8 @@ Tests use:
 ### Rust Tests
 
 ```bash
-cargo test --package barba    # Run all Rust tests
-cargo test --package barba -- test_name  # Run specific test
+cargo test --package stache    # Run all Rust tests
+cargo test --package stache -- test_name  # Run specific test
 ```
 
 Tests are inline with `#[cfg(test)]` modules.

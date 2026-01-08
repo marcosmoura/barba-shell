@@ -1,9 +1,9 @@
-//! Hotkey Daemon for Barba Shell.
+//! Hotkey Daemon for Stache.
 //!
 //! This module provides a background daemon that listens for global keyboard shortcuts
 //! and executes configured commands when those shortcuts are activated.
 //!
-//! The daemon reads its configuration from the global Barba configuration file
+//! The daemon reads its configuration from the global Stache configuration file
 //! and uses Tauri's global-shortcut plugin to register system-wide hotkeys.
 
 use std::collections::HashMap;
@@ -53,7 +53,7 @@ pub fn create_hotkey_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
                 valid_shortcuts.push(shortcut);
             }
             Err(err) => {
-                eprintln!("barba: warning: invalid shortcut '{shortcut_key}': {err}");
+                eprintln!("stache: warning: invalid shortcut '{shortcut_key}': {err}");
             }
         }
     }
@@ -69,7 +69,7 @@ pub fn create_hotkey_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
     let builder = match Builder::<R>::new().with_shortcuts(valid_shortcuts) {
         Ok(b) => b,
         Err(err) => {
-            eprintln!("barba: warning: failed to register shortcuts: {err}");
+            eprintln!("stache: warning: failed to register shortcuts: {err}");
             return Builder::<R>::new().build();
         }
     };
@@ -121,7 +121,7 @@ fn normalize_shortcut(shortcut: &str) -> String {
 
 /// Executes all commands associated with a shortcut sequentially.
 ///
-/// This function handles both Barba CLI commands (starting with "barba")
+/// This function handles both Stache CLI commands (starting with "stache")
 /// and external shell commands. Commands are executed in order, one after
 /// another, never in parallel.
 ///
@@ -165,7 +165,7 @@ fn execute_single_command(command: &str, description: &str, index: usize, total:
     // Parse the command into parts
     let parts: Vec<&str> = command.split_whitespace().collect();
     if parts.is_empty() {
-        eprintln!("barba: warning: empty command for shortcut");
+        eprintln!("stache: warning: empty command for shortcut");
         return false;
     }
 
@@ -176,7 +176,7 @@ fn execute_single_command(command: &str, description: &str, index: usize, total:
     let binary_path = match resolve_binary(binary) {
         Ok(path) => path,
         Err(err) => {
-            eprintln!("barba: warning: failed to resolve binary '{binary}': {err}");
+            eprintln!("stache: warning: failed to resolve binary '{binary}': {err}");
             return false;
         }
     };
@@ -188,21 +188,21 @@ fn execute_single_command(command: &str, description: &str, index: usize, total:
                 Ok(status) => {
                     if !status.success() {
                         eprintln!(
-                            "barba: command '{description}' (step {index}/{total}) exited with status: {status}"
+                            "stache: command '{description}' (step {index}/{total}) exited with status: {status}"
                         );
                         return false;
                     }
                     true
                 }
                 Err(err) => {
-                    eprintln!("barba: failed to wait for command '{description}': {err}");
+                    eprintln!("stache: failed to wait for command '{description}': {err}");
                     false
                 }
             }
         }
         Err(err) => {
             eprintln!(
-                "barba: failed to execute command '{}': {err}",
+                "stache: failed to execute command '{}': {err}",
                 binary_path.display()
             );
             false

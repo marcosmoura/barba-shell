@@ -1,12 +1,12 @@
 <!-- markdownlint-disable MD033 MD041 MD024 -->
 <p align="center">
-  <img src="packages/desktop/tauri/icons/icon.png" alt="Barba Shell Logo" width="128" height="128">
+  <img src="app/native/icons/icon.png" alt="Stache Logo" width="128" height="128">
 </p>
 
-<h1 align="center">Barba Shell</h1>
+<h1 align="center">Stache</h1>
 
 <p align="center">
-  <strong>A minimal, fast, and customizable macOS desktop environment</strong>
+  <strong>A macOS utility suite with status bar, automation, and desktop enhancements</strong>
 </p>
 
 <p align="center">
@@ -29,14 +29,20 @@
 
 ## Overview
 
-Barba Shell is a **macOS-only** Tauri 2.x desktop application that provides a complete desktop environment experience with:
+Stache is a **macOS-only** Tauri 2.x desktop application that provides a complete desktop enhancement suite with:
 
-- 📊 **Status Bar** — Customizable menubar with system information widgets
-- ⌨️ **Global Keybindings** — Configurable keyboard shortcuts for all actions
-- 🎨 **Dynamic Wallpapers** — Automatic wallpaper rotation with blur and rounded corners
-- 🎵 **Media Controls** — Now playing widget with playback controls
+- 📊 **Status Bar** — Customizable menubar with system information widgets (workspaces, media, weather, CPU, battery, clock)
+- ⌨️ **Global Keybindings** — Configurable keyboard shortcuts for any action or shell command
+- 🎨 **Dynamic Wallpapers** — Automatic wallpaper rotation with blur and rounded corners effects
+- 🎵 **Media Controls** — Now playing widget with artwork, playback controls, and track info
+- 🔊 **Audio Device Management** — Automatic audio device switching based on configurable priority rules
+- 📍 **MenuAnywhere** — Summon any app's menu bar at your cursor position with a keyboard + mouse combo
+- 🎵 **noTunes** — Prevent Apple Music from auto-launching and optionally open your preferred music app
+- ⏹️ **Hold-to-Quit** — Require holding Cmd+Q to quit apps, preventing accidental closes
+- 😴 **Keep Awake** — Prevent system sleep with a single click from the status bar
+- 🖥️ **Tiling WM Integration** — Built-in support for Hyprspace/yabai/aerospace workspace events
 
-Built with **Rust** for the backend and **React 19** for the frontend, Barba Shell combines native performance with a modern, reactive UI.
+Built with **Rust** for the backend and **React 19** for the frontend, Stache combines native performance with a modern, reactive UI.
 
 ---
 
@@ -74,6 +80,38 @@ Define custom keyboard shortcuts to:
 - Per-screen wallpaper support
 - Pre-generation for instant switching
 
+### 🔊 Audio Device Management
+
+- Automatic switching when devices connect/disconnect
+- Priority-based device selection (e.g., prefer AirPods over built-in speakers)
+- Separate input/output device priorities
+- Regex and pattern matching for device names
+- Device dependency rules (e.g., use speakers only when audio interface is connected)
+
+### 📍 MenuAnywhere
+
+Summon any application's menu bar right at your cursor:
+
+- Configurable modifier keys (Control, Option, Command, Shift)
+- Right-click or middle-click trigger
+- Works with any macOS application
+
+### 🎵 noTunes
+
+Prevent Apple Music from hijacking your media keys:
+
+- Blocks Apple Music/iTunes from auto-launching
+- Optionally launches your preferred music app (Spotify, Tidal) instead
+- Works with Bluetooth headphone connections and media key presses
+
+### ⏹️ Hold-to-Quit
+
+Prevent accidental app closures:
+
+- Requires holding Cmd+Q instead of just pressing it
+- Visual feedback showing hold progress
+- Per-app customization (coming soon)
+
 ---
 
 ## Installation
@@ -84,7 +122,7 @@ Define custom keyboard shortcuts to:
 
 ### Download
 
-Download the latest release from the [Releases](https://github.com/marcosmoura/barba-shell/releases) page.
+Download the latest release from the [Releases](https://github.com/marcosmoura/stache/releases) page.
 
 ### Build from Source
 
@@ -111,16 +149,16 @@ Download the latest release from the [Releases](https://github.com/marcosmoura/b
 
    ```bash
    pnpm build:cli
-   # Binary will be at target/release/barba
+   # Binary will be at target/release/stache
    ```
 
 ---
 
 ## Configuration
 
-Barba Shell uses a JSONC configuration file located at:
+Stache uses a JSONC configuration file located at:
 
-`~/.config/barba/config.json`
+`~/.config/stache/config.json`
 
 > **Tip:** JSONC supports comments! Use `//` for single-line and `/* */` for multi-line comments.
 
@@ -130,7 +168,7 @@ A JSON Schema is provided for editor autocompletion and validation:
 
 ```jsonc
 {
-  "$schema": "https://raw.githubusercontent.com/marcosmoura/barba-shell/main/barba.schema.json",
+  "$schema": "https://raw.githubusercontent.com/marcosmoura/stache/main/stache.schema.json",
   // Your configuration here...
 }
 ```
@@ -139,7 +177,7 @@ A JSON Schema is provided for editor autocompletion and validation:
 
 ```jsonc
 {
-  "$schema": "https://raw.githubusercontent.com/marcosmoura/barba-shell/main/barba.schema.json",
+  "$schema": "https://raw.githubusercontent.com/marcosmoura/stache/main/stache.schema.json",
 
   // Status bar configuration
   "bar": {
@@ -158,7 +196,7 @@ A JSON Schema is provided for editor autocompletion and validation:
 
   // Global keybindings
   "keybindings": {
-    "Command+Control+R": "barba reload",
+    "Command+Control+R": "stache reload",
   },
 }
 ```
@@ -192,58 +230,58 @@ A JSON Schema is provided for editor autocompletion and validation:
 
 ## CLI Reference
 
-Barba Shell includes a powerful CLI for scripting and automation.
+Stache includes a powerful CLI for scripting and automation.
 
 ### Installation
 
-The CLI binary (`barba`) communicates with the running desktop app via Unix socket.
+The CLI binary (`stache`) communicates with the running desktop app via distributed notifications.
 
 ```bash
 # Build the CLI
-cargo install --path packages/cli
+cargo build --package stache --release
 ```
 
 ### Shell Completions
 
 ```bash
 # Zsh (add to ~/.zshrc)
-eval "$(barba completions --shell zsh)"
+eval "$(stache completions --shell zsh)"
 
 # Bash
-barba completions --shell bash > ~/.local/share/bash-completion/completions/barba
+stache completions --shell bash > ~/.local/share/bash-completion/completions/stache
 
 # Fish
-barba completions --shell fish > ~/.config/fish/completions/barba.fish
+stache completions --shell fish > ~/.config/fish/completions/stache.fish
 ```
 
 ### Commands
 
 #### General
 
-| Command                             | Description                          |
-| ----------------------------------- | ------------------------------------ |
-| `barba reload`                      | Reload configuration without restart |
-| `barba schema`                      | Output JSON schema to stdout         |
-| `barba completions --shell <SHELL>` | Generate shell completions           |
+| Command                              | Description                          |
+| ------------------------------------ | ------------------------------------ |
+| `stache reload`                      | Reload configuration without restart |
+| `stache schema`                      | Output JSON schema to stdout         |
+| `stache completions --shell <SHELL>` | Generate shell completions           |
 
 #### Wallpaper Management
 
 ```bash
 # Set specific wallpaper
-barba wallpaper set /path/to/image.jpg
+stache wallpaper set /path/to/image.jpg
 
 # Set random wallpaper
-barba wallpaper set --random
+stache wallpaper set --random
 
 # Target specific screen
-barba wallpaper set --random --screen main
-barba wallpaper set /path/to/image.jpg --screen 2
+stache wallpaper set --random --screen main
+stache wallpaper set /path/to/image.jpg --screen 2
 
 # Pre-generate all wallpapers
-barba wallpaper generate-all
+stache wallpaper generate-all
 
 # List available wallpapers
-barba wallpaper list
+stache wallpaper list
 ```
 
 ---
@@ -265,33 +303,30 @@ barba wallpaper list
 ### Project Structure
 
 ```text
-barba-shell/
-├── packages/
-│   ├── cli/              # Rust CLI application
+stache/
+├── app/
+│   ├── native/               # Rust backend (Tauri)
 │   │   └── src/
-│   │       ├── main.rs       # Entry point
-│   │       ├── commands.rs   # Clap command definitions
-│   │       └── ipc.rs        # Unix socket client
+│   │       ├── main.rs           # Entry point (CLI + desktop)
+│   │       ├── lib.rs            # Tauri app initialization
+│   │       ├── cli/              # CLI commands
+│   │       ├── config/           # Configuration types
+│   │       ├── bar/              # Status bar components
+│   │       ├── wallpaper/        # Wallpaper management
+│   │       ├── audio/            # Audio device management
+│   │       └── utils/            # Utilities (IPC, paths, etc.)
 │   │
-│   ├── desktop/          # Desktop application
-│   │   ├── tauri/            # Rust backend
-│   │   │   └── src/
-│   │   │       ├── lib.rs        # Tauri entry, command registration
-│   │   │       ├── ipc.rs        # IPC server for CLI
-│   │   │       └── bar/          # Status bar components
-│   │   └── ui/               # React frontend
-│   │       ├── main.tsx          # App entry
-│   │       ├── bar/              # Bar UI components
-│   │       ├── hooks/            # React hooks
-│   │       └── design-system/    # Styling tokens
-│   │
-│   └── shared/           # Shared Rust types
-│       └── src/
-│           ├── config.rs     # Configuration types
+│   └── ui/                   # React frontend
+│       ├── main.tsx              # App entry
+│       ├── renderer/             # Window renderers (bar, widgets)
+│       ├── components/           # Shared UI components
+│       ├── hooks/                # React hooks
+│       ├── stores/               # Zustand stores
+│       └── design-system/        # Styling tokens
 │
-├── scripts/              # Build & release scripts
-├── barba.schema.json     # JSON Schema for config
-└── Cargo.toml            # Workspace root
+├── scripts/                  # Build & release scripts
+├── stache.schema.json        # JSON Schema for config
+└── Cargo.toml                # Workspace root
 ```
 
 ### Available Scripts
@@ -311,10 +346,10 @@ barba-shell/
 ### Architecture
 
 ```text
-┌─────────────┐     Unix Socket     ┌──────────────────────────────────────┐
-│   CLI       │ ──────────────────► │         Desktop App                  │
-│  (barba)    │                     │  ┌─────────────┐   ┌───────────────┐ │
-└─────────────┘                     │  │ IPC Server  │──►│ Tauri Events  │ │
+┌─────────────┐  NSDistributed      ┌──────────────────────────────────────┐
+│   CLI       │  Notification       │         Desktop App                  │
+│  (stache)   │ ──────────────────► │  ┌─────────────┐   ┌───────────────┐ │
+└─────────────┘                     │  │IPC Listener │──►│ Tauri Events  │ │
                                     │  └─────────────┘   └───────┬───────┘ │
                                     │                            │         │
                                     │  ┌─────────────────────────▼───────┐ │

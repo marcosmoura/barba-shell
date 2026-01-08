@@ -23,10 +23,10 @@ use std::path::{Path, PathBuf};
 /// # Examples
 ///
 /// ```ignore
-/// use barba_lib::utils::path::expand;
+/// use stache_lib::utils::path::expand;
 ///
 /// // Tilde expansion
-/// let home_config = expand("~/.config/barba");
+/// let home_config = expand("~/.config/stache");
 /// assert!(!home_config.to_string_lossy().starts_with("~"));
 ///
 /// // Absolute paths unchanged
@@ -70,7 +70,7 @@ pub fn expand(path: &str) -> PathBuf {
 ///
 /// ```ignore
 /// use std::path::Path;
-/// use barba_lib::utils::path::expand_and_resolve;
+/// use stache_lib::utils::path::expand_and_resolve;
 ///
 /// let base = Path::new("/config/dir");
 ///

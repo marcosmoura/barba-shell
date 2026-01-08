@@ -1,4 +1,4 @@
-//! noTunes Module for Barba Shell.
+//! noTunes Module for Stache.
 //!
 //! This module prevents iTunes or Apple Music from launching automatically on macOS.
 //! When media keys are pressed or Bluetooth headphones reconnect, macOS may try to
@@ -83,7 +83,7 @@ unsafe fn terminate_music_apps() {
         if let Some(bundle_id_str) = unsafe { get_app_bundle_id(app) }
             && is_music_app(&bundle_id_str)
         {
-            eprintln!("barba: notunes: terminating running instance of {bundle_id_str}");
+            eprintln!("stache: notunes: terminating running instance of {bundle_id_str}");
             let _: () = msg_send![app, forceTerminate];
         }
     }
@@ -163,7 +163,7 @@ extern "C" fn handle_app_launch(_self: &Object, _cmd: Sel, notification: *mut Ob
         if let Some(bundle_id_str) = get_app_bundle_id(app)
             && is_music_app(&bundle_id_str)
         {
-            eprintln!("barba: notunes: blocking launch of {bundle_id_str}");
+            eprintln!("stache: notunes: blocking launch of {bundle_id_str}");
 
             // Force terminate the app
             let _: () = msg_send![app, forceTerminate];
@@ -188,7 +188,7 @@ fn launch_target_app() {
     // Check if the app is installed
     let path = std::path::Path::new(app_path);
     if !path.exists() {
-        eprintln!("barba: notunes: {display_name} not found at {app_path}");
+        eprintln!("stache: notunes: {display_name} not found at {app_path}");
         return;
     }
 
@@ -214,8 +214,8 @@ fn launch_target_app() {
 
     // Launch the app using /usr/bin/open
     match std::process::Command::new("/usr/bin/open").arg(app_path).spawn() {
-        Ok(_) => eprintln!("barba: notunes: launched {display_name} as replacement"),
-        Err(e) => eprintln!("barba: notunes: failed to launch {display_name}: {e}"),
+        Ok(_) => eprintln!("stache: notunes: launched {display_name} as replacement"),
+        Err(e) => eprintln!("stache: notunes: failed to launch {display_name}: {e}"),
     }
 }
 

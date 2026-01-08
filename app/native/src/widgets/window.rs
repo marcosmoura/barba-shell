@@ -121,7 +121,7 @@ fn start_mouse_event_tap() {
 
         if tap.is_null() {
             eprintln!(
-                "barba: widgets: failed to create mouse event tap - check accessibility permissions"
+                "stache: widgets: failed to create mouse event tap - check accessibility permissions"
             );
             return;
         }
@@ -129,7 +129,7 @@ fn start_mouse_event_tap() {
         // Wrap the tap in a CFMachPort and create a run loop source
         let tap_port = CFMachPort::wrap_under_create_rule(tap.cast());
         let Ok(run_loop_source) = tap_port.create_runloop_source(0) else {
-            eprintln!("barba: widgets: failed to create run loop source");
+            eprintln!("stache: widgets: failed to create run loop source");
             return;
         };
 

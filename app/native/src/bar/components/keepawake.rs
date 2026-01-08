@@ -12,12 +12,10 @@ use keepawake::{Builder, KeepAwake};
 use serde::Serialize;
 use tauri::{Emitter, Manager};
 
-use crate::events;
 use crate::utils::thread::spawn_named_thread;
+use crate::{constants, events};
 
-const APP_NAME: &str = "Barba";
-const APP_REVERSE_DOMAIN: &str = "io.github.barba";
-const KEEP_AWAKE_REASON: &str = "Barba requested system wake lock";
+const KEEP_AWAKE_REASON: &str = "Stache requested system wake lock";
 
 #[derive(Debug, Serialize, Clone)]
 struct KeepAwakeChangedPayload {
@@ -56,8 +54,8 @@ impl KeepAwakeController {
             .idle(true)
             .sleep(true)
             .reason(KEEP_AWAKE_REASON)
-            .app_name(APP_NAME)
-            .app_reverse_domain(APP_REVERSE_DOMAIN)
+            .app_name(constants::APP_NAME)
+            .app_reverse_domain(constants::APP_BUNDLE_ID)
             .create()
             .map_err(|err| err.to_string())
     }
@@ -264,17 +262,17 @@ mod tests {
 
     #[test]
     fn test_app_name_constant() {
-        assert_eq!(APP_NAME, "Barba");
+        assert_eq!(constants::APP_NAME, "Stache");
     }
 
     #[test]
     fn test_app_reverse_domain_constant() {
-        assert_eq!(APP_REVERSE_DOMAIN, "io.github.barba");
+        assert_eq!(constants::APP_BUNDLE_ID, "com.marcosmoura.stache");
     }
 
     #[test]
     fn test_keep_awake_reason_constant() {
-        assert_eq!(KEEP_AWAKE_REASON, "Barba requested system wake lock");
+        assert_eq!(KEEP_AWAKE_REASON, "Stache requested system wake lock");
     }
 
     #[test]

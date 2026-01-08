@@ -6,7 +6,7 @@
 use tauri::{AppHandle, Emitter, Runtime};
 
 use crate::events;
-use crate::utils::ipc::{self, BarbaNotification};
+use crate::utils::ipc::{self, StacheNotification};
 
 /// Initializes the IPC listener for CLI notifications.
 ///
@@ -17,7 +17,7 @@ use crate::utils::ipc::{self, BarbaNotification};
 ///
 /// * `app_handle` - The Tauri app handle used to emit events and manage restart.
 pub fn init<R: Runtime>(app_handle: AppHandle<R>) {
-    // Register handler for Barba notifications
+    // Register handler for Stache notifications
     ipc::register_notification_handler(move |notification| {
         handle_notification(&app_handle, notification);
     });
@@ -26,33 +26,33 @@ pub fn init<R: Runtime>(app_handle: AppHandle<R>) {
     ipc::start_notification_listener();
 }
 
-/// Handles incoming Barba notifications.
-fn handle_notification<R: Runtime>(app_handle: &AppHandle<R>, notification: BarbaNotification) {
+/// Handles incoming Stache notifications.
+fn handle_notification<R: Runtime>(app_handle: &AppHandle<R>, notification: StacheNotification) {
     match notification {
-        BarbaNotification::WindowFocusChanged => {
+        StacheNotification::WindowFocusChanged => {
             // Emit event to all windows
             if let Err(err) = app_handle.emit(events::spaces::WINDOW_FOCUS_CHANGED, ()) {
-                eprintln!("barba: failed to emit window-focus-changed event: {err}");
+                eprintln!("stache: failed to emit window-focus-changed event: {err}");
             }
         }
 
-        BarbaNotification::WorkspaceChanged(workspace) => {
+        StacheNotification::WorkspaceChanged(workspace) => {
             // Emit event with workspace name
             if let Err(err) = app_handle.emit(events::spaces::WORKSPACE_CHANGED, &workspace) {
-                eprintln!("barba: failed to emit workspace-changed event: {err}");
+                eprintln!("stache: failed to emit workspace-changed event: {err}");
             }
         }
 
-        BarbaNotification::Reload => {
+        StacheNotification::Reload => {
             // Emit reload event to frontend so it can refresh/cleanup
             if let Err(err) = app_handle.emit(events::app::RELOAD, ()) {
-                eprintln!("barba: failed to emit reload event: {err}");
+                eprintln!("stache: failed to emit reload event: {err}");
             }
 
             // In debug mode, just log. In release mode, restart the app.
             #[cfg(debug_assertions)]
             {
-                eprintln!("barba: reload requested via CLI. Restart the app to apply changes.");
+                eprintln!("stache: reload requested via CLI. Restart the app to apply changes.");
             }
 
             #[cfg(not(debug_assertions))]
@@ -71,11 +71,11 @@ mod tests {
     fn test_event_names() {
         assert_eq!(
             events::spaces::WINDOW_FOCUS_CHANGED,
-            "barba://spaces/window-focus-changed"
+            "stache://spaces/window-focus-changed"
         );
         assert_eq!(
             events::spaces::WORKSPACE_CHANGED,
-            "barba://spaces/workspace-changed"
+            "stache://spaces/workspace-changed"
         );
     }
 }

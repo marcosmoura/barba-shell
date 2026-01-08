@@ -42,7 +42,7 @@ pub fn parse_env_file(path: &Path) -> HashMap<String, String> {
         Err(err) => {
             if path.exists() {
                 eprintln!(
-                    "barba: warning: failed to read env file {}: {err}",
+                    "stache: warning: failed to read env file {}: {err}",
                     path.display()
                 );
             }

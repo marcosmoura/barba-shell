@@ -8,17 +8,17 @@ use std::str::FromStr;
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::{Generator, Shell, generate};
 
-use crate::error::BarbaError;
-use crate::utils::ipc::{self, BarbaNotification};
+use crate::error::StacheError;
+use crate::utils::ipc::{self, StacheNotification};
 use crate::wallpaper::{self, WallpaperAction, WallpaperManagerError};
 use crate::{audio, cache, config, schema};
 
 /// Application version from Cargo.toml.
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Barba Shell CLI - Command-line interface for Barba Shell.
+/// Stache CLI - Command-line interface for Stache.
 #[derive(Parser, Debug)]
-#[command(name = "barba")]
+#[command(name = "stache")]
 #[command(author, version = APP_VERSION, about, long_about = None)]
 #[command(propagate_version = true)]
 pub struct Cli {
@@ -30,9 +30,9 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 #[command(next_display_order = None)]
 pub enum Commands {
-    /// Send events to the running Barba desktop app.
+    /// Send events to the running Stache desktop app.
     ///
-    /// These commands notify the running Barba instance about external changes
+    /// These commands notify the running Stache instance about external changes
     /// detected by your automation tools (e.g., yabai, aerospace, skhd).
     #[command(subcommand)]
     Event(EventCommands),
@@ -53,16 +53,16 @@ pub enum Commands {
     #[command(subcommand)]
     Audio(AudioCommands),
 
-    /// Reload Barba configuration.
+    /// Reload Stache configuration.
     ///
     /// Reloads the configuration file and applies changes without restarting
     /// the application.
     Reload,
 
-    /// Output Barba configuration JSON Schema.
+    /// Output Stache configuration JSON Schema.
     ///
     /// Outputs a JSON Schema to stdout that describes the structure of the
-    /// Barba configuration file. Can be redirected to a file for use with
+    /// Stache configuration file. Can be redirected to a file for use with
     /// editors that support JSON Schema validation.
     Schema,
 
@@ -72,9 +72,9 @@ pub enum Commands {
     /// Can be used with eval or redirected to a file.
     ///
     /// Usage:
-    ///   eval "$(barba completions --shell zsh)"
-    ///   barba completions --shell bash > ~/.local/share/bash-completion/completions/barba
-    ///   barba completions --shell fish > ~/.config/fish/completions/barba.fish
+    ///   eval "$(stache completions --shell zsh)"
+    ///   stache completions --shell bash > ~/.local/share/bash-completion/completions/stache
+    ///   stache completions --shell fish > ~/.config/fish/completions/stache.fish
     Completions {
         /// The shell to generate completions for.
         #[arg(long, short, value_enum)]
@@ -83,7 +83,7 @@ pub enum Commands {
 
     /// Launch the desktop application.
     ///
-    /// Launches Barba in desktop mode. This is equivalent to running `barba`
+    /// Launches Stache in desktop mode. This is equivalent to running `stache`
     /// without any arguments.
     #[command(name = "--desktop", hide = true)]
     Desktop,
@@ -141,12 +141,12 @@ pub enum WallpaperCommands {
     #[command(
         verbatim_doc_comment,
         after_long_help = r#"Examples:
-  barba wallpaper set /path/to/image.jpg               # Specific wallpaper for all screens
-  barba wallpaper set /path/to/image.jpg --screen main # Specific wallpaper for main screen
-  barba wallpaper set /path/to/image.jpg --screen 2    # Specific wallpaper for screen 2
-  barba wallpaper set --random                         # Random wallpaper for all screens
-  barba wallpaper set --random --screen main           # Random wallpaper for main screen
-  barba wallpaper set --random --screen 2              # Random wallpaper for screen 2"#
+  stache wallpaper set /path/to/image.jpg               # Specific wallpaper for all screens
+  stache wallpaper set /path/to/image.jpg --screen main # Specific wallpaper for main screen
+  stache wallpaper set /path/to/image.jpg --screen 2    # Specific wallpaper for screen 2
+  stache wallpaper set --random                         # Random wallpaper for all screens
+  stache wallpaper set --random --screen main           # Random wallpaper for main screen
+  stache wallpaper set --random --screen 2              # Random wallpaper for screen 2"#
     )]
     Set {
         /// The path to the image to use as wallpaper.
@@ -183,20 +183,20 @@ pub enum WallpaperCommands {
 // Event Commands
 // ============================================================================
 
-/// Event subcommands for notifying the running Barba instance.
+/// Event subcommands for notifying the running Stache instance.
 #[derive(Subcommand, Debug)]
 #[command(next_display_order = None)]
 pub enum EventCommands {
-    /// Notify Barba that the focused window changed.
+    /// Notify Stache that the focused window changed.
     ///
     /// Use when your automation detects a window-focus change.
     /// Triggers Hyprspace queries to refresh current workspace and app state.
     #[command(name = "window-focus-changed")]
     WindowFocusChanged,
 
-    /// Notify Barba that the active workspace changed.
+    /// Notify Stache that the active workspace changed.
     ///
-    /// Requires the new workspace name so Barba can update its Hyprspace view
+    /// Requires the new workspace name so Stache can update its Hyprspace view
     /// and trigger a window refresh.
     #[command(name = "workspace-changed")]
     WorkspaceChanged {
@@ -218,14 +218,14 @@ pub enum CacheCommands {
     /// Removes all cached files including processed wallpapers and media artwork.
     /// This can help resolve issues with stale data or free up disk space.
     #[command(after_long_help = r#"Examples:
-  barba cache clear   # Clear all cached data"#)]
+  stache cache clear   # Clear all cached data"#)]
     Clear,
 
     /// Show the cache directory location.
     ///
     /// Displays the path to the application's cache directory.
     #[command(after_long_help = r#"Examples:
-  barba cache path    # Print the cache directory path"#)]
+  stache cache path    # Print the cache directory path"#)]
     Path,
 }
 
@@ -242,11 +242,11 @@ pub enum AudioCommands {
     /// Shows audio input and output devices with their names and types.
     /// By default, displays a human-readable table format.
     #[command(after_long_help = r#"Examples:
-  barba audio list              # List all devices in table format
-  barba audio list --json       # List all devices in JSON format
-  barba audio list --input      # List only input devices
-  barba audio list --output     # List only output devices
-  barba audio list -io --json   # List all devices in JSON (explicit)"#)]
+  stache audio list              # List all devices in table format
+  stache audio list --json       # List all devices in JSON format
+  stache audio list --input      # List only input devices
+  stache audio list --output     # List only output devices
+  stache audio list -io --json   # List all devices in JSON (explicit)"#)]
     List {
         /// Output in JSON format instead of table format.
         #[arg(long, short = 'j')]
@@ -268,7 +268,7 @@ impl Cli {
     /// # Errors
     ///
     /// Returns an error if the command execution fails.
-    pub fn execute(&self) -> Result<(), BarbaError> {
+    pub fn execute(&self) -> Result<(), StacheError> {
         match &self.command {
             Commands::Event(event_cmd) => Self::execute_event(event_cmd)?,
             Commands::Wallpaper(wallpaper_cmd) => Self::execute_wallpaper(wallpaper_cmd)?,
@@ -276,9 +276,9 @@ impl Cli {
             Commands::Audio(audio_cmd) => Self::execute_audio(audio_cmd)?,
 
             Commands::Reload => {
-                if !ipc::send_notification(&BarbaNotification::Reload) {
-                    return Err(BarbaError::IpcError(
-                        "Failed to send reload notification to Barba app".to_string(),
+                if !ipc::send_notification(&StacheNotification::Reload) {
+                    return Err(StacheError::IpcError(
+                        "Failed to send reload notification to Stache app".to_string(),
                     ));
                 }
             }
@@ -304,29 +304,29 @@ impl Cli {
     /// Print shell completions to stdout.
     fn print_completions<G: Generator>(generator: G) {
         let mut cmd = Self::command();
-        generate(generator, &mut cmd, "barba", &mut io::stdout());
+        generate(generator, &mut cmd, "stache", &mut io::stdout());
     }
 
     /// Execute event subcommands.
-    fn execute_event(cmd: &EventCommands) -> Result<(), BarbaError> {
+    fn execute_event(cmd: &EventCommands) -> Result<(), StacheError> {
         let notification = match cmd {
-            EventCommands::WindowFocusChanged => BarbaNotification::WindowFocusChanged,
+            EventCommands::WindowFocusChanged => StacheNotification::WindowFocusChanged,
             EventCommands::WorkspaceChanged { name } => {
-                BarbaNotification::WorkspaceChanged(name.clone())
+                StacheNotification::WorkspaceChanged(name.clone())
             }
         };
 
         if ipc::send_notification(&notification) {
             Ok(())
         } else {
-            Err(BarbaError::IpcError(
-                "Failed to send notification to Barba app".to_string(),
+            Err(StacheError::IpcError(
+                "Failed to send notification to Stache app".to_string(),
             ))
         }
     }
 
     /// Execute cache subcommands.
-    fn execute_cache(cmd: &CacheCommands) -> Result<(), BarbaError> {
+    fn execute_cache(cmd: &CacheCommands) -> Result<(), StacheError> {
         match cmd {
             CacheCommands::Clear => {
                 let cache_dir = cache::get_cache_dir();
@@ -341,7 +341,7 @@ impl Cli {
                         println!("Cache cleared successfully. Freed {formatted}.");
                     }
                     Err(err) => {
-                        return Err(BarbaError::CacheError(format!(
+                        return Err(StacheError::CacheError(format!(
                             "Failed to clear cache: {err}"
                         )));
                     }
@@ -356,7 +356,7 @@ impl Cli {
     }
 
     /// Execute audio subcommands.
-    fn execute_audio(cmd: &AudioCommands) -> Result<(), BarbaError> {
+    fn execute_audio(cmd: &AudioCommands) -> Result<(), StacheError> {
         match cmd {
             AudioCommands::List { json, input, output } => {
                 let filter = match (input, output) {
@@ -369,7 +369,7 @@ impl Cli {
 
                 if *json {
                     let json_output = serde_json::to_string_pretty(&devices).map_err(|e| {
-                        BarbaError::AudioError(format!("JSON serialization error: {e}"))
+                        StacheError::AudioError(format!("JSON serialization error: {e}"))
                     })?;
                     println!("{json_output}");
                 } else {
@@ -382,7 +382,7 @@ impl Cli {
     }
 
     /// Execute wallpaper subcommands.
-    fn execute_wallpaper(cmd: &WallpaperCommands) -> Result<(), BarbaError> {
+    fn execute_wallpaper(cmd: &WallpaperCommands) -> Result<(), StacheError> {
         // Initialize config and wallpaper manager for CLI commands
         Self::init_wallpaper_manager()?;
 
@@ -396,7 +396,7 @@ impl Cli {
     }
 
     /// Initializes the configuration and wallpaper manager for CLI commands.
-    fn init_wallpaper_manager() -> Result<(), BarbaError> {
+    fn init_wallpaper_manager() -> Result<(), StacheError> {
         // Initialize configuration (required for wallpaper settings)
         config::init();
 
@@ -405,7 +405,7 @@ impl Cli {
 
         // Check if wallpaper manager was initialized successfully
         if wallpaper::get_manager().is_none() {
-            return Err(BarbaError::WallpaperError(
+            return Err(StacheError::WallpaperError(
                 "Wallpaper manager not initialized. Check your wallpaper configuration."
                     .to_string(),
             ));
@@ -419,15 +419,15 @@ impl Cli {
         path: Option<&str>,
         random: bool,
         screen: &ScreenTarget,
-    ) -> Result<(), BarbaError> {
+    ) -> Result<(), StacheError> {
         if path.is_some() && random {
-            return Err(BarbaError::InvalidArguments(
+            return Err(StacheError::InvalidArguments(
                 "Cannot specify both <path> and --random. Use one or the other.".to_string(),
             ));
         }
 
         if path.is_none() && !random {
-            return Err(BarbaError::InvalidArguments(
+            return Err(StacheError::InvalidArguments(
                 "Either <path> or --random must be specified.".to_string(),
             ));
         }
@@ -454,23 +454,23 @@ impl Cli {
             _ => unreachable!(),
         };
 
-        wallpaper::perform_action(&action).map_err(Self::wallpaper_error_to_barba_error)?;
+        wallpaper::perform_action(&action).map_err(Self::wallpaper_error_to_stache_error)?;
 
         println!("Wallpaper set successfully.");
         Ok(())
     }
 
     /// Execute the wallpaper list command.
-    fn execute_wallpaper_list() -> Result<(), BarbaError> {
+    fn execute_wallpaper_list() -> Result<(), StacheError> {
         let wallpapers =
-            wallpaper::list_wallpapers().map_err(Self::wallpaper_error_to_barba_error)?;
+            wallpaper::list_wallpapers().map_err(Self::wallpaper_error_to_stache_error)?;
 
         if wallpapers.is_empty() {
             println!("No wallpapers found.");
         } else {
             // Output as JSON array for easy parsing
             let json = serde_json::to_string_pretty(&wallpapers).map_err(|e| {
-                BarbaError::WallpaperError(format!("JSON serialization error: {e}"))
+                StacheError::WallpaperError(format!("JSON serialization error: {e}"))
             })?;
             println!("{json}");
         }
@@ -479,15 +479,15 @@ impl Cli {
     }
 
     /// Execute the wallpaper generate-all command.
-    fn execute_wallpaper_generate_all() -> Result<(), BarbaError> {
+    fn execute_wallpaper_generate_all() -> Result<(), StacheError> {
         wallpaper::generate_all_streaming(io::stdout())
-            .map_err(Self::wallpaper_error_to_barba_error)
+            .map_err(Self::wallpaper_error_to_stache_error)
     }
 
-    /// Convert `WallpaperManagerError` to `BarbaError`.
+    /// Convert `WallpaperManagerError` to `StacheError`.
     #[allow(clippy::needless_pass_by_value)]
-    fn wallpaper_error_to_barba_error(err: WallpaperManagerError) -> BarbaError {
-        BarbaError::WallpaperError(err.to_string())
+    fn wallpaper_error_to_stache_error(err: WallpaperManagerError) -> StacheError {
+        StacheError::WallpaperError(err.to_string())
     }
 }
 

@@ -1,4 +1,4 @@
-//! Wallpaper management module for Barba Shell.
+//! Wallpaper management module for Stache.
 //!
 //! This module provides dynamic wallpaper functionality including:
 //! - Loading wallpapers from a directory or a predefined list

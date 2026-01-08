@@ -221,11 +221,11 @@ mod tests {
     #[test]
     fn parse_converts_hyphenated_keys_to_camel_case() {
         let parsed =
-            parse_json_array(r#"[{"app-name":"Ghostty","window-id":37,"window-title":"Barba"}]"#)
+            parse_json_array(r#"[{"app-name":"Ghostty","window-id":37,"window-title":"Stache"}]"#)
                 .unwrap();
         assert_eq!(
             parsed[0],
-            json!({"appName":"Ghostty","windowId":37,"windowTitle":"Barba"})
+            json!({"appName":"Ghostty","windowId":37,"windowTitle":"Stache"})
         );
     }
 

@@ -53,11 +53,11 @@ const fn zero_rect() -> NSRect {
 fn non_activating_panel_class() -> &'static Class {
     NON_ACTIVATING_PANEL_CLASS.get_or_init(|| unsafe {
         let superclass = Class::get("TaoWindow").expect("TaoWindow class missing");
-        if let Some(existing) = Class::get("BarbaNonActivatingTaoWindow") {
+        if let Some(existing) = Class::get("StacheNonActivatingTaoWindow") {
             return existing;
         }
-        let mut decl = ClassDecl::new("BarbaNonActivatingTaoWindow", superclass)
-            .expect("failed to declare BarbaNonActivatingTaoWindow");
+        let mut decl = ClassDecl::new("StacheNonActivatingTaoWindow", superclass)
+            .expect("failed to declare StacheNonActivatingTaoWindow");
         decl.add_method(
             sel!(acceptsFirstMouse:),
             accepts_first_mouse as extern "C" fn(&Object, Sel, ObjcId) -> bool,

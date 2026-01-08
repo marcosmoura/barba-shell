@@ -1,8 +1,8 @@
 {
-  "$id": "https://raw.githubusercontent.com/marcosmoura/barba-shell/main/barba.schema.json",
+  "$id": "https://raw.githubusercontent.com/marcosmoura/stache/main/stache.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "BarbaConfig",
-  "description": "Root configuration structure for Barba Shell.\n\nThis structure is designed to be extended with additional sections\nas new features are added to the application.",
+  "title": "StacheConfig",
+  "description": "Root configuration structure for Stache.\n\nThis structure is designed to be extended with additional sections\nas new features are added to the application.",
   "type": "object",
   "properties": {
     "bar": {
@@ -46,12 +46,12 @@
       "default": {
         "enabled": false,
         "input": {
-          "name": "Barba Virtual Input",
+          "name": "Stache Virtual Input",
           "priority": []
         },
         "output": {
           "bufferSize": 256,
-          "name": "Barba Virtual Output",
+          "name": "Stache Virtual Output",
           "priority": []
         }
       }
@@ -245,7 +245,7 @@
           "description": "Input device configuration.",
           "$ref": "#/$defs/ProxyAudioInputConfig",
           "default": {
-            "name": "Barba Virtual Input",
+            "name": "Stache Virtual Input",
             "priority": []
           }
         },
@@ -254,7 +254,7 @@
           "$ref": "#/$defs/ProxyAudioOutputConfig",
           "default": {
             "bufferSize": 256,
-            "name": "Barba Virtual Output",
+            "name": "Stache Virtual Output",
             "priority": []
           }
         }
@@ -265,9 +265,9 @@
       "type": "object",
       "properties": {
         "name": {
-          "description": "Name of the virtual input device (used if a virtual device is installed).\nDefault: \"Barba Virtual Input\"",
+          "description": "Name of the virtual input device (used if a virtual device is installed).\nDefault: \"Stache Virtual Input\"",
           "type": "string",
-          "default": "Barba Virtual Input"
+          "default": "Stache Virtual Input"
         },
         "priority": {
           "description": "Priority list for input device selection.\nDevices are checked in order; the first available device is selected.\n`AirPlay` devices are always given highest priority automatically.",
@@ -291,9 +291,9 @@
           "minimum": 0
         },
         "name": {
-          "description": "Name of the virtual output device (used if a virtual device is installed).\nDefault: \"Barba Virtual Output\"",
+          "description": "Name of the virtual output device (used if a virtual device is installed).\nDefault: \"Stache Virtual Output\"",
           "type": "string",
-          "default": "Barba Virtual Output"
+          "default": "Stache Virtual Output"
         },
         "priority": {
           "description": "Priority list for output device selection.\nDevices are checked in order; the first available device is selected.\n`AirPlay` devices are always given highest priority automatically.",
@@ -406,7 +406,7 @@
       "type": "object",
       "properties": {
         "apiKeys": {
-          "description": "Path to an environment file containing API keys.\n\nThe file should contain key-value pairs in the format `KEY=value`.\nSupported keys:\n- `VISUAL_CROSSING_API_KEY` - API key for Visual Crossing Weather API\n\nThe path can be:\n- Relative to the config file directory (e.g., `.env`, `secrets/.env`)\n- Absolute path (e.g., `/Users/username/.secrets/.env`)\n- Use `~` for home directory (e.g., `~/.config/barba/.env`)\n\nExample `.env` file:\n```env\nVISUAL_CROSSING_API_KEY=your_api_key_here\n```",
+          "description": "Path to an environment file containing API keys.\n\nThe file should contain key-value pairs in the format `KEY=value`.\nSupported keys:\n- `VISUAL_CROSSING_API_KEY` - API key for Visual Crossing Weather API\n\nThe path can be:\n- Relative to the config file directory (e.g., `.env`, `secrets/.env`)\n- Absolute path (e.g., `/Users/username/.secrets/.env`)\n- Use `~` for home directory (e.g., `~/.config/stache/.env`)\n\nExample `.env` file:\n```env\nVISUAL_CROSSING_API_KEY=your_api_key_here\n```",
           "type": "string",
           "default": ""
         },

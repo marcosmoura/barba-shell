@@ -1,24 +1,24 @@
-//! JSON Schema generation for Barba configuration.
+//! JSON Schema generation for Stache configuration.
 //!
 //! This module generates a JSON Schema that describes the configuration file
 //! format, which can be used for editor validation and autocompletion.
 
-use crate::config::BarbaConfig;
+use crate::config::StacheConfig;
 
-/// Generates a JSON Schema for the Barba configuration.
+/// Generates a JSON Schema for the Stache configuration.
 ///
 /// The schema includes all configuration options with their types,
 /// descriptions, and default values.
 #[must_use]
 pub fn generate_schema() -> schemars::Schema {
-    let mut schema = schemars::schema_for!(BarbaConfig);
+    let mut schema = schemars::schema_for!(StacheConfig);
 
     // Add $id for proper schema identification
     if let Some(obj) = schema.as_object_mut() {
         obj.insert(
             "$id".to_string(),
             serde_json::json!(
-                "https://raw.githubusercontent.com/marcosmoura/barba-shell/main/barba.schema.json"
+                "https://raw.githubusercontent.com/marcosmoura/stache/main/stache.schema.json"
             ),
         );
     }
@@ -26,7 +26,7 @@ pub fn generate_schema() -> schemars::Schema {
     schema
 }
 
-/// Generates a JSON Schema string for the Barba configuration.
+/// Generates a JSON Schema string for the Stache configuration.
 ///
 /// Returns a pretty-printed JSON string that can be saved to a file
 /// or used for validation.
@@ -47,9 +47,9 @@ mod tests {
 
         let parsed: serde_json::Value = serde_json::from_str(&schema_json).unwrap();
 
-        assert!(parsed["$id"].as_str().unwrap().contains("barba.schema.json"));
+        assert!(parsed["$id"].as_str().unwrap().contains("stache.schema.json"));
         assert_eq!(parsed["$schema"], "https://json-schema.org/draft/2020-12/schema");
-        assert_eq!(parsed["title"], "BarbaConfig");
+        assert_eq!(parsed["title"], "StacheConfig");
         assert!(parsed["properties"]["keybindings"].is_object());
         assert!(parsed["properties"]["bar"].is_object());
     }
@@ -76,7 +76,7 @@ mod tests {
 
         assert!(id.starts_with("https://"));
         assert!(id.contains("githubusercontent.com"));
-        assert!(id.ends_with("barba.schema.json"));
+        assert!(id.ends_with("stache.schema.json"));
     }
 
     #[test]
@@ -84,7 +84,7 @@ mod tests {
         let schema_json = print_schema();
         let parsed: serde_json::Value = serde_json::from_str(&schema_json).unwrap();
 
-        // WallpaperConfig is at the root level of BarbaConfig, referenced in $defs
+        // WallpaperConfig is at the root level of StacheConfig, referenced in $defs
         let wallpaper_config = &parsed["$defs"]["WallpaperConfig"];
         assert!(wallpaper_config.is_object());
     }

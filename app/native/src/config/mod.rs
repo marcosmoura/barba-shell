@@ -1,4 +1,4 @@
-//! Configuration module for Barba Shell.
+//! Configuration module for Stache.
 //!
 //! This module provides configuration types, loading functionality, and file watching
 //! for hot-reloading configuration changes.
@@ -14,16 +14,16 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 
 pub use types::{
-    AudioDeviceDependency, AudioDevicePriority, BarConfig, BarbaConfig, ConfigError, MatchStrategy,
+    AudioDeviceDependency, AudioDevicePriority, BarConfig, ConfigError, MatchStrategy,
     MenuAnywhereConfig, MenuAnywhereModifier, MenuAnywhereMouseButton, NoTunesConfig,
     ProxyAudioConfig, ProxyAudioInputConfig, ProxyAudioOutputConfig, ShortcutCommands,
-    TargetMusicApp, WallpaperConfig, WallpaperMode, WeatherConfig, config_paths,
+    StacheConfig, TargetMusicApp, WallpaperConfig, WallpaperMode, WeatherConfig, config_paths,
     load_config as load_config_with_path,
 };
 pub use watcher::watch_config_file;
 
 /// Global configuration instance, loaded once at startup.
-static CONFIG: OnceLock<BarbaConfig> = OnceLock::new();
+static CONFIG: OnceLock<StacheConfig> = OnceLock::new();
 
 /// Path to the currently loaded configuration file.
 static CONFIG_PATH: OnceLock<PathBuf> = OnceLock::new();
@@ -34,16 +34,16 @@ static CONFIG_PATH: OnceLock<PathBuf> = OnceLock::new();
 /// the same configuration instance.
 ///
 /// If no configuration file is found, returns a default empty configuration.
-pub fn init() -> &'static BarbaConfig {
+pub fn init() -> &'static StacheConfig {
     CONFIG.get_or_init(|| match load_config_with_path() {
         Ok((config, path)) => {
             let _ = CONFIG_PATH.set(path);
             config
         }
-        Err(ConfigError::NotFound) => BarbaConfig::default(),
+        Err(ConfigError::NotFound) => StacheConfig::default(),
         Err(err) => {
-            eprintln!("barba: warning: failed to load configuration: {err}");
-            BarbaConfig::default()
+            eprintln!("stache: warning: failed to load configuration: {err}");
+            StacheConfig::default()
         }
     })
 }
@@ -53,7 +53,7 @@ pub fn init() -> &'static BarbaConfig {
 /// # Panics
 ///
 /// Panics if called before `init()` has been called.
-pub fn get_config() -> &'static BarbaConfig {
+pub fn get_config() -> &'static StacheConfig {
     CONFIG.get().expect("Configuration not initialized. Call init() first.")
 }
 
@@ -67,7 +67,7 @@ mod tests {
     #[test]
     fn test_shared_types_are_available() {
         // Verify that shared types are accessible
-        let config = BarbaConfig::default();
+        let config = StacheConfig::default();
         assert!(config.keybindings.is_empty());
 
         let wallpaper = WallpaperConfig::default();
@@ -87,8 +87,8 @@ mod tests {
 
     #[test]
     fn test_shortcut_commands() {
-        let single = ShortcutCommands::Single("barba reload".to_string());
-        assert_eq!(single.get_commands(), vec!["barba reload"]);
+        let single = ShortcutCommands::Single("stache reload".to_string());
+        assert_eq!(single.get_commands(), vec!["stache reload"]);
 
         let multiple = ShortcutCommands::Multiple(vec!["cmd1".to_string(), "cmd2".to_string()]);
         assert_eq!(multiple.get_commands(), vec!["cmd1", "cmd2"]);

@@ -1,4 +1,4 @@
-//! Error types for Barba Shell.
+//! Error types for Stache.
 //!
 //! This module provides unified error types used throughout the application.
 
@@ -6,7 +6,7 @@ use std::fmt;
 
 /// Errors that can occur during application execution.
 #[derive(Debug)]
-pub enum BarbaError {
+pub enum StacheError {
     /// Invalid command arguments.
     InvalidArguments(String),
     /// Cache operation failed.
@@ -23,7 +23,7 @@ pub enum BarbaError {
     Io(std::io::Error),
 }
 
-impl fmt::Display for BarbaError {
+impl fmt::Display for StacheError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidArguments(msg) => {
@@ -49,9 +49,9 @@ impl fmt::Display for BarbaError {
     }
 }
 
-impl std::error::Error for BarbaError {}
+impl std::error::Error for StacheError {}
 
-impl From<std::io::Error> for BarbaError {
+impl From<std::io::Error> for StacheError {
     fn from(err: std::io::Error) -> Self { Self::Io(err) }
 }
 
@@ -61,14 +61,14 @@ mod tests {
 
     #[test]
     fn test_invalid_arguments_display() {
-        let err = BarbaError::InvalidArguments("Cannot specify both path and random".to_string());
+        let err = StacheError::InvalidArguments("Cannot specify both path and random".to_string());
         let msg = err.to_string();
         assert!(msg.contains("Cannot specify both path and random"));
     }
 
     #[test]
     fn test_cache_error_display() {
-        let err = BarbaError::CacheError("Failed to remove directory".to_string());
+        let err = StacheError::CacheError("Failed to remove directory".to_string());
         let msg = err.to_string();
         assert!(msg.contains("Cache error"));
         assert!(msg.contains("Failed to remove directory"));
@@ -76,7 +76,7 @@ mod tests {
 
     #[test]
     fn test_audio_error_display() {
-        let err = BarbaError::AudioError("Device not found".to_string());
+        let err = StacheError::AudioError("Device not found".to_string());
         let msg = err.to_string();
         assert!(msg.contains("Audio error"));
         assert!(msg.contains("Device not found"));
@@ -84,14 +84,14 @@ mod tests {
 
     #[test]
     fn test_wallpaper_error_display() {
-        let err = BarbaError::WallpaperError("Image not found".to_string());
+        let err = StacheError::WallpaperError("Image not found".to_string());
         let msg = err.to_string();
         assert!(msg.contains("Wallpaper error"));
     }
 
     #[test]
     fn test_config_error_display() {
-        let err = BarbaError::ConfigError("Invalid JSON".to_string());
+        let err = StacheError::ConfigError("Invalid JSON".to_string());
         let msg = err.to_string();
         assert!(msg.contains("Configuration error"));
     }
@@ -99,7 +99,7 @@ mod tests {
     #[test]
     fn test_io_error_display() {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
-        let err = BarbaError::Io(io_err);
+        let err = StacheError::Io(io_err);
         let msg = err.to_string();
         assert!(msg.contains("IO error"));
     }
@@ -107,13 +107,13 @@ mod tests {
     #[test]
     fn test_io_error_from_conversion() {
         let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "permission denied");
-        let err: BarbaError = io_err.into();
-        assert!(matches!(err, BarbaError::Io(_)));
+        let err: StacheError = io_err.into();
+        assert!(matches!(err, StacheError::Io(_)));
     }
 
     #[test]
     fn test_ipc_error_display() {
-        let err = BarbaError::IpcError("Failed to send notification".to_string());
+        let err = StacheError::IpcError("Failed to send notification".to_string());
         let msg = err.to_string();
         assert!(msg.contains("IPC error"));
         assert!(msg.contains("Failed to send notification"));
@@ -121,7 +121,7 @@ mod tests {
 
     #[test]
     fn test_error_is_debug() {
-        let err = BarbaError::InvalidArguments("test".to_string());
+        let err = StacheError::InvalidArguments("test".to_string());
         let debug_str = format!("{err:?}");
         assert!(debug_str.contains("InvalidArguments"));
     }

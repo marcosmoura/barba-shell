@@ -181,7 +181,7 @@ mod tests {
     fn visibility_event_constant_is_correct() {
         assert_eq!(
             events::menubar::VISIBILITY_CHANGED,
-            "barba://menubar/visibility-changed"
+            "stache://menubar/visibility-changed"
         );
     }
 

@@ -174,7 +174,7 @@ fn get_or_create_dispatch_helper() -> *mut Object {
 
     let superclass = Class::get("NSObject").expect("NSObject not found");
 
-    if let Some(existing) = Class::get("BarbaMenuDispatchHelper") {
+    if let Some(existing) = Class::get("StacheMenuDispatchHelper") {
         let helper: *mut Object = unsafe { msg_send![existing, new] };
         if let Ok(mut guard) = DISPATCH_HELPER.lock() {
             *guard = Some(SendSyncPtr(helper));
@@ -182,7 +182,7 @@ fn get_or_create_dispatch_helper() -> *mut Object {
         return helper;
     }
 
-    let Some(mut decl) = ClassDecl::new("BarbaMenuDispatchHelper", superclass) else {
+    let Some(mut decl) = ClassDecl::new("StacheMenuDispatchHelper", superclass) else {
         return ptr::null_mut();
     };
 

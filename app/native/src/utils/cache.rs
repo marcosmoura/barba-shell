@@ -23,7 +23,7 @@ use crate::constants::APP_BUNDLE_ID;
 ///
 /// ```ignore
 /// let wallpaper_cache = get_cache_subdir("wallpapers");
-/// // Returns: ~/Library/Caches/com.marcosmoura.barba/wallpapers
+/// // Returns: ~/Library/Caches/com.marcosmoura.stache/wallpapers
 /// ```
 #[must_use]
 pub fn get_cache_subdir(subdir: &str) -> PathBuf {

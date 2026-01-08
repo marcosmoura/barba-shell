@@ -1,15 +1,15 @@
 {
   // =============================================================================
-  // Barba Shell Configuration
+  // Stache Configuration
   // =============================================================================
   //
   // Place this file at one of these locations (in priority order):
-  //   1. ~/.config/barba/config.jsonc  (recommended)
-  //   2. ~/.config/barba/config.json
-  //   3. ~/Library/Application Support/barba/config.jsonc
-  //   4. ~/Library/Application Support/barba/config.json
-  //   5. ~/.barba.jsonc  (legacy)
-  //   6. ~/.barba.json   (legacy)
+  //   1. ~/.config/stache/config.jsonc  (recommended)
+  //   2. ~/.config/stache/config.json
+  //   3. ~/Library/Application Support/stache/config.jsonc
+  //   4. ~/Library/Application Support/stache/config.json
+  //   5. ~/.stache.jsonc  (legacy)
+  //   6. ~/.stache.json   (legacy)
   //
   // This file supports JSONC format (JSON with comments).
   // Both single-line (//) and multi-line (/* */) comments are allowed.
@@ -27,8 +27,8 @@
       //
       // The path can be:
       //   - Relative to this config file (e.g., ".env", "secrets/.env")
-      //   - Absolute path (e.g., "/Users/username/.secrets/barba.env")
-      //   - Use ~ for home directory (e.g., "~/.config/barba/.env")
+      //   - Absolute path (e.g., "/Users/username/.secrets/stache.env")
+      //   - Use ~ for home directory (e.g., "~/.config/stache/.env")
       //
       // The env file should contain:
       //   VISUAL_CROSSING_API_KEY=your_api_key_here
@@ -95,17 +95,17 @@
   //   - An empty string "" to capture/block the shortcut without action
   //
   "keybindings": {
-    // Reload Barba configuration
-    "Command+Control+R": "barba reload",
+    // Reload Stache configuration
+    "Command+Control+R": "stache reload",
 
     // Set a random wallpaper
-    "Command+Control+W": "barba wallpaper set --random",
+    "Command+Control+W": "stache wallpaper set --random",
 
     // Set random wallpaper on main screen only
-    "Command+Control+Shift+W": "barba wallpaper set --random --screen main",
+    "Command+Control+Shift+W": "stache wallpaper set --random --screen main",
 
     // Multiple commands executed sequentially
-    "Command+Control+T": ["open -a Terminal", "barba reload"],
+    "Command+Control+T": ["open -a Terminal", "stache reload"],
 
     // Block a system shortcut (capture without executing any action)
     // Useful for preventing accidental hiding of windows
@@ -145,7 +145,7 @@
   // Proxy Audio Configuration
   // ---------------------------------------------------------------------------
   // Automatic audio device switching based on device availability and priority.
-  // When enabled, Barba monitors connected audio devices and automatically
+  // When enabled, Stache monitors connected audio devices and automatically
   // switches to the highest-priority available device.
   //
   // AirPlay devices are always given the highest priority automatically,
@@ -159,8 +159,8 @@
     // Input device (microphone) configuration
     "input": {
       // Name of the virtual input device (if using a virtual audio driver)
-      // Default: "Barba Virtual Input"
-      "name": "Barba Virtual Input",
+      // Default: "Stache Virtual Input"
+      "name": "Stache Virtual Input",
 
       // Priority list for input device selection
       // Devices are checked in order; the first available device is selected
@@ -185,8 +185,8 @@
     // Output device (speakers/headphones) configuration
     "output": {
       // Name of the virtual output device (if using a virtual audio driver)
-      // Default: "Barba Virtual Output"
-      "name": "Barba Virtual Output",
+      // Default: "Stache Virtual Output"
+      "name": "Stache Virtual Output",
 
       // Audio buffer size in frames
       // Smaller values = lower latency but may cause audio artifacts

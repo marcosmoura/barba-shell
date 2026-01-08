@@ -1,7 +1,7 @@
-//! CLI module for Barba Shell.
+//! CLI module for Stache.
 //!
 //! This module provides command-line interface functionality for interacting
-//! with Barba. When the desktop app is running, CLI commands communicate with
+//! with Stache. When the desktop app is running, CLI commands communicate with
 //! it directly. When not running, some commands may launch the app.
 
 mod commands;
@@ -9,7 +9,7 @@ mod commands;
 use clap::Parser;
 pub use commands::Cli;
 
-use crate::error::BarbaError;
+use crate::error::StacheError;
 
 /// Runs the CLI.
 ///
@@ -18,7 +18,7 @@ use crate::error::BarbaError;
 /// # Errors
 ///
 /// Returns an error if the command execution fails.
-pub fn run() -> Result<(), BarbaError> {
+pub fn run() -> Result<(), StacheError> {
     let cli = Cli::parse();
     cli.execute()
 }

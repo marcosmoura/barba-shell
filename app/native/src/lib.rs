@@ -1,4 +1,4 @@
-//! Barba Shell - A macOS status bar with tiling window manager integration.
+//! Stache - A macOS status bar with tiling window manager integration.
 //!
 //! This library provides both the desktop application and CLI functionality.
 //! The desktop app uses Tauri to render a status bar with workspace information,

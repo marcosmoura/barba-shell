@@ -2,7 +2,7 @@ use std::thread;
 
 pub fn spawn_named_thread<F>(name: &str, task: F)
 where F: FnOnce() + Send + 'static {
-    let thread_name = format!("barba-{name}");
+    let thread_name = format!("stache-{name}");
 
     if let Err(err) = thread::Builder::new().name(thread_name.clone()).spawn(task) {
         eprintln!("Failed to spawn {thread_name}: {err}");
@@ -45,7 +45,7 @@ mod tests {
         });
 
         let thread_name = rx.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(thread_name, "barba-name-test");
+        assert_eq!(thread_name, "stache-name-test");
     }
 
     #[test]
@@ -61,7 +61,7 @@ mod tests {
         });
 
         let thread_name = rx.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(thread_name, "barba-");
+        assert_eq!(thread_name, "stache-");
     }
 
     #[test]
@@ -77,7 +77,7 @@ mod tests {
         });
 
         let thread_name = rx.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(thread_name, "barba-test-with-dashes_and_underscores");
+        assert_eq!(thread_name, "stache-test-with-dashes_and_underscores");
     }
 
     #[test]

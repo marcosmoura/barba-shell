@@ -1,27 +1,27 @@
 #!/bin/bash
-# Generate the Barba configuration JSON schema and save it to the repository root.
+# Generate the Stache configuration JSON schema and save it to the repository root.
 # This script uses the CLI binary which can generate the schema without the desktop app running.
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
-SCHEMA_FILE="$ROOT_DIR/barba.schema.json"
+SCHEMA_FILE="$ROOT_DIR/stache.schema.json"
 
-echo "Generating Barba configuration schema..."
+echo "Generating Stache configuration schema..."
 
 # Check if the binary exists (workspace builds go to root target/)
-BARBA_BINARY="$ROOT_DIR/target/release/barba"
-if [ ! -f "$BARBA_BINARY" ]; then
-	echo "Barba binary not found at $BARBA_BINARY"
+STACHE_BINARY="$ROOT_DIR/target/release/stache"
+if [ ! -f "$STACHE_BINARY" ]; then
+	echo "Stache binary not found at $STACHE_BINARY"
 	echo "Building binary..."
 	cd "$ROOT_DIR"
-	cargo build --package barba --release
+	cargo build --package stache --release
 fi
 
 # Generate the schema using the CLI
-# The barba binary can generate the schema without the desktop app running
-"$BARBA_BINARY" schema >"$SCHEMA_FILE"
+# The stache binary can generate the schema without the desktop app running
+"$STACHE_BINARY" schema >"$SCHEMA_FILE"
 
 echo "Schema saved to $SCHEMA_FILE"
 

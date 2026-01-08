@@ -1,11 +1,11 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Barba",
+  "productName": "Stache",
   "version": "0.10.0",
-  "identifier": "com.marcosmoura.barba",
+  "identifier": "com.marcosmoura.stache",
   "build": {
     "beforeDevCommand": {
-      "script": "killall barba; pnpm dev",
+      "script": "killall stache; pnpm dev",
       "cwd": "../.."
     },
     "devUrl": "http://localhost:1420",

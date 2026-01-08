@@ -517,13 +517,13 @@ unsafe fn get_or_create_menu_handler() -> *mut Object {
 
     let superclass = Class::get("NSObject").expect("NSObject not found");
 
-    if let Some(existing) = Class::get("BarbaMenuHandler") {
+    if let Some(existing) = Class::get("StacheMenuHandler") {
         let handler: *mut Object = unsafe { msg_send![existing, new] };
         unsafe { MENU_HANDLER = handler };
         return handler;
     }
 
-    let Some(mut decl) = ClassDecl::new("BarbaMenuHandler", superclass) else {
+    let Some(mut decl) = ClassDecl::new("StacheMenuHandler", superclass) else {
         return ptr::null_mut();
     };
 

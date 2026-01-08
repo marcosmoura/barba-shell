@@ -4,7 +4,7 @@
 //! the CLI and desktop app using macOS's distributed notification system.
 //!
 //! The notification center allows different processes to communicate without
-//! requiring a shared file or socket. This is ideal for CLI → desktop app
+//! requiring a shared file or socket. This is ideal for CLI -> desktop app
 //! communication where the CLI needs to notify the running app about events.
 
 use std::sync::OnceLock;
@@ -16,12 +16,12 @@ use parking_lot::Mutex;
 
 use super::objc::nsstring;
 
-/// Notification name prefix for all Barba notifications.
-const NOTIFICATION_PREFIX: &str = "com.marcosmoura.barba.";
+/// Notification name prefix for all Stache notifications.
+const NOTIFICATION_PREFIX: &str = "com.marcosmoura.stache.";
 
 /// Notification types that can be sent between CLI and desktop app.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BarbaNotification {
+pub enum StacheNotification {
     /// Window focus changed event.
     WindowFocusChanged,
     /// Workspace changed event with the new workspace name.
@@ -30,7 +30,7 @@ pub enum BarbaNotification {
     Reload,
 }
 
-impl BarbaNotification {
+impl StacheNotification {
     /// Returns the notification name for this event.
     fn notification_name(&self) -> String {
         let suffix = match self {
@@ -69,10 +69,10 @@ impl BarbaNotification {
     }
 }
 
-/// Sends a notification to the running Barba desktop app.
+/// Sends a notification to the running Stache desktop app.
 ///
 /// This function posts a distributed notification that can be received by
-/// any process listening for Barba notifications.
+/// any process listening for Stache notifications.
 ///
 /// # Arguments
 ///
@@ -81,12 +81,12 @@ impl BarbaNotification {
 /// # Returns
 ///
 /// `true` if the notification was sent successfully, `false` otherwise.
-pub fn send_notification(notification: &BarbaNotification) -> bool {
+pub fn send_notification(notification: &StacheNotification) -> bool {
     unsafe {
         let center: *mut Object = msg_send![class!(NSDistributedNotificationCenter), defaultCenter];
 
         if center.is_null() {
-            eprintln!("barba: failed to get NSDistributedNotificationCenter");
+            eprintln!("stache: failed to get NSDistributedNotificationCenter");
             return false;
         }
 
@@ -130,12 +130,12 @@ unsafe fn create_ns_dictionary(pairs: &[(&str, &str)]) -> *mut Object {
 // ============================================================================
 
 /// Callback type for notification handlers.
-pub type NotificationHandler = Box<dyn Fn(BarbaNotification) + Send + Sync>;
+pub type NotificationHandler = Box<dyn Fn(StacheNotification) + Send + Sync>;
 
 /// Global storage for notification handlers.
 static NOTIFICATION_HANDLERS: OnceLock<Mutex<Vec<NotificationHandler>>> = OnceLock::new();
 
-/// Registers a handler to receive Barba notifications.
+/// Registers a handler to receive Stache notifications.
 ///
 /// This should be called by the desktop app during initialization to receive
 /// notifications from CLI commands.
@@ -144,14 +144,14 @@ static NOTIFICATION_HANDLERS: OnceLock<Mutex<Vec<NotificationHandler>>> = OnceLo
 ///
 /// * `handler` - A callback function that will be called when a notification is received.
 pub fn register_notification_handler<F>(handler: F)
-where F: Fn(BarbaNotification) + Send + Sync + 'static {
+where F: Fn(StacheNotification) + Send + Sync + 'static {
     let handlers = NOTIFICATION_HANDLERS.get_or_init(|| Mutex::new(Vec::new()));
     handlers.lock().push(Box::new(handler));
 }
 
-/// Starts listening for Barba notifications.
+/// Starts listening for Stache notifications.
 ///
-/// This sets up observers for all Barba notification types. When a notification
+/// This sets up observers for all Stache notification types. When a notification
 /// is received, all registered handlers will be called.
 ///
 /// This function should be called once during desktop app initialization.
@@ -160,14 +160,14 @@ pub fn start_notification_listener() {
         let center: *mut Object = msg_send![class!(NSDistributedNotificationCenter), defaultCenter];
 
         if center.is_null() {
-            eprintln!("barba: failed to get NSDistributedNotificationCenter for listener");
+            eprintln!("stache: failed to get NSDistributedNotificationCenter for listener");
             return;
         }
 
         // Create observer object
         let observer = create_notification_observer();
 
-        // Register for all Barba notifications using a wildcard-like approach
+        // Register for all Stache notifications using a wildcard-like approach
         // We'll register for each specific notification type
         let notifications = [
             format!("{NOTIFICATION_PREFIX}window-focus-changed"),
@@ -191,13 +191,13 @@ pub fn start_notification_listener() {
 /// Creates an Objective-C observer object for handling notifications.
 unsafe fn create_notification_observer() -> *mut Object {
     let superclass = class!(NSObject);
-    let class_name = "BarbaNotificationObserver";
+    let class_name = "StacheNotificationObserver";
 
     // Check if class already exists
     let existing_class = Class::get(class_name);
     let observer_class = existing_class.unwrap_or_else(|| {
         let mut decl = ClassDecl::new(class_name, superclass)
-            .expect("Failed to create BarbaNotificationObserver class");
+            .expect("Failed to create StacheNotificationObserver class");
 
         unsafe {
             decl.add_method(
@@ -237,14 +237,14 @@ extern "C" fn handle_notification(_self: &Object, _cmd: Sel, notification: *mut 
         };
 
         // Parse the notification
-        if let Some(barba_notification) =
-            BarbaNotification::from_notification(&name, user_info.as_ref())
+        if let Some(stache_notification) =
+            StacheNotification::from_notification(&name, user_info.as_ref())
         {
             // Call all registered handlers
             if let Some(handlers) = NOTIFICATION_HANDLERS.get() {
                 let handlers = handlers.lock();
                 for handler in handlers.iter() {
-                    handler(barba_notification.clone());
+                    handler(stache_notification.clone());
                 }
             }
         }
@@ -281,37 +281,37 @@ mod tests {
 
     #[test]
     fn test_notification_name_window_focus_changed() {
-        let notification = BarbaNotification::WindowFocusChanged;
+        let notification = StacheNotification::WindowFocusChanged;
         assert_eq!(
             notification.notification_name(),
-            "com.marcosmoura.barba.window-focus-changed"
+            "com.marcosmoura.stache.window-focus-changed"
         );
     }
 
     #[test]
     fn test_notification_name_workspace_changed() {
-        let notification = BarbaNotification::WorkspaceChanged("coding".to_string());
+        let notification = StacheNotification::WorkspaceChanged("coding".to_string());
         assert_eq!(
             notification.notification_name(),
-            "com.marcosmoura.barba.workspace-changed"
+            "com.marcosmoura.stache.workspace-changed"
         );
     }
 
     #[test]
     fn test_notification_name_reload() {
-        let notification = BarbaNotification::Reload;
-        assert_eq!(notification.notification_name(), "com.marcosmoura.barba.reload");
+        let notification = StacheNotification::Reload;
+        assert_eq!(notification.notification_name(), "com.marcosmoura.stache.reload");
     }
 
     #[test]
     fn test_user_info_window_focus_changed() {
-        let notification = BarbaNotification::WindowFocusChanged;
+        let notification = StacheNotification::WindowFocusChanged;
         assert!(notification.user_info().is_none());
     }
 
     #[test]
     fn test_user_info_workspace_changed() {
-        let notification = BarbaNotification::WorkspaceChanged("coding".to_string());
+        let notification = StacheNotification::WorkspaceChanged("coding".to_string());
         let info = notification.user_info();
         assert!(info.is_some());
         let info = info.unwrap();
@@ -321,17 +321,17 @@ mod tests {
 
     #[test]
     fn test_user_info_reload() {
-        let notification = BarbaNotification::Reload;
+        let notification = StacheNotification::Reload;
         assert!(notification.user_info().is_none());
     }
 
     #[test]
     fn test_from_notification_window_focus_changed() {
-        let notification = BarbaNotification::from_notification(
-            "com.marcosmoura.barba.window-focus-changed",
+        let notification = StacheNotification::from_notification(
+            "com.marcosmoura.stache.window-focus-changed",
             None,
         );
-        assert_eq!(notification, Some(BarbaNotification::WindowFocusChanged));
+        assert_eq!(notification, Some(StacheNotification::WindowFocusChanged));
     }
 
     #[test]
@@ -339,33 +339,33 @@ mod tests {
         let mut user_info = std::collections::HashMap::new();
         user_info.insert("workspace".to_string(), "coding".to_string());
 
-        let notification = BarbaNotification::from_notification(
-            "com.marcosmoura.barba.workspace-changed",
+        let notification = StacheNotification::from_notification(
+            "com.marcosmoura.stache.workspace-changed",
             Some(&user_info),
         );
         assert_eq!(
             notification,
-            Some(BarbaNotification::WorkspaceChanged("coding".to_string()))
+            Some(StacheNotification::WorkspaceChanged("coding".to_string()))
         );
     }
 
     #[test]
     fn test_from_notification_reload() {
         let notification =
-            BarbaNotification::from_notification("com.marcosmoura.barba.reload", None);
-        assert_eq!(notification, Some(BarbaNotification::Reload));
+            StacheNotification::from_notification("com.marcosmoura.stache.reload", None);
+        assert_eq!(notification, Some(StacheNotification::Reload));
     }
 
     #[test]
     fn test_from_notification_unknown() {
         let notification =
-            BarbaNotification::from_notification("com.marcosmoura.barba.unknown", None);
+            StacheNotification::from_notification("com.marcosmoura.stache.unknown", None);
         assert!(notification.is_none());
     }
 
     #[test]
     fn test_from_notification_wrong_prefix() {
-        let notification = BarbaNotification::from_notification("com.other.app.reload", None);
+        let notification = StacheNotification::from_notification("com.other.app.reload", None);
         assert!(notification.is_none());
     }
 }

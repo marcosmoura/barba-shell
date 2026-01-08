@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 ///
 /// This helper first checks if the provided command name is already an absolute path.
 /// If not, it searches for the executable in a priority-ordered list of directories:
-/// 1. For "barba" binary in debug mode: the `./target/debug` directory relative to the app.
-/// 2. Any directory specified via the `BARBA_EXTRA_PATHS` env var (colon-separated).
+/// 1. For "stache" binary in debug mode: the `./target/debug` directory relative to the app.
+/// 2. Any directory specified via the `STACHE_EXTRA_PATHS` env var (colon-separated).
 /// 3. The current process `PATH`.
 /// 4. A curated list of fallback directories commonly used on macOS for user-installed tools.
 ///
@@ -33,16 +33,16 @@ pub fn resolve_binary(binary: &str) -> Result<PathBuf, String> {
 
     let mut search_paths = Vec::new();
 
-    // In debug builds, prioritize the debug binary for "barba" commands
+    // In debug builds, prioritize the debug binary for "stache" commands
     // This allows testing config hotkeys with the locally-built CLI
     #[cfg(debug_assertions)]
-    if binary == "barba"
+    if binary == "stache"
         && let Some(debug_path) = get_debug_binary_path()
     {
         search_paths.push(debug_path);
     }
 
-    if let Ok(extra) = env::var("BARBA_EXTRA_PATHS") {
+    if let Ok(extra) = env::var("STACHE_EXTRA_PATHS") {
         search_paths.extend(extra.split(':').map(PathBuf::from));
     }
 
@@ -99,7 +99,7 @@ fn get_debug_binary_path() -> Option<PathBuf> {
 
     // Fallback: try to find target/debug relative to the current executable
     if let Ok(exe_path) = env::current_exe() {
-        // The executable might be in target/debug/barba-app or similar
+        // The executable might be in target/debug/stache-app or similar
         // Walk up looking for a target/debug directory
         let mut current = exe_path.parent();
         while let Some(dir) = current {

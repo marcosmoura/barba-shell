@@ -39,7 +39,7 @@ pub fn watch_config_file<R: tauri::Runtime>(app_handle: AppHandle<R>) {
         let mut watcher: RecommendedWatcher = match notify::recommended_watcher(tx) {
             Ok(w) => w,
             Err(err) => {
-                eprintln!("barba: warning: failed to create config watcher: {err}");
+                eprintln!("stache: warning: failed to create config watcher: {err}");
                 return;
             }
         };
@@ -49,7 +49,7 @@ pub fn watch_config_file<R: tauri::Runtime>(app_handle: AppHandle<R>) {
         let watch_path = config_path.parent().unwrap_or(&config_path);
 
         if let Err(err) = watcher.watch(watch_path, RecursiveMode::NonRecursive) {
-            eprintln!("barba: warning: failed to watch config file: {err}");
+            eprintln!("stache: warning: failed to watch config file: {err}");
             return;
         }
 
@@ -85,7 +85,7 @@ pub fn watch_config_file<R: tauri::Runtime>(app_handle: AppHandle<R>) {
                     {
                         last_event_time = Some(now);
                         eprintln!(
-                            "barba: config file changed. Restart the app to apply new settings."
+                            "stache: config file changed. Restart the app to apply new settings."
                         );
                     }
 
@@ -95,7 +95,7 @@ pub fn watch_config_file<R: tauri::Runtime>(app_handle: AppHandle<R>) {
                     }
                 }
                 Ok(Err(err)) => {
-                    eprintln!("barba: warning: config watch error: {err}");
+                    eprintln!("stache: warning: config watch error: {err}");
                 }
                 Err(_) => {
                     // Channel closed, watcher dropped

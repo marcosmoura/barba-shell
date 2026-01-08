@@ -8,7 +8,7 @@
 //! - **Device listing**: List all audio devices with their properties.
 //! - **Automatic device switching**: Monitors device connections/disconnections and
 //!   automatically switches to the highest priority available device.
-//! - **Config-based priorities**: Device priorities can be configured in the barba
+//! - **Config-based priorities**: Device priorities can be configured in the stache
 //!   config file under the `proxyAudio` section.
 //! - **`AirPlay` priority**: `AirPlay` devices are always given highest priority, even
 //!   if not explicitly listed in the configuration.

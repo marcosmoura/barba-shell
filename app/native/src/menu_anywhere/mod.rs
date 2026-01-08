@@ -1,4 +1,4 @@
-//! `MenuAnywhere` Module for Barba Shell.
+//! `MenuAnywhere` Module for Stache.
 //!
 //! This module provides the ability to summon the current application's menu bar
 //! at any location on screen using a configurable keyboard + mouse trigger.

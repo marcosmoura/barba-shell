@@ -167,7 +167,7 @@ fn get_interrupted_positions() -> &'static Mutex<HashMap<u32, Rect>> {
 ///
 /// Call this BEFORE trying to acquire the write lock. This increments the
 /// waiting counter, which the running animation will detect and cancel early.
-pub fn cancel_animation() { WAITING_COMMANDS.fetch_add(1, Ordering::SeqCst); }
+pub fn cancel_animation() { WAITING_COMMANDS.fetch_add(1, Ordering::Relaxed); }
 
 /// Called after acquiring the lock to signal we're no longer waiting.
 ///
@@ -176,7 +176,7 @@ pub fn cancel_animation() { WAITING_COMMANDS.fetch_add(1, Ordering::SeqCst); }
 /// acquiring the write lock.
 pub fn begin_animation() {
     // Decrement, but don't underflow (handles startup code that doesn't call cancel_animation)
-    let _ = WAITING_COMMANDS.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+    let _ = WAITING_COMMANDS.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
         Some(current.saturating_sub(1))
     });
 }
@@ -184,7 +184,7 @@ pub fn begin_animation() {
 /// Checks if other commands are waiting to run.
 /// Returns true if the animation should cancel to let them proceed.
 #[inline]
-fn should_cancel() -> bool { WAITING_COMMANDS.load(Ordering::SeqCst) > 0 }
+fn should_cancel() -> bool { WAITING_COMMANDS.load(Ordering::Relaxed) > 0 }
 
 /// Gets the interrupted position for a window, if any.
 ///
@@ -1043,21 +1043,20 @@ impl AnimationSystem {
             Vec::with_capacity(animatable.len())
         };
 
-        // Track last rendered frames for cancellation recovery
-        let mut last_rendered: Vec<Rect> =
-            animatable.iter().map(|&(idx, _)| transitions[idx].from).collect();
-
         loop {
-            // Check if other commands are waiting - if so, cancel to let them run
+            // Check if other commands are waiting - if so, cancel and snap to final positions
             if should_cancel() {
-                // Store interrupted positions for next animation to use
-                let interrupted: Vec<(u32, Rect)> = animatable
-                    .iter()
-                    .enumerate()
-                    .map(|(i, &(idx, _))| (transitions[idx].window_id, last_rendered[i]))
-                    .collect();
-                store_interrupted_positions(&interrupted);
-                return animatable.len(); // Return count of windows we were animating
+                // Snap all windows to their final target positions immediately
+                // This ensures state consistency even under rapid command spam
+                ca_transaction_begin_disabled();
+                let final_frames: Vec<(_, Rect)> =
+                    animatable.iter().map(|&(idx, ax)| (ax, transitions[idx].to)).collect();
+                set_window_frames_direct(&final_frames);
+                ca_transaction_commit();
+
+                // Clear interrupted positions since we've snapped to targets
+                clear_interrupted_positions(&window_ids);
+                return animatable.len();
             }
 
             let elapsed = start.elapsed();
@@ -1070,16 +1069,9 @@ impl AnimationSystem {
             let positioned = if position_only {
                 // Fast path: position-only (1 AX call per window)
                 position_frames.clear();
-                for (i, &(idx, ax)) in animatable.iter().enumerate() {
+                for &(idx, ax) in &animatable {
                     let (x, y) = transitions[idx].interpolate_position(eased_progress);
                     position_frames.push((ax, x, y));
-                    // Update last rendered for cancellation tracking
-                    last_rendered[i] = Rect {
-                        x,
-                        y,
-                        width: transitions[idx].to.width,
-                        height: transitions[idx].to.height,
-                    };
                 }
                 set_window_positions_only(&position_frames)
             } else {
@@ -1089,7 +1081,6 @@ impl AnimationSystem {
                     let new_frame = transitions[idx].interpolate(eased_progress);
                     delta_frames.push((ax, new_frame, prev_frames[i]));
                     prev_frames[i] = new_frame;
-                    last_rendered[i] = new_frame;
                 }
                 set_window_frames_delta(&delta_frames)
             };
@@ -1175,21 +1166,20 @@ impl AnimationSystem {
             Vec::with_capacity(animatable.len())
         };
 
-        // Track last rendered frames for cancellation recovery
-        let mut last_rendered: Vec<Rect> =
-            animatable.iter().map(|&(idx, _)| transitions[idx].from).collect();
-
         loop {
-            // Check if other commands are waiting - if so, cancel to let them run
+            // Check if other commands are waiting - if so, cancel and snap to final positions
             if should_cancel() {
-                // Store interrupted positions for next animation to use
-                let interrupted: Vec<(u32, Rect)> = animatable
-                    .iter()
-                    .enumerate()
-                    .map(|(i, &(idx, _))| (transitions[idx].window_id, last_rendered[i]))
-                    .collect();
-                store_interrupted_positions(&interrupted);
-                return animatable.len(); // Return count of windows we were animating
+                // Snap all windows to their final target positions immediately
+                // This ensures state consistency even under rapid command spam
+                ca_transaction_begin_disabled();
+                let final_frames: Vec<(_, Rect)> =
+                    animatable.iter().map(|&(idx, ax)| (ax, transitions[idx].to)).collect();
+                set_window_frames_direct(&final_frames);
+                ca_transaction_commit();
+
+                // Clear interrupted positions since we've snapped to targets
+                clear_interrupted_positions(&window_ids);
+                return animatable.len();
             }
 
             // Calculate actual elapsed time since last frame (wall-clock time)
@@ -1212,18 +1202,11 @@ impl AnimationSystem {
             let positioned = if position_only {
                 // Fast path: position-only (1 AX call per window)
                 position_frames.clear();
-                for (i, &(idx, ax)) in animatable.iter().enumerate() {
+                for &(idx, ax) in &animatable {
                     let progress =
                         spring_states[idx].calculate_position(spring_states[idx].elapsed);
                     let (x, y) = transitions[idx].interpolate_position(progress);
                     position_frames.push((ax, x, y));
-                    // Update last rendered for cancellation tracking
-                    last_rendered[i] = Rect {
-                        x,
-                        y,
-                        width: transitions[idx].to.width,
-                        height: transitions[idx].to.height,
-                    };
                 }
                 set_window_positions_only(&position_frames)
             } else {
@@ -1235,7 +1218,6 @@ impl AnimationSystem {
                     let new_frame = transitions[idx].interpolate(progress);
                     delta_frames.push((ax, new_frame, prev_frames[i]));
                     prev_frames[i] = new_frame;
-                    last_rendered[i] = new_frame;
                 }
                 set_window_frames_delta(&delta_frames)
             };

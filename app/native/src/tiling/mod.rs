@@ -1456,7 +1456,14 @@ mod tests {
     // Drag-and-Drop Tests
     // ========================================================================
 
-    fn make_snapshot(id: u32, x: f64, y: f64, w: f64, h: f64, floating: bool) -> drag_state::WindowSnapshot {
+    fn make_snapshot(
+        id: u32,
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        floating: bool,
+    ) -> drag_state::WindowSnapshot {
         drag_state::WindowSnapshot {
             window_id: id,
             original_frame: Rect::new(x, y, w, h),
@@ -1472,7 +1479,7 @@ mod tests {
     fn test_find_drag_swap_target_window_dropped_on_another() {
         // Two windows side by side, window 1 is dragged onto window 2's position
         let snapshots = vec![
-            make_snapshot(1, 0.0, 0.0, 500.0, 600.0, false),   // Left window
+            make_snapshot(1, 0.0, 0.0, 500.0, 600.0, false), // Left window
             make_snapshot(2, 500.0, 0.0, 500.0, 600.0, false), // Right window
         ];
 
@@ -1529,7 +1536,7 @@ mod tests {
     fn test_find_drag_swap_target_ignores_floating_windows() {
         // Floating window dragged onto tiled window - should not swap
         let snapshots = vec![
-            make_snapshot(1, 0.0, 0.0, 500.0, 600.0, true),    // Floating
+            make_snapshot(1, 0.0, 0.0, 500.0, 600.0, true), // Floating
             make_snapshot(2, 500.0, 0.0, 500.0, 600.0, false), // Tiled
         ];
 
@@ -1546,7 +1553,7 @@ mod tests {
     fn test_find_drag_swap_target_does_not_swap_with_floating() {
         // Tiled window dragged onto floating window - should not swap
         let snapshots = vec![
-            make_snapshot(1, 0.0, 0.0, 500.0, 600.0, false),  // Tiled
+            make_snapshot(1, 0.0, 0.0, 500.0, 600.0, false), // Tiled
             make_snapshot(2, 500.0, 0.0, 500.0, 600.0, true), // Floating
         ];
 

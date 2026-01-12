@@ -2102,8 +2102,7 @@ impl TilingManager {
             let window_count = ws.window_ids.len();
 
             // Get current proportions (individual sizes) from ratios
-            let mut proportions =
-                cumulative_ratios_to_proportions(&ws.split_ratios, window_count);
+            let mut proportions = cumulative_ratios_to_proportions(&ws.split_ratios, window_count);
 
             // Swap the proportions so each window keeps its size
             proportions.swap(focused_idx, target_idx);

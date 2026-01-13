@@ -251,8 +251,10 @@ const MAX_PANEL_HEIGHT: f64 = 200.0;
 const MAX_PANEL_WIDTH: f64 = 450.0;
 
 /// Minimum size for an untitled window to be considered "real".
-/// Untitled windows smaller than this are likely popups/previews.
-const MIN_UNTITLED_WINDOW_SIZE: f64 = 800.0;
+/// Untitled windows smaller than this in BOTH dimensions are likely popups/previews.
+/// Note: Some apps (like Ghostty) don't set titles immediately when windows are created,
+/// so we use a lower threshold to avoid filtering legitimate windows.
+const MIN_UNTITLED_WINDOW_SIZE: f64 = 300.0;
 
 /// Checks if a window matches the built-in ignore list.
 fn should_ignore_builtin(window: &WindowInfo) -> bool {
@@ -275,11 +277,7 @@ fn should_ignore_builtin(window: &WindowInfo) -> bool {
     }
 
     // Check if window is a non-standard/auxiliary window
-    if is_auxiliary_window(window) {
-        return true;
-    }
-
-    false
+    is_auxiliary_window(window)
 }
 
 /// Checks if a window is likely an auxiliary window (popup, toolbar, dialog, etc.)
@@ -313,9 +311,10 @@ fn is_auxiliary_window(window: &WindowInfo) -> bool {
     }
 
     // Untitled windows need to be substantial to be considered "real"
-    // Real untitled windows are usually fullscreen or near-fullscreen
-    // Popups, previews, overlays are typically smaller
-    if !has_title && (width < MIN_UNTITLED_WINDOW_SIZE || height < MIN_UNTITLED_WINDOW_SIZE) {
+    // Popups, previews, overlays are typically very small in both dimensions.
+    // Note: Some apps (like Ghostty, terminals) don't set titles immediately,
+    // so we only filter if BOTH dimensions are small.
+    if !has_title && width < MIN_UNTITLED_WINDOW_SIZE && height < MIN_UNTITLED_WINDOW_SIZE {
         return true;
     }
 

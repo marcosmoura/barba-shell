@@ -1,4 +1,4 @@
-// TODO: Remove these allows once the module is fully implemented
+// Allow unused imports/code in this module - many public exports are for external CLI/IPC use
 #![allow(dead_code)]
 #![allow(unused_imports)]
 
@@ -43,6 +43,7 @@
 //! ```
 
 pub mod animation;
+pub mod app_monitor;
 pub mod borders;
 pub mod drag_state;
 pub mod layout;
@@ -151,6 +152,11 @@ pub fn init_with_handle<R: Runtime>(app_handle: Option<AppHandle<R>>) {
         eprintln!("stache: tiling: screen monitor initialized");
     }
 
+    // Initialize the app launch monitor for tracking new apps
+    if app_monitor::init(handle_app_launch) {
+        eprintln!("stache: tiling: app launch monitor initialized");
+    }
+
     // Apply startup behavior: switch to workspace containing focused window
     apply_startup_behavior();
 
@@ -167,14 +173,26 @@ pub fn init() { init_with_handle::<tauri::Wry>(None); }
 // ============================================================================
 
 /// Tracks all existing windows on startup.
+///
+/// Determines the initial focused workspace based on the currently focused window,
+/// then uses that as the fallback for windows that don't match any rules.
 fn track_existing_windows() {
     let Some(manager) = get_manager() else {
         return;
     };
 
+    // Determine the initial focused workspace BEFORE tracking windows
+    // This ensures non-matching windows go to the correct workspace
+    let initial_focused_workspace = determine_initial_focused_workspace();
+
     let mut mgr = manager.write();
     if !mgr.is_enabled() {
         return;
+    }
+
+    // Set the focused workspace before tracking so the fallback is correct
+    if let Some(ref ws_name) = initial_focused_workspace {
+        mgr.set_focused_workspace_name(ws_name);
     }
 
     mgr.track_existing_windows();
@@ -186,6 +204,25 @@ fn track_existing_windows() {
 
     // Move windows to their assigned screens
     move_windows_to_assigned_screens();
+}
+
+/// Determines the initial focused workspace based on the currently focused window.
+///
+/// If the focused window matches a workspace rule, returns that workspace.
+/// Otherwise, returns the first workspace on the main screen.
+fn determine_initial_focused_workspace() -> Option<String> {
+    let focused = get_focused_window()?;
+    let workspace_configs = workspace::get_workspace_configs();
+
+    // Check if the focused window matches any workspace rule
+    let workspaces = workspace_configs.iter().map(|ws| (ws.name.as_str(), ws.rules.as_slice()));
+    if let Some(match_result) = rules::find_matching_workspace(&focused, workspaces) {
+        return Some(match_result.workspace_name);
+    }
+
+    // No rule matched - return the first workspace on the main screen
+    let config = crate::config::get_config();
+    config.tiling.workspaces.first().map(|ws| ws.name.clone())
 }
 
 /// Moves windows to their assigned workspace's screen.
@@ -210,19 +247,11 @@ fn move_windows_to_assigned_screens() {
     for window in mgr.get_windows() {
         // Get the workspace this window belongs to
         let Some(workspace) = mgr.get_workspace(&window.workspace_name) else {
-            eprintln!(
-                "stache: tiling: window {} ({}) has no workspace '{}'",
-                window.id, window.app_name, window.workspace_name
-            );
             continue;
         };
 
         // Get the target screen for this workspace
         let Some(target_screen) = screens.iter().find(|s| s.id == workspace.screen_id) else {
-            eprintln!(
-                "stache: tiling: workspace '{}' has no screen {}",
-                workspace.name, workspace.screen_id
-            );
             continue;
         };
 
@@ -246,51 +275,27 @@ fn move_windows_to_assigned_screens() {
     drop(mgr); // Release lock before doing moves
 
     if windows_to_move.is_empty() {
-        eprintln!("stache: tiling: all windows already on correct screens");
         return;
     }
-
-    eprintln!(
-        "stache: tiling: moving {} windows to their assigned screens",
-        windows_to_move.len()
-    );
 
     // Move windows to their target screens and collect successful moves
     let mut moved_windows: Vec<(u32, Rect)> = Vec::new();
 
-    for (window_id, app_name, workspace_name, target_screen, current_screen) in windows_to_move {
-        let current_name = current_screen.as_ref().map_or("unknown", |s| s.name.as_str());
-
+    for (window_id, _app_name, _workspace_name, target_screen, current_screen) in windows_to_move {
         if move_window_to_screen(window_id, &target_screen, current_screen.as_ref()) {
-            eprintln!(
-                "stache: tiling: moved '{}' from '{}' to '{}' (workspace '{}')",
-                app_name, current_name, target_screen.name, workspace_name
-            );
-
             // Get the window's new frame after moving
             if let Some(new_frame) = get_window_frame_by_id(window_id) {
                 moved_windows.push((window_id, new_frame));
             }
-        } else {
-            eprintln!(
-                "stache: tiling: failed to move '{}' to '{}' (workspace '{}')",
-                app_name, target_screen.name, workspace_name
-            );
         }
     }
 
     // Update tracked window frames in the manager
     if !moved_windows.is_empty() {
-        {
-            let mut mgr = manager.write();
-            for (window_id, new_frame) in &moved_windows {
-                mgr.update_window_frame(*window_id, *new_frame);
-            }
+        let mut mgr = manager.write();
+        for (window_id, new_frame) in &moved_windows {
+            mgr.update_window_frame(*window_id, *new_frame);
         }
-        eprintln!(
-            "stache: tiling: updated {} window frames after moving",
-            moved_windows.len()
-        );
     }
 }
 
@@ -315,70 +320,19 @@ fn apply_startup_behavior() {
     // Get the currently focused window
     let focused = get_focused_window();
 
-    // Debug: log what focused window we detected
-    if let Some(ref fw) = focused {
-        eprintln!(
-            "stache: tiling: startup: detected focused window: id={}, app='{}', title='{}'",
-            fw.id, fw.app_name, fw.title
-        );
-    } else {
-        eprintln!("stache: tiling: startup: no focused window detected");
-    }
-
     // Get the focused window ID if it's tracked
-    #[allow(clippy::option_if_let_else)] // More readable with if let for logging
     let focused_window_id = {
         let mgr = manager.read();
         if !mgr.is_enabled() {
             return;
         }
 
-        focused.as_ref().and_then(|fw| {
-            // Only use the focused window if it's actually tracked
-            if let Some(tracked) = mgr.get_window(fw.id) {
-                eprintln!(
-                    "stache: tiling: startup: focused window is tracked in workspace '{}'",
-                    tracked.workspace_name
-                );
-                Some(fw.id)
-            } else {
-                eprintln!(
-                    "stache: tiling: startup: focused window id={} is NOT tracked (ignored or not found)",
-                    fw.id
-                );
-                None
-            }
-        })
+        focused.as_ref().and_then(|fw| mgr.get_window(fw.id).map(|_| fw.id))
     };
 
     // Set initial workspace visibility
     let mut mgr = manager.write();
     mgr.set_initial_workspace_visibility(focused_window_id);
-
-    // Log the result
-    if let Some(focused_ws) = mgr.state().focused_workspace.as_ref() {
-        if focused_window_id.is_some() {
-            eprintln!(
-                "stache: tiling: startup: focused workspace '{focused_ws}' (contains focused window)"
-            );
-        } else {
-            eprintln!(
-                "stache: tiling: startup: focused workspace '{focused_ws}' (default - no focused window found)"
-            );
-        }
-    }
-
-    // Log visible workspaces per screen
-    for screen in mgr.get_screens() {
-        if let Some(visible_ws) =
-            mgr.get_workspaces().iter().find(|w| w.screen_id == screen.id && w.is_visible)
-        {
-            eprintln!(
-                "stache: tiling: startup: screen '{}' -> workspace '{}'",
-                screen.name, visible_ws.name
-            );
-        }
-    }
 
     // Now hide windows from non-visible workspaces and show windows from visible ones
     apply_initial_window_visibility(&mgr);
@@ -397,66 +351,25 @@ fn apply_startup_behavior() {
 fn apply_initial_window_visibility(mgr: &TilingManager) {
     use workspace::{hide_workspace_windows, show_workspace_windows};
 
-    let mut total_hidden = 0;
-    let mut total_shown = 0;
-
     for ws in mgr.get_workspaces() {
         let windows: Vec<_> = mgr.get_windows_for_workspace(&ws.name);
 
         if ws.is_visible {
-            // Show borders for visible workspaces
             TilingManager::show_borders_for_workspace(&ws.name);
-
-            if windows.is_empty() {
-                continue;
-            }
-
-            // Show all windows in visible workspaces (some might be hidden)
-            let (shown, _failures) = show_workspace_windows(&windows);
-            // Note: show_workspace_windows returns false for already-visible apps,
-            // which is not a real failure - we just count actual unhides
-            if shown > 0 {
-                total_shown += shown;
-                eprintln!(
-                    "stache: tiling: startup: showed {} windows in workspace '{}'",
-                    shown, ws.name
-                );
+            if !windows.is_empty() {
+                show_workspace_windows(&windows);
             }
         } else {
-            // Hide borders for non-visible workspaces
             TilingManager::hide_borders_for_workspace(&ws.name);
-
-            if windows.is_empty() {
-                continue;
-            }
-
-            // Hide all windows in non-visible workspaces
-            let (hidden, failures) = hide_workspace_windows(&windows);
-            if hidden > 0 {
-                total_hidden += hidden;
-                eprintln!(
-                    "stache: tiling: startup: hid {} windows in workspace '{}'",
-                    hidden, ws.name
-                );
-            }
-            if !failures.is_empty() {
-                eprintln!(
-                    "stache: tiling: startup: failed to hide {} apps in workspace '{}'",
-                    failures.len(),
-                    ws.name
-                );
+            if !windows.is_empty() {
+                hide_workspace_windows(&windows);
             }
         }
     }
-
-    eprintln!(
-        "stache: tiling: startup: visibility applied - {total_shown} shown, {total_hidden} hidden"
-    );
 }
 
 /// Applies layouts to all visible workspaces on startup.
 fn apply_initial_layouts(mgr: &mut TilingManager) {
-    // Collect visible workspace names first to avoid borrow issues
     let visible_workspaces: Vec<String> = mgr
         .get_workspaces()
         .iter()
@@ -465,13 +378,7 @@ fn apply_initial_layouts(mgr: &mut TilingManager) {
         .collect();
 
     for ws_name in visible_workspaces {
-        // Use forced mode at startup to ensure all windows are positioned correctly
-        let repositioned = mgr.apply_layout_forced(&ws_name);
-        if repositioned > 0 {
-            eprintln!(
-                "stache: tiling: startup: applied layout to {repositioned} windows in workspace '{ws_name}'"
-            );
-        }
+        mgr.apply_layout_forced(&ws_name);
     }
 }
 
@@ -632,10 +539,6 @@ fn handle_move_finished(info: &drag_state::DragInfo) {
 
     if !info.has_tiled_windows() {
         // All floating windows - nothing to snap back
-        eprintln!(
-            "stache: tiling: drag: all windows floating in '{}' - keeping positions",
-            info.workspace_name
-        );
         return;
     }
 
@@ -643,10 +546,6 @@ fn handle_move_finished(info: &drag_state::DragInfo) {
     if let Some((dragged_id, target_id)) =
         find_drag_swap_target(&info.window_snapshots, &current_windows)
     {
-        eprintln!(
-            "stache: tiling: drag: window {dragged_id} dropped on window {target_id} - swapping"
-        );
-
         let Some(manager) = get_manager() else {
             return;
         };
@@ -663,11 +562,6 @@ fn handle_move_finished(info: &drag_state::DragInfo) {
     }
 
     // No swap target - just snap back to layout position
-    eprintln!(
-        "stache: tiling: drag: tiled windows moved - reapplying layout for workspace '{}'",
-        info.workspace_name
-    );
-
     let Some(manager) = get_manager() else {
         return;
     };
@@ -771,11 +665,6 @@ fn handle_resize_finished(info: &drag_state::DragInfo) {
     update_all_tracked_frames(&info.workspace_name);
 
     if !info.has_tiled_windows() {
-        // All floating windows - just keep new sizes
-        eprintln!(
-            "stache: tiling: drag: all windows floating in '{}' - keeping sizes",
-            info.workspace_name
-        );
         return;
     }
 
@@ -783,21 +672,16 @@ fn handle_resize_finished(info: &drag_state::DragInfo) {
         return;
     };
 
-    // Cancel any running animation before acquiring lock
     cancel_animation();
 
     let mut mgr = manager.write();
-    begin_animation(); // Signal we're no longer waiting
+    begin_animation();
     if !mgr.is_enabled() {
         return;
     }
 
     // Calculate and apply new ratios, passing the resized window info
     if let Some((window_id, old_frame, new_frame)) = resized_window {
-        eprintln!(
-            "stache: tiling: drag: window {} resized from ({:.0}x{:.0}) to ({:.0}x{:.0}) - calculating ratios",
-            window_id, old_frame.width, old_frame.height, new_frame.width, new_frame.height
-        );
         mgr.calculate_and_apply_ratios_for_window(
             &info.workspace_name,
             window_id,
@@ -805,7 +689,6 @@ fn handle_resize_finished(info: &drag_state::DragInfo) {
             new_frame,
         );
     } else {
-        eprintln!("stache: tiling: drag: couldn't identify resized window - reapplying layout");
         mgr.apply_layout_forced(&info.workspace_name);
     }
 }
@@ -870,7 +753,7 @@ fn update_all_tracked_frames(workspace_name: &str) {
 }
 
 /// Maximum time to wait for windows to be ready (in milliseconds).
-const WINDOW_READY_TIMEOUT_MS: u64 = 150;
+const WINDOW_READY_TIMEOUT_MS: u64 = 25;
 
 /// How often to poll for window readiness (in milliseconds).
 const WINDOW_READY_POLL_INTERVAL_MS: u64 = 5;
@@ -887,13 +770,14 @@ const WINDOW_READY_POLL_INTERVAL_MS: u64 = 5;
 fn handle_window_created(pid: i32) {
     // Spawn a thread to handle this asynchronously
     std::thread::spawn(move || {
-        // Poll until windows are ready (have valid AX frames) or timeout
-        // This is faster than a fixed delay for most apps, and more reliable for slow apps
-        let app_windows = window::wait_for_app_windows_ready(
-            pid,
-            WINDOW_READY_TIMEOUT_MS,
-            WINDOW_READY_POLL_INTERVAL_MS,
-        );
+        // Get the count of currently tracked windows for this PID
+        let tracked_count = get_manager().map_or(0, |m| {
+            m.read().get_windows().iter().filter(|w| w.pid == pid).count()
+        });
+
+        // Poll for windows, waiting until we see more than what's tracked
+        // (since we received a window created event, we expect a new window)
+        let app_windows = wait_for_new_windows(pid, tracked_count);
 
         let current_ids: std::collections::HashSet<u32> =
             app_windows.iter().map(|w| w.id).collect();
@@ -949,10 +833,6 @@ fn handle_window_created(pid: i32) {
                 {
                     // This is a tab swap - just update the ID in place (no layout change)
                     if mgr.swap_window_id(*stale_id, new_window.id) {
-                        eprintln!(
-                            "stache: tiling: tab swap: {} -> {} ({}) - no layout change",
-                            stale_id, new_window.id, new_window.app_name
-                        );
                         swapped_stale_ids.insert(*stale_id);
                         swapped_new_ids.insert(new_window.id);
                     }
@@ -962,39 +842,29 @@ fn handle_window_created(pid: i32) {
         }
 
         // Untrack stale windows that weren't swapped (real window closures)
-        // Use no_layout variant - we'll apply layout once at the end if needed
         let mut workspaces_changed: std::collections::HashSet<String> =
             std::collections::HashSet::new();
         for (stale_id, _) in &stale_windows {
             if !swapped_stale_ids.contains(stale_id) {
-                // Get workspace before untracking
                 if let Some(w) = mgr.get_window(*stale_id) {
                     workspaces_changed.insert(w.workspace_name.clone());
                 }
-                eprintln!("stache: tiling: untracking stale window {stale_id}");
                 mgr.untrack_window_no_layout(*stale_id);
             }
         }
 
         // Track new windows that weren't swapped (real new windows)
-        // Use no_layout variant - we'll apply layout once at the end if needed
-        for new_window in new_windows {
+        for new_window in &new_windows {
             if !swapped_new_ids.contains(&new_window.id)
                 && let Some(workspace_name) = mgr.track_window_no_layout(new_window)
             {
-                eprintln!(
-                    "stache: tiling: tracked new window {} ({}) in workspace '{}'",
-                    new_window.id, new_window.app_name, workspace_name
-                );
                 workspaces_changed.insert(workspace_name);
             }
         }
 
         // Only apply layout if there were real window changes (not just tab swaps)
         if !workspaces_changed.is_empty() {
-            // Apply layout immediately - windows are already ready from polling
             for workspace_name in &workspaces_changed {
-                eprintln!("stache: tiling: applying layout for workspace '{workspace_name}'");
                 mgr.apply_layout_forced(workspace_name);
             }
         }
@@ -1009,6 +879,45 @@ fn frames_approximately_equal(a: &Rect, b: &Rect) -> bool {
         && (a.y - b.y).abs() < TOLERANCE
         && (a.width - b.width).abs() < TOLERANCE
         && (a.height - b.height).abs() < TOLERANCE
+}
+
+/// Waits for new windows to appear for a given PID.
+///
+/// Since we received a window created event, we expect to see more windows than
+/// what's currently tracked. This function polls until we see new windows or timeout.
+fn wait_for_new_windows(pid: i32, currently_tracked: usize) -> Vec<WindowInfo> {
+    use std::time::{Duration, Instant};
+
+    let start = Instant::now();
+    let max_wait = Duration::from_millis(WINDOW_READY_TIMEOUT_MS);
+    let poll_interval = Duration::from_millis(WINDOW_READY_POLL_INTERVAL_MS);
+
+    // Small initial delay to let the window system register the new window
+    std::thread::sleep(Duration::from_millis(20));
+
+    loop {
+        let windows = window::get_all_windows_including_hidden();
+        let app_windows: Vec<WindowInfo> = windows.into_iter().filter(|w| w.pid == pid).collect();
+
+        // If we found more windows than tracked, or if there are new IDs, we're done
+        if app_windows.len() > currently_tracked {
+            return app_windows;
+        }
+
+        // Even if count is same, check if any IDs are different (tab swap case)
+        // This handles the case where a tab is closed and a new one opened simultaneously
+        if !app_windows.is_empty() && start.elapsed() >= Duration::from_millis(50) {
+            // After 50ms, return whatever we have - the IDs might have changed
+            return app_windows;
+        }
+
+        // Check timeout
+        if start.elapsed() >= max_wait {
+            return app_windows;
+        }
+
+        std::thread::sleep(poll_interval);
+    }
 }
 
 /// Handles a window being destroyed.
@@ -1074,10 +983,6 @@ fn handle_window_destroyed(pid: i32) {
             {
                 // This is a tab swap - just update the ID in place (no layout change)
                 if mgr.swap_window_id(*destroyed_id, new_window.id) {
-                    eprintln!(
-                        "stache: tiling: tab swap: {} -> {} ({}) - no layout change",
-                        destroyed_id, new_window.id, new_window.app_name
-                    );
                     swapped_destroyed_ids.insert(*destroyed_id);
                     swapped_new_ids.insert(new_window.id);
                 }
@@ -1087,39 +992,28 @@ fn handle_window_destroyed(pid: i32) {
     }
 
     // Untrack destroyed windows that weren't swapped (real window closures)
-    // Use no_layout variant - we'll apply layout once at the end if needed
     let mut workspaces_changed: std::collections::HashSet<String> =
         std::collections::HashSet::new();
     for (destroyed_id, _) in &destroyed_windows {
         if !swapped_destroyed_ids.contains(destroyed_id) {
-            // Get workspace before untracking
             if let Some(w) = mgr.get_window(*destroyed_id) {
                 workspaces_changed.insert(w.workspace_name.clone());
             }
-            eprintln!("stache: tiling: untracking destroyed window {destroyed_id}");
             mgr.untrack_window_no_layout(*destroyed_id);
         }
     }
 
     // Track new windows that weren't swapped (shouldn't normally happen in destroy handler)
-    // Use no_layout variant - we'll apply layout once at the end if needed
     for new_window in new_windows {
         if !swapped_new_ids.contains(&new_window.id)
             && let Some(workspace_name) = mgr.track_window_no_layout(new_window)
         {
-            eprintln!(
-                "stache: tiling: tracked new window {} ({}) in workspace '{}'",
-                new_window.id, new_window.app_name, workspace_name
-            );
             workspaces_changed.insert(workspace_name);
         }
     }
 
     // Apply layout for workspaces that had real window changes (not just tab swaps)
     for workspace_name in &workspaces_changed {
-        eprintln!(
-            "stache: tiling: applying layout for workspace '{workspace_name}' after window destruction"
-        );
         mgr.apply_layout_forced(workspace_name);
     }
 }
@@ -1128,6 +1022,10 @@ fn handle_window_destroyed(pid: i32) {
 ///
 /// Implements focus-follows-workspace: when a window is focused that belongs
 /// to a different workspace on the same screen, switch to that workspace.
+///
+/// Also handles native tab switching: when the focused window ID isn't tracked
+/// but matches a tracked window's frame (same app, same position), it's a tab
+/// swap - we update the ID inline and proceed with workspace switching.
 fn handle_window_focused(pid: i32) {
     let Some(manager) = get_manager() else {
         return;
@@ -1135,7 +1033,6 @@ fn handle_window_focused(pid: i32) {
 
     // Get the currently focused window
     let Some(focused) = get_focused_window() else {
-        eprintln!("stache: tiling: focus event: could not get focused window for PID {pid}");
         return;
     };
 
@@ -1144,30 +1041,40 @@ fn handle_window_focused(pid: i32) {
         return;
     }
 
-    eprintln!(
-        "stache: tiling: focus event: window {} ({} - '{}') focused",
-        focused.id, focused.app_name, focused.title
-    );
-
-    // Cancel any running animation before acquiring lock
     cancel_animation();
 
     let mut mgr = manager.write();
-    begin_animation(); // Signal we're no longer waiting
+    begin_animation();
     if !mgr.is_enabled() {
         return;
     }
 
-    // Find the tracked window - if not found, focus went to an untracked window
-    let Some(tracked) = mgr.get_window(focused.id).cloned() else {
-        // Window not tracked - focus moved outside the tiling system
-        // Set all borders to unfocused state
-        eprintln!(
-            "stache: tiling: focus event: window {} not tracked, clearing all focus borders",
-            focused.id
-        );
-        mgr.clear_all_focus_borders();
-        return;
+    // Find the tracked window - if not found, check for tab swap or new window
+    let tracked = if let Some(t) = mgr.get_window(focused.id).cloned() {
+        t
+    } else {
+        // Window not tracked - check if this is a tab swap (same app, same frame)
+        // This handles native macOS tabs where the window ID changes when switching tabs
+        if let Some(_swapped_workspace) = try_handle_tab_swap_inline(&mut mgr, &focused) {
+            // Tab swap detected and handled - get the updated tracked window
+            if let Some(t) = mgr.get_window(focused.id).cloned() {
+                t
+            } else {
+                // Shouldn't happen, but handle gracefully
+                mgr.clear_all_focus_borders();
+                return;
+            }
+        } else {
+            // Not a tab swap - try to track this as a new window
+            // This handles new app launches and windows created from apps we're already tracking
+            if let Some(tracked) = try_track_new_focused_window(&mut mgr, &focused) {
+                tracked
+            } else {
+                // Window couldn't be tracked (likely ignored by rules)
+                mgr.clear_all_focus_borders();
+                return;
+            }
+        }
     };
 
     // Check if we should skip this focus event (it might be a stale event
@@ -1184,35 +1091,105 @@ fn handle_window_focused(pid: i32) {
     if let Some(target) = target_ws {
         if target.is_visible {
             // Workspace is already visible, just update the focused window
-            eprintln!(
-                "stache: tiling: focus event: workspace '{window_workspace}' already visible, updating focus"
-            );
             mgr.set_focused_window(&window_workspace, focused.id);
             return;
         }
 
         // Check if we should skip this workspace switch (debounce recent switches)
-        // This prevents race conditions where focus events from hide/show operations
-        // during a workspace switch trigger another switch.
         if mgr.should_skip_workspace_switch(&window_workspace) {
             return;
         }
 
         // Workspace is not visible - switch to it
-        eprintln!(
-            "stache: tiling: focus event: switching to workspace '{}' (screen {})",
-            window_workspace, target.screen_id
-        );
-
-        if let Some(info) = mgr.switch_workspace(&window_workspace) {
-            eprintln!(
-                "stache: tiling: focus-follows-workspace: switched to '{}' (window {} focused)",
-                info.workspace, focused.id
-            );
-        }
-    } else {
-        eprintln!("stache: tiling: focus event: workspace '{window_workspace}' not found");
+        mgr.switch_workspace(&window_workspace);
     }
+}
+
+/// Tries to handle a tab swap inline during focus handling.
+///
+/// When a focus event arrives for an untracked window, this checks if it's actually
+/// a tab swap (same app, same frame as a tracked window). If so, it swaps the
+/// window ID in place.
+///
+/// This is necessary because native macOS tabs generate new window IDs when
+/// switching tabs, but the asynchronous tab detection in `handle_window_created`
+/// may not have run yet.
+///
+/// # Returns
+///
+/// `Some(workspace_name)` if a tab swap was detected and handled, `None` otherwise.
+fn try_handle_tab_swap_inline(
+    mgr: &mut TilingManager,
+    focused: &window::WindowInfo,
+) -> Option<String> {
+    // Find a tracked window from the same app with a matching frame
+    let matching_window = mgr
+        .get_windows()
+        .iter()
+        .find(|w| w.pid == focused.pid && frames_approximately_equal(&w.frame, &focused.frame))
+        .map(|w| (w.id, w.workspace_name.clone()));
+
+    if let Some((old_id, workspace_name)) = matching_window {
+        // This is a tab swap - update the window ID inline
+        if mgr.swap_window_id(old_id, focused.id) {
+            return Some(workspace_name);
+        }
+    }
+
+    None
+}
+
+/// Tries to track a new focused window that isn't currently tracked.
+///
+/// This handles:
+/// 1. Windows from newly launched apps (after startup)
+/// 2. Windows created from apps we're already tracking
+///
+/// If the window matches an ignore rule, returns `None`.
+/// If the window is tracked successfully, returns the tracked window info.
+///
+/// Also ensures an observer is registered for the app if not already present.
+fn try_track_new_focused_window(
+    mgr: &mut TilingManager,
+    focused: &window::WindowInfo,
+) -> Option<state::TrackedWindow> {
+    // Check if this window should be ignored
+    let ignore_rules = workspace::get_ignore_rules();
+    if workspace::should_ignore_window(focused, &ignore_rules) {
+        return None;
+    }
+
+    // Ensure we have an observer for this app
+    // This is important for apps launched after startup
+    let _ = observer::add_observer_by_pid(focused.pid, Some(&focused.app_name));
+
+    // Determine which workspace to assign this window to
+    let workspace_configs = workspace::get_workspace_configs();
+    let focused_ws = mgr
+        .get_focused_workspace()
+        .map_or_else(|| "main".to_string(), |ws| ws.name.clone());
+
+    let assignment =
+        workspace::assign_window_to_workspace(focused, &workspace_configs, &focused_ws);
+
+    // Track the window
+    if let Some(workspace_name) = mgr.track_window_no_layout(focused) {
+        // Get the tracked window info
+        if let Some(tracked) = mgr.get_window(focused.id).cloned() {
+            // If the window was assigned to a workspace with a rule, switch to that workspace
+            if assignment.matched_rule {
+                // The window matched a rule - switch to its assigned workspace
+                mgr.switch_workspace(&workspace_name);
+            }
+
+            // Apply layout to the workspace
+            mgr.apply_layout_forced(&workspace_name);
+
+            return Some(tracked);
+        }
+    }
+
+    None
 }
 
 /// Handles an application being activated.
@@ -1277,6 +1254,102 @@ fn handle_screen_change() {
     );
 
     screen_monitor::set_processing(false);
+}
+
+// ============================================================================
+// App Launch Handler
+// ============================================================================
+
+/// Handles a new application being launched.
+///
+/// This is called by the app launch monitor when `NSWorkspaceDidLaunchApplicationNotification`
+/// is received. It:
+/// 1. Adds an `AXObserver` for the new app
+/// 2. Waits for the app's windows to be ready
+/// 3. Tracks the windows according to workspace rules
+/// 4. Switches to the appropriate workspace if rules match
+#[allow(clippy::needless_pass_by_value)] // Signature required by callback type
+fn handle_app_launch(pid: i32, _bundle_id: Option<String>, app_name: Option<String>) {
+    // First, add an observer for this app so we receive window events
+    let _ = observer::add_observer_by_pid(pid, app_name.as_deref());
+
+    // Spawn a thread to wait for windows and track them
+    std::thread::spawn(move || {
+        // Wait for the app's windows to be ready
+        // Use short timeout since the AXObserver will also catch window creation events
+        let app_windows = window::wait_for_app_windows_ready(
+            pid,
+            WINDOW_READY_TIMEOUT_MS, // 150ms - same as handle_window_created
+            WINDOW_READY_POLL_INTERVAL_MS, // 5ms poll
+        );
+
+        if app_windows.is_empty() {
+            // App might not have windows yet, or windows aren't ready
+            // The observer will catch them when they're created
+            return;
+        }
+
+        let Some(manager) = get_manager() else {
+            return;
+        };
+
+        // Cancel any running animation before acquiring lock
+        cancel_animation();
+
+        let mut mgr = manager.write();
+        begin_animation();
+        if !mgr.is_enabled() {
+            return;
+        }
+
+        // Get ignore rules and workspace configs
+        let ignore_rules = workspace::get_ignore_rules();
+        let workspace_configs = workspace::get_workspace_configs();
+        let focused_ws = mgr
+            .get_focused_workspace()
+            .map_or_else(|| "main".to_string(), |ws| ws.name.clone());
+
+        // Track each window
+        let mut workspaces_changed: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        let mut matched_workspace: Option<String> = None;
+
+        for window in &app_windows {
+            // Skip if window should be ignored
+            if workspace::should_ignore_window(window, &ignore_rules) {
+                continue;
+            }
+
+            // Skip if already tracked
+            if mgr.get_window(window.id).is_some() {
+                continue;
+            }
+
+            // Determine which workspace to assign this window to
+            let assignment =
+                workspace::assign_window_to_workspace(window, &workspace_configs, &focused_ws);
+
+            // Track the window
+            if let Some(workspace_name) = mgr.track_window_no_layout(window) {
+                workspaces_changed.insert(workspace_name.clone());
+
+                // Remember if any window matched a rule
+                if assignment.matched_rule && matched_workspace.is_none() {
+                    matched_workspace = Some(workspace_name);
+                }
+            }
+        }
+
+        // If any windows matched a rule, switch to that workspace
+        if let Some(ws_name) = matched_workspace {
+            mgr.switch_workspace(&ws_name);
+        }
+
+        // Apply layouts to changed workspaces
+        for workspace_name in &workspaces_changed {
+            mgr.apply_layout_forced(workspace_name);
+        }
+    });
 }
 
 // ============================================================================
@@ -1385,6 +1458,9 @@ fn query_windows(
         return IpcResponse::error("Tiling not enabled");
     }
 
+    // Get the currently focused window ID
+    let focused_window_id = get_focused_window().map(|w| w.id);
+
     // Determine filter criteria
     let filter_screen_id: Option<u32> = if focused_screen {
         mgr.get_focused_screen().map(|s| s.id)
@@ -1436,6 +1512,8 @@ fn query_windows(
             continue;
         }
 
+        let is_focused = focused_window_id == Some(w.id);
+
         windows.push(serde_json::json!({
             "id": w.id,
             "pid": w.pid,
@@ -1443,6 +1521,7 @@ fn query_windows(
             "appName": w.app_name,
             "title": w.title,
             "workspace": w.workspace_name,
+            "isFocused": is_focused,
             "frame": {
                 "x": w.frame.x,
                 "y": w.frame.y,

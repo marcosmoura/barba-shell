@@ -121,12 +121,6 @@ pub fn start_operation(
         *guard = Some(info);
         OPERATION_DRAG_SEQUENCE.store(drag_sequence, Ordering::SeqCst);
         OPERATION_IN_PROGRESS.store(true, Ordering::SeqCst);
-
-        let op_type = match operation {
-            DragOperation::Move => "move",
-            DragOperation::Resize => "resize",
-        };
-        eprintln!("stache: tiling: drag: started {op_type} in workspace '{workspace_name}'");
     }
 }
 
@@ -135,9 +129,6 @@ pub fn start_operation(
 /// Use this when the operation should be abandoned (e.g., window was destroyed).
 pub fn cancel_operation() {
     if let Ok(mut guard) = CURRENT_OPERATION.lock() {
-        if guard.is_some() {
-            eprintln!("stache: tiling: drag: operation cancelled");
-        }
         *guard = None;
     }
     OPERATION_IN_PROGRESS.store(false, Ordering::SeqCst);
@@ -154,18 +145,7 @@ pub fn cancel_operation() {
 /// The completed operation info, or `None` if no operation was in progress.
 pub fn finish_operation() -> Option<DragInfo> {
     let info = CURRENT_OPERATION.lock().ok().and_then(|mut guard| guard.take());
-
     OPERATION_IN_PROGRESS.store(false, Ordering::SeqCst);
-
-    if let Some(ref info) = info {
-        let op_type = match info.operation {
-            DragOperation::Move => "move",
-            DragOperation::Resize => "resize",
-        };
-        let workspace_name = &info.workspace_name;
-        eprintln!("stache: tiling: drag: finished {op_type} in workspace '{workspace_name}'");
-    }
-
     info
 }
 

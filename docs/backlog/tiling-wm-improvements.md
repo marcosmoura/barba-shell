@@ -6,7 +6,7 @@
 ## Status: In Progress
 
 **Last Updated**: 2026-01-13
-**Current Phase**: Milestones 1-3 complete, Milestone 4 pending
+**Current Phase**: Milestones 1-3 complete, starting Milestone 4 (FFI Safety)
 
 ---
 
@@ -96,77 +96,77 @@ proptest = "1.5"
 
 ## Implementation Milestones
 
-### Milestone 1: Error Handling & Constants
+### Milestone 1: Error Handling & Constants ✅ COMPLETE
 
-**Status**: [ ] Not Started / [ ] In Progress / [ ] Complete
+**Status**: [x] Complete
 
 **Goal**: Create unified error handling system and centralize magic numbers.
 
-#### Phase 1.1: Create TilingError Type
+#### Phase 1.1: Create TilingError Type ✅
 
-- [ ] Create `tiling/error.rs` with `TilingError` enum:
-  - [ ] `NotInitialized` - Manager not initialized
-  - [ ] `WorkspaceNotFound(String)` - Workspace lookup failed
-  - [ ] `WindowNotFound(u32)` - Window lookup failed
-  - [ ] `ScreenNotFound(String)` - Screen lookup failed
-  - [ ] `AccessibilityError { code, message }` - AX API errors
-  - [ ] `WindowOperation(String)` - Generic window op failure
-  - [ ] `Observer(String)` - Observer system errors
-  - [ ] `AnimationCancelled` - Animation was interrupted
-- [ ] Implement `std::error::Error` and `Display` traits
-- [ ] Add `From` implementations for common conversions
-- [ ] Export from `tiling/mod.rs`
+- [x] Create `tiling/error.rs` with `TilingError` enum:
+  - [x] `NotInitialized` - Manager not initialized
+  - [x] `WorkspaceNotFound(String)` - Workspace lookup failed
+  - [x] `WindowNotFound(u32)` - Window lookup failed
+  - [x] `ScreenNotFound(String)` - Screen lookup failed
+  - [x] `AccessibilityError { code, message }` - AX API errors
+  - [x] `WindowOperation(String)` - Generic window op failure
+  - [x] `Observer(String)` - Observer system errors
+  - [x] `AnimationCancelled` - Animation was interrupted
+- [x] Implement `std::error::Error` and `Display` traits
+- [x] Add `From` implementations for common conversions
+- [x] Export from `tiling/mod.rs`
 
-#### Phase 1.2: Convert Window Operations to Result
+#### Phase 1.2: Convert Window Operations to Result ✅
 
-- [ ] Update `window.rs` functions to return `Result<T, TilingError>`:
-  - [ ] `set_window_frame()` → `Result<(), TilingError>`
-  - [ ] `set_window_frame_with_retry()` → `Result<(), TilingError>`
-  - [ ] `focus_window()` → `Result<(), TilingError>`
-  - [ ] `hide_window()` / `show_window()` → `Result<(), TilingError>`
-  - [ ] `hide_app()` / `unhide_app()` → `Result<(), TilingError>`
-  - [ ] `minimize_window()` / `unminimize_window()` → `Result<(), TilingError>`
-- [ ] Update all call sites in `manager.rs`, `mod.rs`, `workspace.rs`
-- [ ] Add error logging with context at call sites
+- [x] Update `window.rs` functions to return `Result<T, TilingError>`:
+  - [x] `set_window_frame()` → `Result<(), TilingError>`
+  - [x] `set_window_frame_with_retry()` → `Result<(), TilingError>`
+  - [x] `focus_window()` → `Result<(), TilingError>`
+  - [x] `hide_window()` / `show_window()` → `Result<(), TilingError>`
+  - [x] `hide_app()` / `unhide_app()` → `Result<(), TilingError>`
+  - [x] `minimize_window()` / `unminimize_window()` → `Result<(), TilingError>`
+- [x] Update all call sites in `manager.rs`, `mod.rs`, `workspace.rs`
+- [x] Add error logging with context at call sites
 
-#### Phase 1.3: Add Error Context to Observer Callbacks
+#### Phase 1.3: Add Error Context to Observer Callbacks ✅
 
-- [ ] Update `observer.rs` to propagate errors:
-  - [ ] `add_observer()` - already returns `Result`, improve messages
-  - [ ] `add_notification()` - log failures with context instead of ignoring
-  - [ ] Observer callback - wrap in error handling
-- [ ] Add retry logic for transient AX failures
+- [x] Update `observer.rs` to propagate errors:
+  - [x] `add_observer()` - already returns `Result`, improve messages
+  - [x] `add_notification()` - log failures with context instead of ignoring
+  - [x] Observer callback - wrap in error handling
+- [x] Add retry logic for transient AX failures
 
-#### Phase 1.4: Create Constants Module
+#### Phase 1.4: Create Constants Module ✅
 
-- [ ] Create `tiling/constants.rs` with documented constants:
-  - [ ] `timing::FOCUS_COOLDOWN_MS` (25)
-  - [ ] `timing::WORKSPACE_SWITCH_COOLDOWN_MS` (25)
-  - [ ] `timing::HIDE_SHOW_DELAY_MS` (10)
-  - [ ] `timing::SCREEN_CHANGE_DELAY_MS` (100)
-  - [ ] `timing::WINDOW_READY_TIMEOUT_MS` (25)
-  - [ ] `timing::WINDOW_READY_POLL_INTERVAL_MS` (5)
-  - [ ] `timing::EVENT_COALESCE_MS` (4)
-  - [ ] `window_size::MIN_TRACKABLE_SIZE` (50.0)
-  - [ ] `window_size::MAX_PANEL_HEIGHT` (200.0)
-  - [ ] `window_size::MAX_PANEL_WIDTH` (450.0)
-  - [ ] `window_size::MIN_UNTITLED_WINDOW_SIZE` (300.0)
-  - [ ] `layout::REPOSITION_THRESHOLD_PX` (2.0)
-  - [ ] `animation::TARGET_FPS` (120.0)
-  - [ ] `animation::VSYNC_TIMEOUT_MULTIPLIER` (2.0)
-  - [ ] `animation::SPRING_CONVERGENCE_THRESHOLD` (0.001)
-- [ ] Update all files to use constants module
-- [ ] Remove hardcoded values from `manager.rs`, `workspace.rs`, `animation.rs`, `mod.rs`, `screen_monitor.rs`
+- [x] Create `tiling/constants.rs` with documented constants:
+  - [x] `timing::FOCUS_COOLDOWN_MS` (25)
+  - [x] `timing::WORKSPACE_SWITCH_COOLDOWN_MS` (25)
+  - [x] `timing::HIDE_SHOW_DELAY_MS` (10)
+  - [x] `timing::SCREEN_CHANGE_DELAY_MS` (100)
+  - [x] `timing::WINDOW_READY_TIMEOUT_MS` (25)
+  - [x] `timing::WINDOW_READY_POLL_INTERVAL_MS` (5)
+  - [x] `timing::EVENT_COALESCE_MS` (4)
+  - [x] `window_size::MIN_TRACKABLE_SIZE` (50.0)
+  - [x] `window_size::MAX_PANEL_HEIGHT` (200.0)
+  - [x] `window_size::MAX_PANEL_WIDTH` (450.0)
+  - [x] `window_size::MIN_UNTITLED_WINDOW_SIZE` (320.0)
+  - [x] `layout::REPOSITION_THRESHOLD_PX` (1.0)
+  - [x] `animation::DEFAULT_FPS` (60)
+  - [x] `animation::VSYNC_TIMEOUT_MULTIPLIER` (2.0)
+  - [x] `animation::SPRING_POSITION_THRESHOLD` (0.01)
+- [x] Update all files to use constants module
+- [x] Remove hardcoded values from `manager.rs`, `workspace.rs`, `animation.rs`, `mod.rs`, `screen_monitor.rs`
 
-- [ ] Run tests, fix clippy warnings, ensure build passes
+- [x] Run tests, fix clippy warnings, ensure build passes
 
 **Verification**: All tiling operations return `Result`, constants centralized, tests pass
 
 ---
 
-### Milestone 2: Code Structure Refactoring
+### Milestone 2: Code Structure Refactoring ✅ COMPLETE
 
-**Status**: [x] In Progress (Phases 2.1-2.2 complete, Phase 2.3 deferred)
+**Status**: [x] Complete (Phase 2.3 deferred by design)
 
 **Goal**: Break down large files into focused, maintainable modules.
 
@@ -240,9 +240,9 @@ Files with FFI (kept as-is):
 
 ---
 
-### Milestone 3: Thread Safety Improvements
+### Milestone 3: Thread Safety Improvements ✅ COMPLETE
 
-**Status**: [x] Complete (Phases 3.2-3.4 done, Phase 3.1 deferred)
+**Status**: [x] Complete (Phase 3.1 deferred by design)
 
 **Goal**: Eliminate race conditions and improve lock patterns.
 
@@ -609,6 +609,7 @@ thread spawns are well-contained. Deferring to a future milestone if issues aris
 
 ## Change Log
 
-| Date       | Change                           |
-| ---------- | -------------------------------- |
-| 2026-01-13 | Initial improvement plan created |
+| Date       | Change                                                    |
+| ---------- | --------------------------------------------------------- |
+| 2026-01-13 | Initial improvement plan created                          |
+| 2026-01-13 | Milestones 1-3 completed, fixed REPOSITION_THRESHOLD test |

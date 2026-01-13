@@ -22,6 +22,7 @@ mod master;
 mod monocle;
 mod split;
 
+pub use floating::{calculate_preset_frame, find_preset, list_preset_names};
 pub use gaps::Gaps;
 
 use crate::config::{LayoutType, MasterPosition};

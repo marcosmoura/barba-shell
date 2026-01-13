@@ -2915,6 +2915,82 @@ impl TilingManager {
 
         true
     }
+
+    /// Applies a floating preset to the focused window.
+    ///
+    /// The preset defines the window's size and position (centered, half-screen, etc.).
+    /// Gaps are respected when calculating the final frame.
+    ///
+    /// # Arguments
+    ///
+    /// * `preset_name` - Name of the preset to apply (case-insensitive).
+    ///
+    /// # Returns
+    ///
+    /// `true` if the preset was applied successfully, `false` otherwise.
+    pub fn apply_preset(&mut self, preset_name: &str) -> bool {
+        // Find the preset
+        let Some(preset) = super::layout::find_preset(preset_name) else {
+            eprintln!("stache: tiling: preset not found: '{preset_name}'");
+            let available = super::layout::list_preset_names();
+            if available.is_empty() {
+                eprintln!("stache: tiling: no presets configured");
+            } else {
+                eprintln!("stache: tiling: available presets: {}", available.join(", "));
+            }
+            return false;
+        };
+
+        // Get the focused workspace and window
+        let Some(workspace) = self.state.focused_workspace() else {
+            eprintln!("stache: tiling: apply_preset: no focused workspace");
+            return false;
+        };
+
+        let focused_idx = workspace.focused_window_index.unwrap_or(0);
+        let Some(&window_id) = workspace.window_ids.get(focused_idx) else {
+            eprintln!("stache: tiling: apply_preset: no focused window");
+            return false;
+        };
+
+        let screen_id = workspace.screen_id;
+
+        // Get the screen
+        let Some(screen) = self.state.screen_by_id(screen_id).cloned() else {
+            eprintln!("stache: tiling: apply_preset: screen not found");
+            return false;
+        };
+
+        // Resolve gaps for this screen
+        let config = get_config();
+        let gaps = Gaps::from_config(&config.tiling.gaps, &screen.name, screen.is_main);
+
+        // Calculate the frame from the preset
+        let frame = super::layout::calculate_preset_frame(&preset, &screen.visible_frame, &gaps);
+
+        // Apply the frame
+        if !set_window_frame(window_id, &frame) {
+            eprintln!("stache: tiling: apply_preset: failed to set window frame");
+            return false;
+        }
+
+        // Update tracked window frame
+        if let Some(window) = self.state.windows.iter_mut().find(|w| w.id == window_id) {
+            window.frame = frame;
+        }
+
+        eprintln!(
+            "stache: tiling: applied preset '{}' to window {} (frame: {}x{} at {},{})",
+            preset_name,
+            window_id,
+            frame.width as i32,
+            frame.height as i32,
+            frame.x as i32,
+            frame.y as i32
+        );
+
+        true
+    }
 }
 
 impl Default for TilingManager {

@@ -55,7 +55,7 @@ use crate::config::{
 // ============================================================================
 
 /// Cache of last sent commands to prevent duplicate sends.
-/// Key is the setting name (e.g., "active_color"), value is the full argument string.
+/// Key is the setting name (e.g., "`active_color`"), value is the full argument string.
 static LAST_SENT: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
 
 /// Gets the command cache.
@@ -65,7 +65,7 @@ fn get_cache() -> &'static Mutex<HashMap<String, String>> {
 
 /// Clears the command cache, forcing the next commands to be sent.
 ///
-/// Call this when configuration is reloaded or JankyBorders is restarted.
+/// Call this when configuration is reloaded or `JankyBorders` is restarted.
 pub fn clear_cache() { get_cache().lock().clear(); }
 
 // ============================================================================
@@ -167,7 +167,7 @@ pub fn border_color_to_janky(color: &BorderColor) -> Option<String> {
 /// Checks if the command arguments have changed since last send.
 ///
 /// Returns the filtered list of arguments that have actually changed.
-/// This prevents sending duplicate commands that would cause JankyBorders
+/// This prevents sending duplicate commands that would cause `JankyBorders`
 /// to unnecessarily recompute borders, which can cause flickering.
 fn filter_changed_args<'a>(args: &[&'a str]) -> Vec<&'a str> {
     let cache = get_cache();
@@ -199,7 +199,7 @@ fn filter_changed_args<'a>(args: &[&'a str]) -> Vec<&'a str> {
 ///
 /// Commands are cached to prevent duplicate sends - if the same key=value
 /// pair is sent twice in a row, the second send is skipped to prevent
-/// JankyBorders from unnecessarily recomputing borders (which causes flickering).
+/// `JankyBorders` from unnecessarily recomputing borders (which causes flickering).
 ///
 /// # Arguments
 ///
@@ -458,7 +458,7 @@ pub fn update_colors_for_state(is_monocle: bool, is_floating: bool) {
 /// Refreshes `JankyBorders` configuration from current settings.
 ///
 /// This clears the command cache and re-applies all configuration settings,
-/// ensuring JankyBorders receives the latest values even if they haven't changed.
+/// ensuring `JankyBorders` receives the latest values even if they haven't changed.
 pub fn refresh() -> bool {
     clear_cache();
     let config = get_config();

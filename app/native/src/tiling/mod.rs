@@ -61,6 +61,7 @@ pub use animation::{
     AnimationConfig, AnimationSystem, WindowTransition, begin_animation, cancel_animation,
     get_interrupted_position,
 };
+pub use layout::{calculate_preset_frame, find_preset, list_preset_names};
 pub use manager::{TilingManager, WorkspaceSwitchInfo, get_manager, init_manager};
 pub use observer::{WindowEvent, WindowEventType};
 pub use rules::{

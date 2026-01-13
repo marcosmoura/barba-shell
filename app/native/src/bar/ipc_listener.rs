@@ -190,8 +190,20 @@ fn handle_notification<R: Runtime>(app_handle: &AppHandle<R>, notification: Stac
         }
 
         StacheNotification::TilingWindowPreset(preset) => {
-            // TODO: Implement window presets (half-left, half-right, etc.)
-            eprintln!("stache: tiling: window presets not yet implemented: {preset}");
+            std::thread::spawn(move || {
+                if let Some(manager) = crate::tiling::get_manager() {
+                    cancel_animation();
+                    let mut mgr = manager.write();
+                    begin_animation();
+                    if mgr.apply_preset(&preset) {
+                        eprintln!("stache: tiling: applied preset '{preset}'");
+                    } else {
+                        eprintln!("stache: tiling: failed to apply preset: {preset}");
+                    }
+                } else {
+                    eprintln!("stache: tiling: manager not initialized");
+                }
+            });
         }
 
         StacheNotification::TilingWindowSendToWorkspace(workspace) => {

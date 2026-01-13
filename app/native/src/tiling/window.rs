@@ -653,12 +653,10 @@ pub fn get_all_windows_including_hidden() -> Vec<WindowInfo> { get_all_windows_i
 /// - Frame-based deduplication incorrectly merging distinct windows
 /// - Stale `CGWindowList` data
 fn get_all_windows_internal(include_hidden: bool) -> Vec<WindowInfo> {
-    // Get CGWindowList info - use all windows if including hidden
-    let cg_windows = if include_hidden {
-        get_cg_window_list_all()
-    } else {
-        get_cg_window_list()
-    };
+    // Use the full CG window list for matching.
+    // Some apps (like Ghostty) don't appear in ON_SCREEN_ONLY list even when visible.
+    // We use the full list and filter by frame matching to get the right window.
+    let cg_windows = get_cg_window_list_all();
 
     // Build a map of PID -> bundle_id from running apps
     let apps = get_running_apps();
@@ -668,8 +666,13 @@ fn get_all_windows_internal(include_hidden: bool) -> Vec<WindowInfo> {
         apps.iter().map(|app| (app.pid, app.is_hidden)).collect();
 
     // Group CG windows by PID for matching with AX windows
+    // Filter out non-standard windows (menus, tooltips, etc.) by layer or tiny size
     let mut pid_to_cg_windows: HashMap<i32, Vec<&CGWindowInfo>> = HashMap::new();
     for win in &cg_windows {
+        // Skip tiny windows (likely menus, tooltips, etc.)
+        if win.frame.width < 50.0 || win.frame.height < 50.0 {
+            continue;
+        }
         pid_to_cg_windows.entry(win.pid).or_default().push(win);
     }
 
@@ -702,7 +705,7 @@ fn get_all_windows_internal(include_hidden: bool) -> Vec<WindowInfo> {
             let is_focused = unsafe { get_ax_bool(*ax, cf_focused()) }.unwrap_or(false);
 
             // Find the best matching CG window for this AX window
-            // Prefer exact frame match, then closest match
+            // For apps with native tabs (multiple CG windows at same frame), pick lowest ID
             let cg_match = find_best_cg_match(&frame, cg_wins, &matched_cg_ids);
 
             let (window_id, is_hidden) = if let Some(cg_win) = cg_match {
@@ -738,6 +741,8 @@ fn get_all_windows_internal(include_hidden: bool) -> Vec<WindowInfo> {
 /// Finds the best matching CG window for an AX window frame.
 ///
 /// Returns the CG window with the closest frame match that hasn't been matched yet.
+/// When multiple windows have the same frame (native tabs), prefers the lowest ID
+/// for consistency (lower IDs tend to be more stable and positionable).
 fn find_best_cg_match<'a>(
     ax_frame: &Rect,
     cg_windows: &[&'a CGWindowInfo],
@@ -745,6 +750,7 @@ fn find_best_cg_match<'a>(
 ) -> Option<&'a CGWindowInfo> {
     let mut best_match: Option<&'a CGWindowInfo> = None;
     let mut best_distance = f64::MAX;
+    let mut best_id = u32::MAX;
 
     for cg_win in cg_windows {
         // Skip already matched windows
@@ -760,9 +766,15 @@ fn find_best_cg_match<'a>(
         let distance = dx + dy + dw + dh;
 
         // Only consider matches within reasonable tolerance (10 pixels total)
-        if distance < 10.0 && distance < best_distance {
-            best_distance = distance;
-            best_match = Some(cg_win);
+        if distance < 10.0 {
+            // Prefer closer matches, or lower ID on ties (more stable for native tabs)
+            // Use small epsilon for float comparison (0.1 pixel)
+            let is_tie = (distance - best_distance).abs() < 0.1;
+            if distance < best_distance || (is_tie && cg_win.id < best_id) {
+                best_distance = distance;
+                best_id = cg_win.id;
+                best_match = Some(cg_win);
+            }
         }
     }
 
@@ -956,14 +968,42 @@ unsafe fn get_focused_window_unsafe() -> Option<WindowInfo> {
     let is_hidden: BOOL = msg_send![frontmost_app, isHidden];
 
     // Now match with CGWindowList to get the window ID
+    // Some apps (especially GPU-accelerated ones like Ghostty) may report slightly
+    // different frames between AX and CG APIs, so we use multiple matching strategies.
     let cg_list = get_cg_window_list();
-    let cg_match = cg_list.iter().find(|cg| {
-        cg.pid == pid
-            && (cg.frame.x - ax_frame.x).abs() < 2.0
+    let app_windows: Vec<&CGWindowInfo> = cg_list.iter().filter(|cg| cg.pid == pid).collect();
+
+    // Strategy 1: Match by frame with tight tolerance (2px)
+    let mut cg_match: Option<&CGWindowInfo> = app_windows.iter().copied().find(|cg| {
+        (cg.frame.x - ax_frame.x).abs() < 2.0
             && (cg.frame.y - ax_frame.y).abs() < 2.0
             && (cg.frame.width - ax_frame.width).abs() < 2.0
             && (cg.frame.height - ax_frame.height).abs() < 2.0
     });
+
+    // Strategy 2: Match by frame with looser tolerance (10px) - helps with GPU-rendered apps
+    if cg_match.is_none() {
+        cg_match = app_windows.iter().copied().find(|cg| {
+            (cg.frame.x - ax_frame.x).abs() < 10.0
+                && (cg.frame.y - ax_frame.y).abs() < 10.0
+                && (cg.frame.width - ax_frame.width).abs() < 10.0
+                && (cg.frame.height - ax_frame.height).abs() < 10.0
+        });
+    }
+
+    // Strategy 3: Match by title if there's exactly one window with that title
+    if cg_match.is_none() && !title.is_empty() {
+        let title_matches: Vec<_> =
+            app_windows.iter().copied().filter(|cg| cg.title == title).collect();
+        if title_matches.len() == 1 {
+            cg_match = Some(title_matches[0]);
+        }
+    }
+
+    // Strategy 4: If there's only one window from this app, use it
+    if cg_match.is_none() && app_windows.len() == 1 {
+        cg_match = Some(app_windows[0]);
+    }
 
     let window_id = cg_match.map_or(0, |cg| cg.id);
 
@@ -1050,40 +1090,11 @@ pub fn set_windows_for_pid(pid: i32, window_frames: &[(Rect, Rect)]) -> usize {
         CFRelease(app_element.cast());
 
         if ax_windows.is_empty() {
-            eprintln!(
-                "stache: tiling: DEBUG set_windows_for_pid: pid {pid} has 0 AX windows (app may be hidden)"
-            );
             return 0;
         }
 
-        eprintln!(
-            "stache: tiling: DEBUG set_windows_for_pid: pid {pid} has {} AX windows, {} targets",
-            ax_windows.len(),
-            window_frames.len()
-        );
-
         // Get current frames for all AX windows
         let ax_frames: Vec<Option<Rect>> = ax_windows.iter().map(|w| get_ax_frame(*w)).collect();
-
-        // Debug: log actual AX frames
-        for (i, frame) in ax_frames.iter().enumerate() {
-            if let Some(f) = frame {
-                eprintln!(
-                    "stache: tiling: DEBUG   AX window {i}: actual=({:.0},{:.0} {:.0}x{:.0})",
-                    f.x, f.y, f.width, f.height
-                );
-            } else {
-                eprintln!("stache: tiling: DEBUG   AX window {i}: could not get frame");
-            }
-        }
-
-        // Debug: log tracked frames we're trying to match
-        for (i, (current, target)) in window_frames.iter().enumerate() {
-            eprintln!(
-                "stache: tiling: DEBUG   target {i}: tracked=({:.0},{:.0}) -> target=({:.0},{:.0})",
-                current.x, current.y, target.x, target.y
-            );
-        }
 
         // Match each target to an AX window using Hungarian-style greedy matching
         // This ensures each AX window is matched to at most one target
@@ -1111,18 +1122,9 @@ pub fn set_windows_for_pid(pid: i32, window_frames: &[(Rect, Rect)]) -> usize {
                 }
             }
 
-            if let Some((idx, distance)) = best_match {
-                eprintln!(
-                    "stache: tiling: DEBUG   matched target ({:.0},{:.0}) to AX window {idx} (distance={:.0})",
-                    target_frame.x, target_frame.y, distance
-                );
+            if let Some((idx, _distance)) = best_match {
                 used_ax_indices.insert(idx);
                 matches.push((idx, *target_frame));
-            } else {
-                eprintln!(
-                    "stache: tiling: DEBUG   NO MATCH for target ({:.0},{:.0})",
-                    target_frame.x, target_frame.y
-                );
             }
         }
 
@@ -1133,10 +1135,6 @@ pub fn set_windows_for_pid(pid: i32, window_frames: &[(Rect, Rect)]) -> usize {
                 success_count += 1;
             }
         }
-
-        eprintln!(
-            "stache: tiling: DEBUG set_windows_for_pid: pid {pid} success_count={success_count}"
-        );
 
         // Clean up AX references
         for w in ax_windows {
@@ -1570,6 +1568,41 @@ pub fn show_window(window_id: u32) -> bool {
         .is_some_and(|window| unhide_app(window.pid) && focus_window(window_id))
 }
 
+/// Off-screen position for hiding windows without minimizing them.
+/// This moves windows far off the visible screen area.
+const OFFSCREEN_X: f64 = -30000.0;
+const OFFSCREEN_Y: f64 = -30000.0;
+
+/// Moves a window off-screen to hide it without minimizing.
+///
+/// This is used for cross-workspace apps where we can't use app-level hiding
+/// (because that would hide windows in the target workspace too) and we don't
+/// want to minimize windows.
+///
+/// # Arguments
+///
+/// * `window_id` - The `CGWindowID` of the window to move off-screen
+///
+/// # Returns
+///
+/// `true` if the window was successfully moved off-screen.
+pub fn move_window_offscreen(window_id: u32) -> bool {
+    let windows = get_all_windows();
+    let Some(window) = windows.iter().find(|w| w.id == window_id) else {
+        return false;
+    };
+
+    // Move to off-screen position, keeping the same size
+    let offscreen_frame = super::state::Rect {
+        x: OFFSCREEN_X,
+        y: OFFSCREEN_Y,
+        width: window.frame.width,
+        height: window.frame.height,
+    };
+
+    set_window_frame(window_id, &offscreen_frame)
+}
+
 /// Waits for windows from a specific app to become ready (have valid AX frames).
 ///
 /// Instead of using a fixed delay, this polls the app's windows until they have
@@ -1596,13 +1629,15 @@ pub fn wait_for_app_windows_ready(
     let poll_interval = Duration::from_millis(poll_interval_ms);
 
     loop {
-        // Get fresh window list for this app
-        let windows = get_all_windows();
+        // Get fresh window list for this app, including hidden windows.
+        // This ensures we catch newly created windows that may not have CG IDs yet
+        // (e.g., Ghostty native tabs which take time to get CG window entries).
+        let windows = get_all_windows_including_hidden();
         let app_windows: Vec<WindowInfo> = windows.into_iter().filter(|w| w.pid == pid).collect();
 
         // Check if we found any windows
         if !app_windows.is_empty() {
-            // All windows in get_all_windows() already have valid frames
+            // All windows in get_all_windows_including_hidden() have valid frames
             // (windows without valid frames are skipped in get_all_windows_internal)
             return app_windows;
         }

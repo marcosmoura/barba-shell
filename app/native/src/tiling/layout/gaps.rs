@@ -36,14 +36,23 @@ impl Gaps {
 
     /// Resolves gaps from configuration for a specific screen.
     ///
+    /// On the main screen, the bar offset (bar height + padding) is automatically
+    /// added to the top gap to account for the status bar.
+    ///
     /// # Arguments
     ///
     /// * `config` - The gaps configuration value
     /// * `screen_name` - Name of the screen to resolve gaps for
     /// * `is_main_screen` - Whether this is the main screen
+    /// * `bar_offset` - Additional top offset for the status bar (only applied on main screen)
     #[must_use]
-    pub fn from_config(config: &GapsConfigValue, screen_name: &str, is_main_screen: bool) -> Self {
-        match config {
+    pub fn from_config(
+        config: &GapsConfigValue,
+        screen_name: &str,
+        is_main_screen: bool,
+        bar_offset: f64,
+    ) -> Self {
+        let mut gaps = match config {
             GapsConfigValue::Global(g) => Self::from_gaps_config(g),
             GapsConfigValue::PerScreen(screens) => {
                 // Find matching screen config
@@ -70,7 +79,14 @@ impl Gaps {
                     }
                 })
             }
+        };
+
+        // Add bar offset to top gap on main screen only
+        if is_main_screen {
+            gaps.outer_top += bar_offset;
         }
+
+        gaps
     }
 
     /// Converts a `GapsConfig` to `Gaps`.
@@ -143,5 +159,47 @@ mod tests {
         assert_eq!(usable.y, 20.0);
         assert_eq!(usable.width, 1880.0); // 1920 - 20 - 20
         assert_eq!(usable.height, 1040.0); // 1080 - 20 - 20
+    }
+
+    #[test]
+    fn test_from_config_global_with_bar_offset_main_screen() {
+        let config = GapsConfigValue::Global(GapsConfig {
+            inner: crate::config::GapValue::Uniform(10),
+            outer: crate::config::GapValue::Uniform(20),
+        });
+
+        // Main screen should have bar offset added to top
+        let gaps = Gaps::from_config(&config, "Main Display", true, 40.0);
+        assert_eq!(gaps.outer_top, 60.0); // 20 + 40 bar offset
+        assert_eq!(gaps.outer_right, 20.0);
+        assert_eq!(gaps.outer_bottom, 20.0);
+        assert_eq!(gaps.outer_left, 20.0);
+    }
+
+    #[test]
+    fn test_from_config_global_with_bar_offset_secondary_screen() {
+        let config = GapsConfigValue::Global(GapsConfig {
+            inner: crate::config::GapValue::Uniform(10),
+            outer: crate::config::GapValue::Uniform(20),
+        });
+
+        // Secondary screen should NOT have bar offset added
+        let gaps = Gaps::from_config(&config, "Secondary Display", false, 40.0);
+        assert_eq!(gaps.outer_top, 20.0); // No bar offset
+        assert_eq!(gaps.outer_right, 20.0);
+        assert_eq!(gaps.outer_bottom, 20.0);
+        assert_eq!(gaps.outer_left, 20.0);
+    }
+
+    #[test]
+    fn test_from_config_zero_bar_offset() {
+        let config = GapsConfigValue::Global(GapsConfig {
+            inner: crate::config::GapValue::Uniform(10),
+            outer: crate::config::GapValue::Uniform(20),
+        });
+
+        // Zero bar offset should not change anything
+        let gaps = Gaps::from_config(&config, "Main Display", true, 0.0);
+        assert_eq!(gaps.outer_top, 20.0);
     }
 }

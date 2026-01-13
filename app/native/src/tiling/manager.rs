@@ -99,11 +99,11 @@ pub fn init_manager<R: Runtime>(app_handle: Option<AppHandle<R>>) -> bool {
 // ============================================================================
 
 /// Duration to ignore focus events after programmatic focus (in milliseconds).
-const FOCUS_COOLDOWN_MS: u128 = 50;
+const FOCUS_COOLDOWN_MS: u128 = 25;
 
 /// Duration to ignore workspace switch requests after a recent switch (in milliseconds).
 /// This prevents race conditions where focus events during a switch trigger another switch.
-const WORKSPACE_SWITCH_COOLDOWN_MS: u128 = 50;
+const WORKSPACE_SWITCH_COOLDOWN_MS: u128 = 25;
 
 /// Delay between hiding old workspace windows and showing new ones (in milliseconds).
 /// This gives macOS time to process the hide operation before we start showing windows.
@@ -248,13 +248,9 @@ impl TilingManager {
     ///
     /// A tuple of (`screens_added`, `screens_removed`) counts.
     pub fn handle_screen_change(&mut self) -> (usize, usize) {
-        eprintln!("stache: tiling: handling screen configuration change");
-
         // Capture old screen state
         let old_screen_ids: std::collections::HashSet<u32> =
             self.state.screens.iter().map(|s| s.id).collect();
-        let old_screen_names: std::collections::HashMap<u32, String> =
-            self.state.screens.iter().map(|s| (s.id, s.name.clone())).collect();
 
         // Refresh screen list
         self.refresh_screens();
@@ -266,16 +262,6 @@ impl TilingManager {
         let added_screens: Vec<u32> = new_screen_ids.difference(&old_screen_ids).copied().collect();
         let removed_screens: Vec<u32> =
             old_screen_ids.difference(&new_screen_ids).copied().collect();
-
-        // Log changes
-        for screen_id in &added_screens {
-            let name = self.state.screen_by_id(*screen_id).map_or("unknown", |s| s.name.as_str());
-            eprintln!("stache: tiling: screen connected: '{name}' (id={screen_id})");
-        }
-        for screen_id in &removed_screens {
-            let name = old_screen_names.get(screen_id).map_or("unknown", String::as_str);
-            eprintln!("stache: tiling: screen disconnected: '{name}' (id={screen_id})");
-        }
 
         // Handle removed screens - move windows to primary
         if !removed_screens.is_empty() {
@@ -298,7 +284,6 @@ impl TilingManager {
     /// 3. Apply layout on the primary screen
     fn handle_screens_removed(&mut self, removed_screen_ids: &[u32]) {
         let Some(main_screen) = self.state.main_screen().cloned() else {
-            eprintln!("stache: tiling: no main screen available for workspace migration");
             return;
         };
 
@@ -317,11 +302,6 @@ impl TilingManager {
             return;
         }
 
-        eprintln!(
-            "stache: tiling: migrating {} workspaces to main screen",
-            affected_workspaces.len()
-        );
-
         // Collect windows to move (window_id, workspace_name)
         let windows_to_move: Vec<(u32, String)> = affected_workspaces
             .iter()
@@ -334,25 +314,16 @@ impl TilingManager {
             .collect();
 
         // Reassign workspaces to main screen and mark them as NOT visible
-        // (only one workspace per screen can be visible at a time)
         for ws_name in &affected_workspaces {
             if let Some(ws) = self.state.workspace_by_name_mut(ws_name) {
-                let old_screen_id = ws.screen_id;
                 ws.screen_id = main_screen_id;
-                ws.is_visible = false; // Hide migrated workspaces - main screen already has a visible one
-                eprintln!(
-                    "stache: tiling: workspace '{ws_name}' reassigned from screen {old_screen_id} to main screen {main_screen_id} (now hidden)"
-                );
+                ws.is_visible = false;
             }
         }
 
         // Move windows to main screen (off-screen, since their workspaces are now hidden)
-        for (window_id, ws_name) in &windows_to_move {
-            if super::window::move_window_to_screen(*window_id, &main_screen, None) {
-                eprintln!(
-                    "stache: tiling: moved window {window_id} from workspace '{ws_name}' to main screen"
-                );
-            }
+        for (window_id, _ws_name) in &windows_to_move {
+            super::window::move_window_to_screen(*window_id, &main_screen, None);
         }
 
         // Update tracked window frames
@@ -415,18 +386,9 @@ impl TilingManager {
             return;
         }
 
-        eprintln!(
-            "stache: tiling: restoring {} workspaces to their configured screens",
-            workspaces_to_restore.len()
-        );
-
-        for (ws_name, configured_screen_name, old_screen_id, new_screen_id) in
+        for (ws_name, _configured_screen_name, _old_screen_id, new_screen_id) in
             &workspaces_to_restore
         {
-            eprintln!(
-                "stache: tiling: restoring workspace '{ws_name}' to screen '{configured_screen_name}' (id={new_screen_id})"
-            );
-
             // Get the target screen info
             let Some(target_screen) = self.state.screen_by_id(*new_screen_id).cloned() else {
                 continue;
@@ -439,18 +401,11 @@ impl TilingManager {
             // Reassign workspace to configured screen
             if let Some(ws) = self.state.workspace_by_name_mut(ws_name) {
                 ws.screen_id = *new_screen_id;
-                eprintln!(
-                    "stache: tiling: workspace '{ws_name}' reassigned from screen {old_screen_id} to configured screen {new_screen_id}"
-                );
             }
 
             // Move windows to the restored screen
             for window_id in &window_ids {
-                if super::window::move_window_to_screen(*window_id, &target_screen, None) {
-                    eprintln!(
-                        "stache: tiling: moved window {window_id} to screen '{configured_screen_name}'"
-                    );
-                }
+                super::window::move_window_to_screen(*window_id, &target_screen, None);
             }
 
             // Update tracked window frames
@@ -503,12 +458,8 @@ impl TilingManager {
 
         // Make each workspace visible
         for ws_name in &workspaces_to_show {
-            // Mark as visible
             if let Some(ws) = self.state.workspace_by_name_mut(ws_name) {
                 ws.is_visible = true;
-                eprintln!(
-                    "stache: tiling: set workspace '{ws_name}' as visible on restored screen"
-                );
             }
 
             // Show all windows in this workspace
@@ -565,14 +516,6 @@ impl TilingManager {
                         ws_config.layout,
                     );
                     self.state.workspaces.push(workspace);
-
-                    // Log if workspace is on a different screen than configured
-                    if self.resolve_screen_name(&ws_config.screen).is_none() {
-                        eprintln!(
-                            "stache: tiling: workspace '{}' configured for screen '{}' which is not connected, using main screen",
-                            ws_config.name, ws_config.screen
-                        );
-                    }
                 }
             }
         }
@@ -720,6 +663,15 @@ impl TilingManager {
     #[must_use]
     pub fn get_focused_workspace(&self) -> Option<&Workspace> { self.state.focused_workspace() }
 
+    /// Sets the focused workspace by name.
+    ///
+    /// This is used during initialization to set the focused workspace before
+    /// tracking windows, so that non-matching windows can be assigned to the
+    /// correct fallback workspace.
+    pub fn set_focused_workspace_name(&mut self, name: &str) {
+        self.state.focused_workspace = Some(name.to_string());
+    }
+
     /// Gets a workspace by name.
     #[must_use]
     pub fn get_workspace(&self, name: &str) -> Option<&Workspace> {
@@ -774,7 +726,6 @@ impl TilingManager {
             self.state.windows_for_workspace(name).iter().map(|w| w.pid).collect();
 
         // Hide windows in current workspace (if different from target)
-        // BUT only hide apps that don't have windows in the target workspace
         if let Some(ref current_name) = current_ws_name
             && current_name != name
         {
@@ -783,51 +734,32 @@ impl TilingManager {
                 self.focus_history.record(current_name, focused_id);
             }
 
-            // Get windows to hide, excluding apps that will be shown
-            let windows_to_hide: Vec<&TrackedWindow> = self
-                .state
-                .windows_for_workspace(current_name)
-                .into_iter()
-                .filter(|w| !pids_to_show.contains(&w.pid))
-                .collect();
+            // Separate windows into two groups:
+            // 1. Windows from apps that are ONLY in the source workspace -> hide the app
+            // 2. Windows from apps that have windows in BOTH workspaces -> move off-screen
+            let all_source_windows = self.state.windows_for_workspace(current_name);
 
+            let (windows_to_hide, windows_to_move_offscreen): (Vec<_>, Vec<_>) =
+                all_source_windows.into_iter().partition(|w| !pids_to_show.contains(&w.pid));
+
+            // Hide apps that only have windows in the source workspace
             if !windows_to_hide.is_empty() {
-                let (hidden, failures) = hide_workspace_windows(&windows_to_hide);
-                if !failures.is_empty() {
-                    eprintln!(
-                        "stache: tiling: failed to hide {} apps from workspace '{}'",
-                        failures.len(),
-                        current_name
-                    );
-                }
+                let (hidden, _failures) = hide_workspace_windows(&windows_to_hide);
                 if hidden > 0 {
-                    eprintln!(
-                        "stache: tiling: hid {hidden} windows from workspace '{current_name}'"
-                    );
                     // Give macOS time to process the hide operation before showing new windows.
-                    // This prevents race conditions where the hide and show operations overlap,
-                    // which can leave windows from both workspaces visible.
                     std::thread::sleep(std::time::Duration::from_millis(HIDE_SHOW_DELAY_MS));
                 }
             }
 
+            // Move windows from cross-workspace apps off-screen
+            // This handles apps like Finder/Safari that have windows in multiple workspaces
+            // We can't use app-level hiding because that would hide windows in the target workspace
+            for window in windows_to_move_offscreen {
+                super::window::move_window_offscreen(window.id);
+            }
+
             // Hide borders for the current workspace
             Self::hide_borders_for_workspace(current_name);
-        }
-
-        // Debug: Log workspace state before switch
-        eprintln!("stache: tiling: DEBUG switch_workspace to '{name}'");
-        let tracked_windows: Vec<_> = self.state.windows_for_workspace(name);
-        eprintln!(
-            "stache: tiling: DEBUG   tracked windows in '{}': {}",
-            name,
-            tracked_windows.len()
-        );
-        for w in &tracked_windows {
-            eprintln!(
-                "stache: tiling: DEBUG     id={} app='{}' frame=({:.0},{:.0} {:.0}x{:.0}) hidden={}",
-                w.id, w.app_name, w.frame.x, w.frame.y, w.frame.width, w.frame.height, w.is_hidden
-            );
         }
 
         // Strategy for minimal flicker:
@@ -835,43 +767,24 @@ impl TilingManager {
         // 2. Show windows (they should appear in correct positions)
         // 3. Re-apply layout immediately (in case macOS overrode positions during unhide)
 
-        // Step 1: Pre-position while hidden
-        eprintln!("stache: tiling: DEBUG   step 1: pre-positioning while hidden");
-        let pre_positioned = self.apply_layout_forced(name);
-        eprintln!("stache: tiling: DEBUG   step 1: pre-positioned {pre_positioned} windows");
+        // Step 1: Pre-position windows while hidden
+        self.apply_layout_forced(name);
 
         // Step 2: Show windows
-        eprintln!("stache: tiling: DEBUG   step 2: showing windows");
         let windows_to_show: Vec<&TrackedWindow> = self.state.windows_for_workspace(name);
-        eprintln!(
-            "stache: tiling: DEBUG   step 2: windows_to_show count: {}",
-            windows_to_show.len()
-        );
-        let (shown, show_failures) = show_workspace_windows(&windows_to_show);
-        eprintln!(
-            "stache: tiling: DEBUG   step 2: shown={}, failures={}",
-            shown,
-            show_failures.len()
-        );
+        show_workspace_windows(&windows_to_show);
+
+        // Note: Windows from cross-workspace apps were moved off-screen (not minimized)
+        // so they don't need special restoration - the layout will position them correctly.
 
         // Step 3: Immediately re-apply layout (no delay) to fix any position overrides
-        eprintln!("stache: tiling: DEBUG   step 3: re-applying layout");
-        let repositioned = self.apply_layout_forced(name);
-        eprintln!("stache: tiling: DEBUG   step 3: repositioned {repositioned} windows");
-
-        // Debug: Check window count after layout
-        let final_windows: Vec<_> = self.state.windows_for_workspace(name);
-        eprintln!(
-            "stache: tiling: DEBUG   final window count in '{}': {}",
-            name,
-            final_windows.len()
-        );
+        self.apply_layout_forced(name);
 
         // Show borders for the target workspace
         Self::show_borders_for_workspace(name);
 
-        // Update border colors based on the target workspace's layout
-        Self::update_border_colors_for_workspace(&target_ws);
+        // Note: Border colors are NOT updated here - they are only updated
+        // when windows are focused (in update_focus_border_states)
 
         // Update workspace visibility
         for ws in &mut self.state.workspaces {
@@ -945,9 +858,10 @@ impl TilingManager {
         // Get config values
         let config = get_config();
         let master_ratio = f64::from(config.tiling.master.ratio) / 100.0;
+        let bar_offset = f64::from(config.bar.height) + f64::from(config.bar.padding);
 
-        // Resolve gaps for this screen
-        let gaps = Gaps::from_config(&config.tiling.gaps, &screen.name, screen.is_main);
+        // Resolve gaps for this screen (bar offset only applies to main screen)
+        let gaps = Gaps::from_config(&config.tiling.gaps, &screen.name, screen.is_main, bar_offset);
 
         // Calculate the layout with gaps
         let layout_result = calculate_layout_with_gaps(
@@ -1022,43 +936,10 @@ impl TilingManager {
         let master_ratio = f64::from(config.tiling.master.ratio) / 100.0;
         let layout_type = workspace.layout;
         let split_ratios = workspace.split_ratios.clone();
+        let bar_offset = f64::from(config.bar.height) + f64::from(config.bar.padding);
 
-        // Resolve gaps for this screen
-        let gaps = Gaps::from_config(&config.tiling.gaps, &screen.name, screen.is_main);
-
-        // Debug: Log screen and gap information
-        eprintln!(
-            "stache: tiling: layout debug for workspace '{}' on screen '{}'",
-            workspace_name, screen.name
-        );
-        eprintln!(
-            "stache: tiling:   screen frame: x={}, y={}, w={}, h={}",
-            screen.frame.x, screen.frame.y, screen.frame.width, screen.frame.height
-        );
-        eprintln!(
-            "stache: tiling:   visible_frame: x={}, y={}, w={}, h={}",
-            screen.visible_frame.x,
-            screen.visible_frame.y,
-            screen.visible_frame.width,
-            screen.visible_frame.height
-        );
-        eprintln!(
-            "stache: tiling:   gaps: inner_h={}, inner_v={}, outer=[t={}, r={}, b={}, l={}]",
-            gaps.inner_h,
-            gaps.inner_v,
-            gaps.outer_top,
-            gaps.outer_right,
-            gaps.outer_bottom,
-            gaps.outer_left
-        );
-        eprintln!(
-            "stache: tiling:   layout={:?}, windows={}, is_main={}, is_portrait={}, ratios={:?}",
-            layout_type,
-            window_ids.len(),
-            screen.is_main,
-            screen.visible_frame.height > screen.visible_frame.width,
-            split_ratios
-        );
+        // Resolve gaps for this screen (bar offset only applies to main screen)
+        let gaps = Gaps::from_config(&config.tiling.gaps, &screen.name, screen.is_main, bar_offset);
 
         // Calculate the layout with gaps and custom ratios
         let layout_result = calculate_layout_with_gaps_and_ratios(
@@ -1100,35 +981,8 @@ impl TilingManager {
             })
             .collect();
 
-        // Log layout changes (or lack thereof)
         if windows_to_reposition.is_empty() {
-            eprintln!(
-                "stache: tiling:   no position changes needed for {} windows",
-                window_ids.len()
-            );
             return 0;
-        }
-
-        let mode = if force { "forced" } else { "diff" };
-        eprintln!(
-            "stache: tiling:   repositioning {}/{} windows ({mode}):",
-            windows_to_reposition.len(),
-            window_ids.len()
-        );
-
-        for (window_id, new_frame, _, current_frame) in &windows_to_reposition {
-            eprintln!(
-                "stache: tiling:     window {}: ({:.0},{:.0} {:.0}x{:.0}) -> ({:.0},{:.0} {:.0}x{:.0})",
-                window_id,
-                current_frame.x,
-                current_frame.y,
-                current_frame.width,
-                current_frame.height,
-                new_frame.x,
-                new_frame.y,
-                new_frame.width,
-                new_frame.height
-            );
         }
 
         // Position windows - during initialization, use instant positioning (no animation)
@@ -1160,14 +1014,6 @@ impl TilingManager {
         // Update tracked frames for all windows we attempted to reposition
         for (window_id, new_frame, _, _) in &windows_to_reposition {
             self.update_window_frame(*window_id, *new_frame);
-        }
-
-        if repositioned < windows_to_reposition.len() {
-            eprintln!(
-                "stache: tiling:     warning: only {}/{} windows positioned successfully",
-                repositioned,
-                windows_to_reposition.len()
-            );
         }
 
         repositioned
@@ -1208,6 +1054,9 @@ impl TilingManager {
 
     /// Updates border states for all windows when layout changes.
     ///
+    /// Note: This only updates the internal state, NOT the `JankyBorders` colors.
+    /// Border colors are only updated through focus events (`update_focus_border_states`).
+    ///
     /// Dispatched to main thread because border operations require it.
     fn update_all_border_states_for_layout(
         window_ids: &[u32],
@@ -1219,6 +1068,9 @@ impl TilingManager {
         }
 
         let window_ids = window_ids.to_vec();
+        let is_monocle = layout == LayoutType::Monocle;
+        let is_floating = layout == LayoutType::Floating;
+
         crate::utils::thread::dispatch_on_main(move || {
             let Some(border_manager) = get_border_manager() else {
                 return;
@@ -1237,8 +1089,12 @@ impl TilingManager {
                         }
                     }
                 };
-                manager.update_window_state(*window_id, state);
+                manager.set_window_state_no_color_update(*window_id, state);
             }
+
+            // Update colors after all states are set
+            // This ensures the colors reflect the new layout
+            super::borders::janky::update_colors_for_state(is_monocle, is_floating);
         });
     }
 
@@ -1258,9 +1114,6 @@ impl TilingManager {
         // Clear custom ratios to reset to default proportions
         if let Some(workspace) = self.state.workspace_by_name_mut(workspace_name) {
             workspace.split_ratios.clear();
-            eprintln!(
-                "stache: tiling: balance: cleared split_ratios for workspace '{workspace_name}'"
-            );
         } else {
             return 0;
         }
@@ -1301,10 +1154,6 @@ impl TilingManager {
         );
 
         if !is_split_layout {
-            eprintln!(
-                "stache: tiling: not calculating ratios for non-split layout {:?}",
-                workspace.layout
-            );
             // Still reapply layout to snap windows back
             self.apply_layout_forced(workspace_name);
             return;
@@ -1320,7 +1169,6 @@ impl TilingManager {
 
         // Find the index of the resized window
         let Some(resized_idx) = window_ids.iter().position(|&id| id == resized_window_id) else {
-            eprintln!("stache: tiling: resized window not found in workspace");
             self.apply_layout_forced(workspace_name);
             return;
         };
@@ -1343,7 +1191,8 @@ impl TilingManager {
 
         // Get config values
         let config = get_config();
-        let gaps = Gaps::from_config(&config.tiling.gaps, &screen.name, screen.is_main);
+        let bar_offset = f64::from(config.bar.height) + f64::from(config.bar.padding);
+        let gaps = Gaps::from_config(&config.tiling.gaps, &screen.name, screen.is_main, bar_offset);
 
         let count = window_ids.len();
         let available_space = if is_vertical {
@@ -1408,10 +1257,6 @@ impl TilingManager {
             resized_idx + 1
         };
 
-        eprintln!(
-            "stache: tiling: window {resized_window_id} resized by {size_delta:.1}px, adjusting adjacent window at index {adjacent_idx}"
-        );
-
         // Calculate new proportions: only change the resized window and its adjacent
         let new_proportions = calculate_proportions_adjusting_adjacent(
             &current_proportions,
@@ -1422,16 +1267,6 @@ impl TilingManager {
 
         // Convert back to cumulative ratios
         let ratios = proportions_to_cumulative_ratios(&new_proportions);
-
-        eprintln!(
-            "stache: tiling: proportions: {:?} -> {:?}",
-            current_proportions
-                .iter()
-                .map(|p| format!("{:.1}%", p * 100.0))
-                .collect::<Vec<_>>(),
-            new_proportions.iter().map(|p| format!("{:.1}%", p * 100.0)).collect::<Vec<_>>()
-        );
-        eprintln!("stache: tiling: calculated ratios for workspace '{workspace_name}': {ratios:?}");
 
         // Update the workspace's ratios
         if let Some(ws) = self.state.workspace_by_name_mut(workspace_name) {
@@ -1475,11 +1310,6 @@ impl TilingManager {
         let ignore_rules = get_config().tiling.ignore.clone();
         let workspace_configs = get_workspace_configs();
 
-        eprintln!(
-            "stache: tiling: DEBUG track_existing_windows: found {} total windows",
-            windows.len()
-        );
-
         // Get the focused workspace name for fallback
         let fallback_workspace = self
             .state
@@ -1490,32 +1320,17 @@ impl TilingManager {
         for window_info in windows {
             // Skip ignored windows
             if should_ignore_window(&window_info, &ignore_rules) {
-                eprintln!(
-                    "stache: tiling: DEBUG   IGNORED: id={} app='{}' title='{}'",
-                    window_info.id, window_info.app_name, window_info.title
-                );
                 continue;
             }
 
-            // Skip windows without AX elements - these are "phantom" windows that appear
-            // in CGWindowList but don't have corresponding accessibility elements.
-            // They cannot be positioned and would cause flickering/issues.
+            // Skip windows without AX elements - these are "phantom" windows
             if !window_info.has_ax_element() {
-                eprintln!(
-                    "stache: tiling: DEBUG   PHANTOM (no AX): id={} app='{}' title='{}'",
-                    window_info.id, window_info.app_name, window_info.title
-                );
                 continue;
             }
 
             // Assign to workspace
             let assignment =
                 assign_window_to_workspace(&window_info, &workspace_configs, &fallback_workspace);
-
-            eprintln!(
-                "stache: tiling: DEBUG   TRACKING: id={} app='{}' title='{}' -> workspace '{}'",
-                window_info.id, window_info.app_name, window_info.title, assignment.workspace_name
-            );
 
             // Create tracked window
             let tracked = Self::create_tracked_window(&window_info, &assignment.workspace_name);
@@ -1730,61 +1545,45 @@ impl TilingManager {
     /// Internal implementation for untracking a window.
     fn untrack_window_internal(&mut self, window_id: u32, apply_layout: bool) {
         // Remove from windows list
-        if let Some(idx) = self.state.windows.iter().position(|w| w.id == window_id) {
-            let window = self.state.windows.remove(idx);
-            let workspace_name = window.workspace_name;
+        let Some(idx) = self.state.windows.iter().position(|w| w.id == window_id) else {
+            return;
+        };
 
-            eprintln!(
-                "stache: tiling: untrack_window {window_id} from workspace '{workspace_name}'"
-            );
+        let window = self.state.windows.remove(idx);
+        let workspace_name = window.workspace_name;
 
-            // Check if workspace is visible before we modify it
-            let workspace_is_visible =
-                self.state.workspace_by_name(&workspace_name).is_some_and(|ws| ws.is_visible);
+        // Check if workspace is visible before we modify it
+        let workspace_is_visible =
+            self.state.workspace_by_name(&workspace_name).is_some_and(|ws| ws.is_visible);
 
-            // Remove from workspace's window list
-            if let Some(ws) = self.state.workspace_by_name_mut(&workspace_name) {
-                let old_count = ws.window_ids.len();
-                ws.window_ids.retain(|&id| id != window_id);
-                let new_count = ws.window_ids.len();
+        // Remove from workspace's window list
+        if let Some(ws) = self.state.workspace_by_name_mut(&workspace_name) {
+            ws.window_ids.retain(|&id| id != window_id);
 
-                // Clear custom split ratios when window count changes
-                // This prevents ghost space from stale ratios
-                ws.split_ratios.clear();
+            // Clear custom split ratios when window count changes
+            ws.split_ratios.clear();
 
-                eprintln!(
-                    "stache: tiling: workspace '{workspace_name}' window count {old_count} -> {new_count}, cleared split_ratios, visible={workspace_is_visible}"
-                );
-
-                // Update focused window index if needed
-                if let Some(focused_idx) = ws.focused_window_index
-                    && focused_idx >= ws.window_ids.len()
-                {
-                    ws.focused_window_index = if ws.window_ids.is_empty() {
-                        None
-                    } else {
-                        Some(ws.window_ids.len() - 1)
-                    };
-                }
+            // Update focused window index if needed
+            if let Some(focused_idx) = ws.focused_window_index
+                && focused_idx >= ws.window_ids.len()
+            {
+                ws.focused_window_index = if ws.window_ids.is_empty() {
+                    None
+                } else {
+                    Some(ws.window_ids.len() - 1)
+                };
             }
+        }
 
-            // Remove from focus history
-            self.focus_history.remove_window(window_id);
+        // Remove from focus history
+        self.focus_history.remove_window(window_id);
 
-            // Remove border for this window
-            Self::remove_border_for_window(window_id);
+        // Remove border for this window
+        Self::remove_border_for_window(window_id);
 
-            // Re-apply layout if requested and workspace is visible
-            if apply_layout && workspace_is_visible {
-                eprintln!(
-                    "stache: tiling: reapplying layout for workspace '{workspace_name}' after window removal"
-                );
-                self.apply_layout_mut(&workspace_name);
-            }
-        } else {
-            eprintln!(
-                "stache: tiling: untrack_window {window_id} - window not found in tracked windows"
-            );
+        // Re-apply layout if requested and workspace is visible
+        if apply_layout && workspace_is_visible {
+            self.apply_layout_mut(&workspace_name);
         }
     }
 
@@ -1878,10 +1677,6 @@ impl TilingManager {
                     .and_then(|ws| ws.window_ids.get(idx).copied())
             });
 
-        eprintln!(
-            "stache: borders: DEBUG set_focused_window: workspace='{workspace_name}' new_id={window_id} old_id={old_focused_id:?}"
-        );
-
         // First, update the focused window index in the workspace
         let screen_id = if let Some(ws) = self.state.workspace_by_name_mut(workspace_name)
             && let Some(idx) = ws.window_ids.iter().position(|&id| id == window_id)
@@ -1909,6 +1704,10 @@ impl TilingManager {
 
     /// Updates border states when focus changes.
     ///
+    /// This is the ONLY place where border colors should be updated.
+    /// It always updates `JankyBorders` colors based on the current layout,
+    /// regardless of whether the border state changed.
+    ///
     /// Dispatched to main thread because border operations require it.
     fn update_focus_border_states(
         &self,
@@ -1923,15 +1722,13 @@ impl TilingManager {
         // Determine the appropriate state based on layout
         let ws = self.state.workspace_by_name(workspace_name);
         let layout = ws.map(|w| w.layout);
-        let (focused_state, unfocused_state) = match layout {
-            Some(LayoutType::Monocle) => (BorderState::Monocle, BorderState::Monocle),
-            Some(LayoutType::Floating) => (BorderState::Floating, BorderState::Floating),
-            _ => (BorderState::Focused, BorderState::Unfocused),
+        let (focused_state, unfocused_state, is_monocle, is_floating) = match layout {
+            Some(LayoutType::Monocle) => (BorderState::Monocle, BorderState::Monocle, true, false),
+            Some(LayoutType::Floating) => {
+                (BorderState::Floating, BorderState::Floating, false, true)
+            }
+            _ => (BorderState::Focused, BorderState::Unfocused, false, false),
         };
-
-        eprintln!(
-            "stache: borders: DEBUG update_focus_border_states: workspace='{workspace_name}' layout={layout:?} old={old_focused_id:?} new={new_focused_id} focused_state={focused_state:?}"
-        );
 
         crate::utils::thread::dispatch_on_main(move || {
             let Some(border_manager) = get_border_manager() else {
@@ -1943,13 +1740,15 @@ impl TilingManager {
             if let Some(old_id) = old_focused_id
                 && old_id != new_focused_id
             {
-                eprintln!("stache: borders: DEBUG setting window {old_id} to unfocused");
-                manager.update_window_state(old_id, unfocused_state);
+                manager.set_window_state_no_color_update(old_id, unfocused_state);
             }
 
             // Update new focused window to focused state
-            eprintln!("stache: borders: DEBUG setting window {new_focused_id} to focused");
-            manager.update_window_state(new_focused_id, focused_state);
+            manager.set_window_state_no_color_update(new_focused_id, focused_state);
+
+            // Always update JankyBorders colors on focus change
+            // This is the ONLY place where colors are updated
+            super::borders::janky::update_colors_for_state(is_monocle, is_floating);
         });
     }
 
@@ -2013,11 +1812,6 @@ impl TilingManager {
         let is_monocle = workspace.layout == LayoutType::Monocle;
         let is_floating = workspace.layout == LayoutType::Floating;
 
-        eprintln!(
-            "stache: borders: updating colors for workspace '{}' (layout={:?}, monocle={}, floating={})",
-            workspace.name, workspace.layout, is_monocle, is_floating
-        );
-
         janky::update_colors_for_state(is_monocle, is_floating);
     }
 
@@ -2047,7 +1841,6 @@ impl TilingManager {
     pub fn focus_window_by_id(&mut self, window_id: u32) -> bool {
         // Find the window
         let Some(window) = self.state.window_by_id(window_id) else {
-            eprintln!("stache: tiling: focus: window {window_id} not found");
             return false;
         };
 
@@ -2058,10 +1851,8 @@ impl TilingManager {
             // Record this programmatic focus to debounce incoming focus events
             self.last_programmatic_focus = Some((window_id, Instant::now()));
             self.set_focused_window(&workspace_name, window_id);
-            eprintln!("stache: tiling: focused window {window_id}");
             true
         } else {
-            eprintln!("stache: tiling: failed to focus window {window_id}");
             false
         }
     }
@@ -2075,9 +1866,6 @@ impl TilingManager {
         if let Some((last_focused_id, when)) = self.last_programmatic_focus {
             // If we focused a different window recently, skip this event
             if last_focused_id != window_id && when.elapsed().as_millis() < FOCUS_COOLDOWN_MS {
-                eprintln!(
-                    "stache: tiling: focus event: ignoring stale event for window {window_id} (recently focused {last_focused_id})"
-                );
                 return true;
             }
         }
@@ -2090,15 +1878,10 @@ impl TilingManager {
     /// this switch request (it's likely a stale focus event from macOS
     /// triggered by the hide/show operations of the previous switch).
     #[must_use]
-    pub fn should_skip_workspace_switch(&self, target_workspace: &str) -> bool {
+    pub fn should_skip_workspace_switch(&self, _target_workspace: &str) -> bool {
         if let Some(when) = self.last_workspace_switch
             && when.elapsed().as_millis() < WORKSPACE_SWITCH_COOLDOWN_MS
         {
-            eprintln!(
-                "stache: tiling: workspace switch: ignoring switch to '{}' (recent switch {}ms ago)",
-                target_workspace,
-                when.elapsed().as_millis()
-            );
             return true;
         }
         false
@@ -2316,7 +2099,6 @@ impl TilingManager {
     /// `true` if windows were swapped successfully.
     pub fn swap_window_in_direction(&mut self, direction: &str) -> bool {
         let Some(workspace) = self.state.focused_workspace() else {
-            eprintln!("stache: tiling: swap: no focused workspace");
             return false;
         };
 
@@ -2324,33 +2106,13 @@ impl TilingManager {
         let window_ids = workspace.window_ids.clone();
 
         if window_ids.len() < 2 {
-            eprintln!(
-                "stache: tiling: swap: need at least 2 windows (workspace '{}' has {})",
-                workspace_name,
-                window_ids.len()
-            );
             return false;
         }
 
         let focused_idx = workspace.focused_window_index.unwrap_or(0);
         let Some(&focused_id) = window_ids.get(focused_idx) else {
-            eprintln!(
-                "stache: tiling: swap: focused_idx {} out of bounds (window_ids len: {})",
-                focused_idx,
-                window_ids.len()
-            );
             return false;
         };
-
-        // Debug: log swap attempt state
-        eprintln!(
-            "stache: tiling: swap: attempting {} in workspace '{}' (focused_idx={}, focused_id={}, {} windows)",
-            direction,
-            workspace_name,
-            focused_idx,
-            focused_id,
-            window_ids.len()
-        );
 
         // Find the target window to swap with
         let target = match direction.to_lowercase().as_str() {
@@ -2368,40 +2130,14 @@ impl TilingManager {
             }
             "up" | "down" | "left" | "right" => {
                 let Some(focused_window) = self.state.window_by_id(focused_id).cloned() else {
-                    eprintln!(
-                        "stache: tiling: swap: focused window {focused_id} not found in tracked windows"
-                    );
                     return false;
                 };
                 self.find_window_in_direction(&focused_window, direction, &window_ids)
             }
-            _ => {
-                eprintln!("stache: tiling: swap: invalid direction: {direction}");
-                None
-            }
+            _ => None,
         };
 
-        let Some((target_id, target_idx)) = target else {
-            // Debug: Log why no window was found
-            if let Some(fw) = self.state.window_by_id(focused_id) {
-                eprintln!(
-                    "stache: tiling: swap: no window found in direction '{direction}' from window {} at ({:.0},{:.0})",
-                    focused_id, fw.frame.x, fw.frame.y
-                );
-                // Log all window positions in the workspace for debugging
-                for &wid in &window_ids {
-                    if wid != focused_id
-                        && let Some(w) = self.state.window_by_id(wid)
-                    {
-                        eprintln!(
-                            "stache: tiling: swap:   candidate {} at ({:.0},{:.0} {:.0}x{:.0})",
-                            wid, w.frame.x, w.frame.y, w.frame.width, w.frame.height
-                        );
-                    }
-                }
-            } else {
-                eprintln!("stache: tiling: swap: no window found in direction: {direction}");
-            }
+        let Some((_target_id, target_idx)) = target else {
             return false;
         };
 
@@ -2418,11 +2154,6 @@ impl TilingManager {
             // Convert back to cumulative ratios
             let new_ratios = proportions_to_cumulative_ratios(&proportions);
 
-            eprintln!(
-                "stache: tiling: swap: proportions after swap: {:?}",
-                proportions.iter().map(|p| format!("{:.1}%", p * 100.0)).collect::<Vec<_>>()
-            );
-
             // Swap window IDs and update ratios
             ws.window_ids.swap(focused_idx, target_idx);
             ws.split_ratios = new_ratios;
@@ -2430,10 +2161,6 @@ impl TilingManager {
             // Keep focus on the originally focused window (now at target_idx)
             ws.focused_window_index = Some(target_idx);
         }
-
-        eprintln!(
-            "stache: tiling: swapped window {focused_id} with {target_id} in workspace '{workspace_name}'"
-        );
 
         // Re-apply layout to reposition windows
         self.apply_layout_forced(&workspace_name);
@@ -2457,37 +2184,27 @@ impl TilingManager {
     /// `true` if windows were swapped successfully.
     pub fn swap_windows_by_id(&mut self, window_id_a: u32, window_id_b: u32) -> bool {
         if window_id_a == window_id_b {
-            eprintln!("stache: tiling: swap-by-id: cannot swap window with itself");
             return false;
         }
 
         // Find the workspace containing window A
-        let window_a = self.state.window_by_id(window_id_a).cloned();
-        let Some(window_a) = window_a else {
-            eprintln!("stache: tiling: swap-by-id: window {window_id_a} not found");
+        let Some(window_a) = self.state.window_by_id(window_id_a).cloned() else {
             return false;
         };
 
         let workspace_name = window_a.workspace_name;
 
         // Verify window B is in the same workspace
-        let window_b = self.state.window_by_id(window_id_b).cloned();
-        let Some(window_b) = window_b else {
-            eprintln!("stache: tiling: swap-by-id: window {window_id_b} not found");
+        let Some(window_b) = self.state.window_by_id(window_id_b).cloned() else {
             return false;
         };
 
         if window_b.workspace_name != workspace_name {
-            eprintln!(
-                "stache: tiling: swap-by-id: windows are in different workspaces ('{workspace_name}' vs '{}')",
-                window_b.workspace_name
-            );
             return false;
         }
 
         // Get the workspace and find indices
         let Some(workspace) = self.state.workspace_by_name(&workspace_name) else {
-            eprintln!("stache: tiling: swap-by-id: workspace '{workspace_name}' not found");
             return false;
         };
 
@@ -2496,13 +2213,8 @@ impl TilingManager {
         let idx_b = window_ids.iter().position(|&id| id == window_id_b);
 
         let (Some(idx_a), Some(idx_b)) = (idx_a, idx_b) else {
-            eprintln!("stache: tiling: swap-by-id: could not find window indices");
             return false;
         };
-
-        eprintln!(
-            "stache: tiling: swap-by-id: swapping window {window_id_a} (idx {idx_a}) with {window_id_b} (idx {idx_b}) in '{workspace_name}'"
-        );
 
         // Perform the swap, preserving sizes
         if let Some(ws) = self.state.workspace_by_name_mut(&workspace_name) {
@@ -2928,6 +2640,7 @@ impl TilingManager {
     /// # Returns
     ///
     /// `true` if the preset was applied successfully, `false` otherwise.
+    #[allow(clippy::cast_possible_truncation)] // Frame dimensions for logging only
     pub fn apply_preset(&mut self, preset_name: &str) -> bool {
         // Find the preset
         let Some(preset) = super::layout::find_preset(preset_name) else {
@@ -2943,13 +2656,16 @@ impl TilingManager {
 
         // Get the focused workspace and window
         let Some(workspace) = self.state.focused_workspace() else {
-            eprintln!("stache: tiling: apply_preset: no focused workspace");
             return false;
         };
 
+        // Presets can only be applied to floating workspaces
+        if workspace.layout != LayoutType::Floating {
+            return false;
+        }
+
         let focused_idx = workspace.focused_window_index.unwrap_or(0);
         let Some(&window_id) = workspace.window_ids.get(focused_idx) else {
-            eprintln!("stache: tiling: apply_preset: no focused window");
             return false;
         };
 
@@ -2957,37 +2673,29 @@ impl TilingManager {
 
         // Get the screen
         let Some(screen) = self.state.screen_by_id(screen_id).cloned() else {
-            eprintln!("stache: tiling: apply_preset: screen not found");
             return false;
         };
 
+        // Get current window frame for animation
+        let current_frame = self.state.window_by_id(window_id).map(|w| w.frame).unwrap_or_default();
+
         // Resolve gaps for this screen
         let config = get_config();
-        let gaps = Gaps::from_config(&config.tiling.gaps, &screen.name, screen.is_main);
+        let bar_offset = f64::from(config.bar.height) + f64::from(config.bar.padding);
+        let gaps = Gaps::from_config(&config.tiling.gaps, &screen.name, screen.is_main, bar_offset);
 
         // Calculate the frame from the preset
-        let frame = super::layout::calculate_preset_frame(&preset, &screen.visible_frame, &gaps);
+        let target_frame =
+            super::layout::calculate_preset_frame(&preset, &screen.visible_frame, &gaps);
 
-        // Apply the frame
-        if !set_window_frame(window_id, &frame) {
-            eprintln!("stache: tiling: apply_preset: failed to set window frame");
-            return false;
-        }
+        // Animate to the new frame
+        let transition = WindowTransition::new(window_id, current_frame, target_frame);
+        self.animation_system.animate(vec![transition]);
 
         // Update tracked window frame
         if let Some(window) = self.state.windows.iter_mut().find(|w| w.id == window_id) {
-            window.frame = frame;
+            window.frame = target_frame;
         }
-
-        eprintln!(
-            "stache: tiling: applied preset '{}' to window {} (frame: {}x{} at {},{})",
-            preset_name,
-            window_id,
-            frame.width as i32,
-            frame.height as i32,
-            frame.x as i32,
-            frame.y as i32
-        );
 
         true
     }

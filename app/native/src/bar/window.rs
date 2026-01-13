@@ -1,7 +1,7 @@
 use serde::Serialize;
 use tauri::Manager;
 
-use crate::bar::constants::{BAR_HEIGHT, PADDING};
+use crate::config::get_config;
 use crate::error::StacheError;
 use crate::utils::window::{get_screen_size, set_position};
 
@@ -19,15 +19,25 @@ pub fn set_window_position(webview_window: &tauri::WebviewWindow) {
         eprintln!("Failed to get screen size for window positioning");
         return;
     };
-    let (x, y, width, height) = calculate_window_frame(logical_width);
+    let config = get_config();
+    let (x, y, width, height) = calculate_window_frame(
+        logical_width,
+        f64::from(config.bar.height),
+        f64::from(config.bar.padding),
+    );
 
     set_position(webview_window, x, y, width, height);
 }
 
-const fn calculate_window_frame(logical_width: f64) -> (f64, f64, f64, f64) {
-    let width = PADDING.mul_add(-2.0, logical_width);
-    let height = BAR_HEIGHT;
-    (PADDING, PADDING, width, height)
+const fn calculate_window_frame(
+    logical_width: f64,
+    bar_height: f64,
+    padding: f64,
+) -> (f64, f64, f64, f64) {
+    // Note: Can't use f64::mul_add in const fn, so use manual calculation
+    let width = logical_width - (2.0 * padding);
+    let height = bar_height;
+    (padding, padding, width, height)
 }
 
 #[tauri::command]
@@ -38,7 +48,12 @@ pub fn get_bar_window_frame(app: tauri::AppHandle) -> Result<WindowFrame, Stache
         .ok_or_else(|| StacheError::CommandError("Failed to get bar window".to_string()))?;
     let (screen_width, _screen_height) = get_screen_size(&window)
         .map_err(|_| StacheError::CommandError("Failed to get screen size".to_string()))?;
-    let (x, y, width, height) = calculate_window_frame(screen_width);
+    let config = get_config();
+    let (x, y, width, height) = calculate_window_frame(
+        screen_width,
+        f64::from(config.bar.height),
+        f64::from(config.bar.padding),
+    );
 
     Ok(WindowFrame { x, y, width, height })
 }
@@ -47,44 +62,65 @@ pub fn get_bar_window_frame(app: tauri::AppHandle) -> Result<WindowFrame, Stache
 mod tests {
     use super::*;
 
+    // Default test values matching BarConfig defaults
+    const TEST_BAR_HEIGHT: f64 = 28.0;
+    const TEST_PADDING: f64 = 12.0;
+
     #[test]
     fn calculate_window_frame_returns_correct_dimensions() {
         let logical_width = 1920.0;
-        let (x, y, width, height) = calculate_window_frame(logical_width);
+        let (x, y, width, height) =
+            calculate_window_frame(logical_width, TEST_BAR_HEIGHT, TEST_PADDING);
 
-        // x should be PADDING
-        assert!((x - PADDING).abs() < f64::EPSILON);
+        // x should be padding
+        assert!((x - TEST_PADDING).abs() < f64::EPSILON);
 
-        // y should be PADDING
-        assert!((y - PADDING).abs() < f64::EPSILON);
+        // y should be padding
+        assert!((y - TEST_PADDING).abs() < f64::EPSILON);
 
-        // width should be logical_width - 2 * PADDING
-        let expected_width = 2.0f64.mul_add(-PADDING, logical_width);
+        // width should be logical_width - 2 * padding
+        let expected_width = 2.0f64.mul_add(-TEST_PADDING, logical_width);
         assert!((width - expected_width).abs() < f64::EPSILON);
 
-        // height should be BAR_HEIGHT
-        assert!((height - BAR_HEIGHT).abs() < f64::EPSILON);
+        // height should be bar_height
+        assert!((height - TEST_BAR_HEIGHT).abs() < f64::EPSILON);
     }
 
     #[test]
     fn calculate_window_frame_with_small_screen() {
         let logical_width = 800.0;
-        let (x, y, width, height) = calculate_window_frame(logical_width);
+        let (x, y, width, height) =
+            calculate_window_frame(logical_width, TEST_BAR_HEIGHT, TEST_PADDING);
 
-        assert!((x - PADDING).abs() < f64::EPSILON);
-        assert!((y - PADDING).abs() < f64::EPSILON);
-        assert!((width - 2.0f64.mul_add(-PADDING, 800.0)).abs() < f64::EPSILON);
-        assert!((height - BAR_HEIGHT).abs() < f64::EPSILON);
+        assert!((x - TEST_PADDING).abs() < f64::EPSILON);
+        assert!((y - TEST_PADDING).abs() < f64::EPSILON);
+        assert!((width - 2.0f64.mul_add(-TEST_PADDING, 800.0)).abs() < f64::EPSILON);
+        assert!((height - TEST_BAR_HEIGHT).abs() < f64::EPSILON);
     }
 
     #[test]
     fn calculate_window_frame_with_4k_screen() {
         let logical_width = 3840.0;
-        let (x, y, width, height) = calculate_window_frame(logical_width);
+        let (x, y, width, height) =
+            calculate_window_frame(logical_width, TEST_BAR_HEIGHT, TEST_PADDING);
 
-        assert!((x - PADDING).abs() < f64::EPSILON);
-        assert!((y - PADDING).abs() < f64::EPSILON);
-        assert!((width - 2.0f64.mul_add(-PADDING, 3840.0)).abs() < f64::EPSILON);
-        assert!((height - BAR_HEIGHT).abs() < f64::EPSILON);
+        assert!((x - TEST_PADDING).abs() < f64::EPSILON);
+        assert!((y - TEST_PADDING).abs() < f64::EPSILON);
+        assert!((width - 2.0f64.mul_add(-TEST_PADDING, 3840.0)).abs() < f64::EPSILON);
+        assert!((height - TEST_BAR_HEIGHT).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn calculate_window_frame_with_custom_config() {
+        let logical_width = 1920.0;
+        let custom_height = 40.0;
+        let custom_padding = 20.0;
+        let (x, y, width, height) =
+            calculate_window_frame(logical_width, custom_height, custom_padding);
+
+        assert!((x - custom_padding).abs() < f64::EPSILON);
+        assert!((y - custom_padding).abs() < f64::EPSILON);
+        assert!((width - 2.0f64.mul_add(-custom_padding, logical_width)).abs() < f64::EPSILON);
+        assert!((height - custom_height).abs() < f64::EPSILON);
     }
 }

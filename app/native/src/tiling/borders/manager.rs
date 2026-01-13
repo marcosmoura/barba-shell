@@ -158,11 +158,6 @@ impl BorderManager {
             // Re-apply configuration when re-enabled
             janky::refresh();
         }
-
-        eprintln!(
-            "stache: borders: {}",
-            if enabled { "enabled" } else { "disabled" }
-        );
     }
 
     /// Checks if a window should have a border.
@@ -241,44 +236,59 @@ impl BorderManager {
     ///
     /// * `window_id` - The ID of the window.
     /// * `state` - The new border state.
+    #[allow(dead_code)] // May be used in future
     pub fn update_window_state(&mut self, window_id: u32, state: BorderState) {
-        if let Some(info) = self.borders.get_mut(&window_id) {
-            let state_changed = info.state != state;
-            if state_changed {
-                eprintln!(
-                    "stache: borders: window {} state: {:?} -> {:?}",
-                    window_id, info.state, state
-                );
-                info.state = state;
+        self.set_window_state_no_color_update(window_id, state);
 
-                // Update JankyBorders colors if this is a visible window becoming focused/active
-                // We need to update for Focused, Monocle, and Floating states
-                if info.visible {
-                    match state {
-                        BorderState::Focused | BorderState::Monocle | BorderState::Floating => {
-                            // Update layout state flags based on the new state
-                            let is_monocle = state == BorderState::Monocle;
-                            let is_floating = state == BorderState::Floating;
+        // Update JankyBorders colors if this is a visible window becoming focused/active
+        if let Some(info) = self.borders.get(&window_id)
+            && info.visible
+        {
+            match state {
+                BorderState::Focused | BorderState::Monocle | BorderState::Floating => {
+                    let is_monocle = state == BorderState::Monocle;
+                    let is_floating = state == BorderState::Floating;
 
-                            // Only update if layout state actually changed OR this is a focus change
-                            if self.current_is_monocle != is_monocle
-                                || self.current_is_floating != is_floating
-                            {
-                                self.current_is_monocle = is_monocle;
-                                self.current_is_floating = is_floating;
-                            }
-
-                            // Always update colors on focus change
-                            eprintln!(
-                                "stache: borders: triggering color update (monocle={is_monocle}, floating={is_floating})"
-                            );
-                            janky::update_colors_for_state(is_monocle, is_floating);
-                        }
-                        BorderState::Unfocused => {
-                            // No color update needed for unfocused - JankyBorders handles this
-                            eprintln!("stache: borders: window {window_id} now unfocused");
-                        }
+                    if self.current_is_monocle != is_monocle
+                        || self.current_is_floating != is_floating
+                    {
+                        self.current_is_monocle = is_monocle;
+                        self.current_is_floating = is_floating;
                     }
+
+                    janky::update_colors_for_state(is_monocle, is_floating);
+                }
+                BorderState::Unfocused => {}
+            }
+        }
+    }
+
+    /// Updates the border state for a window without updating `JankyBorders` colors.
+    ///
+    /// Use this when you want to batch state updates and then call
+    /// `janky::update_colors_for_state` once at the end.
+    ///
+    /// # Arguments
+    ///
+    /// * `window_id` - The ID of the window.
+    /// * `state` - The new border state.
+    pub fn set_window_state_no_color_update(&mut self, window_id: u32, state: BorderState) {
+        if let Some(info) = self.borders.get_mut(&window_id) {
+            info.state = state;
+
+            // Update tracking for monocle/floating state
+            match state {
+                BorderState::Monocle => {
+                    self.current_is_monocle = true;
+                    self.current_is_floating = false;
+                }
+                BorderState::Floating => {
+                    self.current_is_monocle = false;
+                    self.current_is_floating = true;
+                }
+                BorderState::Focused | BorderState::Unfocused => {
+                    self.current_is_monocle = false;
+                    self.current_is_floating = false;
                 }
             }
         }
@@ -353,7 +363,7 @@ impl BorderManager {
     /// Refreshes `JankyBorders` configuration.
     ///
     /// Call this when the border configuration changes.
-    pub fn refresh(&mut self) {
+    pub fn refresh(&self) {
         if self.enabled {
             janky::refresh();
         }

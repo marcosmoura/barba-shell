@@ -330,12 +330,33 @@ impl MenuAnywhereConfig {
 
 /// Bar configuration for the status bar UI components.
 ///
-/// Contains settings for bar-specific features like weather.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
+/// Contains settings for bar-specific features like weather and dimensions.
+/// The bar dimensions are used by the tiling window manager to account for
+/// the status bar when calculating window layouts on the main screen.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default, rename_all = "camelCase")]
 pub struct BarConfig {
+    /// Height of the status bar in pixels.
+    /// Default: 28
+    pub height: u16,
+
+    /// Padding around the status bar in pixels.
+    /// This is added to the height when calculating the top gap for tiling.
+    /// Default: 12
+    pub padding: u16,
+
     /// Weather status bar configuration.
     pub weather: WeatherConfig,
+}
+
+impl Default for BarConfig {
+    fn default() -> Self {
+        Self {
+            height: 28,
+            padding: 12,
+            weather: WeatherConfig::default(),
+        }
+    }
 }
 
 /// Target music application for noTunes replacement.
@@ -732,6 +753,100 @@ impl Rgba {
 
 impl Default for Rgba {
     fn default() -> Self { Self::black() }
+}
+
+/// Parses a color string to RGBA.
+///
+/// Supports the following formats:
+/// - `#RGB` - 3-digit hex (e.g., "#F00" for red)
+/// - `#RGBA` - 4-digit hex with alpha (e.g., "#F00F" for opaque red)
+/// - `#RRGGBB` - 6-digit hex (e.g., "#FF0000" for red)
+/// - `#RRGGBBAA` - 8-digit hex with alpha (e.g., "#FF0000FF" for opaque red)
+/// - `rgba(r, g, b, a)` - CSS rgba format (e.g., "rgba(255, 0, 0, 0.5)")
+///
+/// The `#` prefix is optional for hex colors.
+///
+/// # Errors
+///
+/// Returns an error string if the color format is invalid.
+pub fn parse_color(color: &str) -> Result<Rgba, String> {
+    let trimmed = color.trim();
+    if trimmed.starts_with("rgba(") || trimmed.starts_with("rgb(") {
+        parse_rgba_color(trimmed)
+    } else {
+        parse_hex_color(trimmed)
+    }
+}
+
+/// Parses an `rgba()` or `rgb()` CSS color string to RGBA.
+///
+/// Supports the following formats:
+/// - `rgb(r, g, b)` - CSS rgb format with 0-255 values
+/// - `rgba(r, g, b, a)` - CSS rgba format with 0-255 values and alpha 0.0-1.0
+///
+/// # Examples
+///
+/// - `rgba(255, 0, 0, 0.5)` - Semi-transparent red
+/// - `rgba(137, 180, 250, 0.2)` - Catppuccin blue with 20% opacity
+/// - `rgb(255, 255, 255)` - White
+///
+/// # Errors
+///
+/// Returns an error string if the format is invalid.
+pub fn parse_rgba_color(rgba: &str) -> Result<Rgba, String> {
+    let trimmed = rgba.trim();
+
+    // Check for rgb() or rgba() prefix
+    let (inner, has_alpha) = if let Some(inner) = trimmed.strip_prefix("rgba(") {
+        (
+            inner.strip_suffix(')').ok_or("Missing closing parenthesis")?,
+            true,
+        )
+    } else if let Some(inner) = trimmed.strip_prefix("rgb(") {
+        (
+            inner.strip_suffix(')').ok_or("Missing closing parenthesis")?,
+            false,
+        )
+    } else {
+        return Err("Color must start with 'rgb(' or 'rgba('".to_string());
+    };
+
+    // Split by comma and parse values
+    let parts: Vec<&str> = inner.split(',').map(str::trim).collect();
+
+    let expected_parts = if has_alpha { 4 } else { 3 };
+    if parts.len() != expected_parts {
+        return Err(format!(
+            "Expected {} values for {}, got {}",
+            expected_parts,
+            if has_alpha { "rgba()" } else { "rgb()" },
+            parts.len()
+        ));
+    }
+
+    // Parse RGB values (0-255)
+    let r: u8 = parts[0].parse().map_err(|_| format!("Invalid red value: {}", parts[0]))?;
+    let g: u8 = parts[1].parse().map_err(|_| format!("Invalid green value: {}", parts[1]))?;
+    let b: u8 = parts[2].parse().map_err(|_| format!("Invalid blue value: {}", parts[2]))?;
+
+    // Parse alpha (0.0-1.0 for rgba, default 1.0 for rgb)
+    let a: f64 = if has_alpha {
+        parts[3].parse().map_err(|_| format!("Invalid alpha value: {}", parts[3]))?
+    } else {
+        1.0
+    };
+
+    // Validate alpha range
+    if !(0.0..=1.0).contains(&a) {
+        return Err(format!("Alpha value must be between 0.0 and 1.0, got {a}"));
+    }
+
+    Ok(Rgba {
+        r: f64::from(r) / 255.0,
+        g: f64::from(g) / 255.0,
+        b: f64::from(b) / 255.0,
+        a,
+    })
 }
 
 /// Parses a hex color string to RGBA.
@@ -2172,6 +2287,94 @@ mod tests {
     fn test_parse_hex_color_trims_whitespace() {
         let color = parse_hex_color("  #FF0000  ").unwrap();
         assert!((color.r - 1.0).abs() < f64::EPSILON);
+    }
+
+    // ========================================================================
+    // parse_rgba_color tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_rgba_color_basic() {
+        let color = parse_rgba_color("rgba(255, 0, 0, 1.0)").unwrap();
+        assert!((color.r - 1.0).abs() < f64::EPSILON);
+        assert!((color.g - 0.0).abs() < f64::EPSILON);
+        assert!((color.b - 0.0).abs() < f64::EPSILON);
+        assert!((color.a - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_parse_rgba_color_with_alpha() {
+        let color = parse_rgba_color("rgba(137, 180, 250, 0.2)").unwrap();
+        assert!((color.r - 137.0 / 255.0).abs() < 0.001);
+        assert!((color.g - 180.0 / 255.0).abs() < 0.001);
+        assert!((color.b - 250.0 / 255.0).abs() < 0.001);
+        assert!((color.a - 0.2).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_parse_rgba_color_no_spaces() {
+        let color = parse_rgba_color("rgba(255,128,64,0.5)").unwrap();
+        assert!((color.r - 1.0).abs() < f64::EPSILON);
+        assert!((color.g - 128.0 / 255.0).abs() < 0.001);
+        assert!((color.b - 64.0 / 255.0).abs() < 0.001);
+        assert!((color.a - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_parse_rgb_color() {
+        let color = parse_rgba_color("rgb(255, 255, 255)").unwrap();
+        assert!((color.r - 1.0).abs() < f64::EPSILON);
+        assert!((color.g - 1.0).abs() < f64::EPSILON);
+        assert!((color.b - 1.0).abs() < f64::EPSILON);
+        assert!((color.a - 1.0).abs() < f64::EPSILON); // Default alpha
+    }
+
+    #[test]
+    fn test_parse_rgba_color_zero_alpha() {
+        let color = parse_rgba_color("rgba(255, 0, 0, 0.0)").unwrap();
+        assert!((color.a - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_parse_rgba_color_invalid_format() {
+        assert!(parse_rgba_color("rgb(255, 0)").is_err());
+        assert!(parse_rgba_color("rgba(255, 0, 0)").is_err());
+        assert!(parse_rgba_color("255, 0, 0, 1.0").is_err());
+    }
+
+    #[test]
+    fn test_parse_rgba_color_invalid_alpha() {
+        assert!(parse_rgba_color("rgba(255, 0, 0, 1.5)").is_err());
+        assert!(parse_rgba_color("rgba(255, 0, 0, -0.5)").is_err());
+    }
+
+    #[test]
+    fn test_parse_rgba_color_trims_whitespace() {
+        let color = parse_rgba_color("  rgba(255, 0, 0, 1.0)  ").unwrap();
+        assert!((color.r - 1.0).abs() < f64::EPSILON);
+    }
+
+    // ========================================================================
+    // parse_color tests (unified parser)
+    // ========================================================================
+
+    #[test]
+    fn test_parse_color_hex() {
+        let color = parse_color("#FF0000").unwrap();
+        assert!((color.r - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_parse_color_rgba() {
+        let color = parse_color("rgba(255, 0, 0, 0.5)").unwrap();
+        assert!((color.r - 1.0).abs() < f64::EPSILON);
+        assert!((color.a - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_parse_color_rgb() {
+        let color = parse_color("rgb(0, 255, 0)").unwrap();
+        assert!((color.g - 1.0).abs() < f64::EPSILON);
     }
 
     // ========================================================================

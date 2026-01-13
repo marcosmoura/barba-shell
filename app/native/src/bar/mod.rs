@@ -1,5 +1,4 @@
 pub mod components;
-pub mod constants;
 mod ipc_listener;
 mod menubar;
 mod screen;

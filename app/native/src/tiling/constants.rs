@@ -91,7 +91,7 @@ pub mod layout {
     ///
     /// Prevents micro-adjustments that would be imperceptible to users
     /// but waste CPU cycles.
-    pub const REPOSITION_THRESHOLD_PX: f64 = 0.0;
+    pub const REPOSITION_THRESHOLD_PX: f64 = 1.0;
 
     /// Maximum windows for grid layout optimization.
     ///

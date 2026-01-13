@@ -73,7 +73,7 @@ unsafe fn create_workspace_observer() -> *mut Object {
 ///
 /// - `notification` being a valid `NSNotification` object (or null)
 /// - The Objective-C runtime providing valid `_self` and `_cmd` parameters
-/// - Being called on the main thread (NSNotificationCenter default behavior)
+/// - Being called on the main thread (`NSNotificationCenter` default behavior)
 ///
 /// All Objective-C message sends within are wrapped in null checks.
 extern "C" fn handle_app_launch_notification(_self: &Object, _cmd: Sel, notification: *mut Object) {

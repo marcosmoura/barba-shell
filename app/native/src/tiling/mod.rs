@@ -380,6 +380,12 @@ fn apply_initial_layouts(mgr: &mut TilingManager) {
     for ws_name in visible_workspaces {
         mgr.apply_layout_forced(&ws_name);
     }
+
+    // Update border colors based on the focused workspace's layout
+    // This ensures the correct colors (e.g., monocle) are applied at startup
+    if let Some((is_monocle, is_floating)) = get_focused_workspace_layout(mgr) {
+        borders::janky::update_colors_for_state(is_monocle, is_floating);
+    }
 }
 
 // ============================================================================

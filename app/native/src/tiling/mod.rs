@@ -867,6 +867,17 @@ fn handle_window_created(pid: i32) {
             for workspace_name in &workspaces_changed {
                 mgr.apply_layout_forced(workspace_name);
             }
+
+            // Get layout info before dropping the lock
+            let layout_info = get_focused_workspace_layout(&mgr);
+
+            // Drop manager before updating border colors to avoid holding lock
+            drop(mgr);
+
+            // Update border colors after layout is applied
+            if let Some((is_monocle, is_floating)) = layout_info {
+                borders::janky::update_colors_for_state(is_monocle, is_floating);
+            }
         }
     });
 }
@@ -1185,6 +1196,11 @@ fn try_track_new_focused_window(
             // Apply layout to the workspace
             mgr.apply_layout_forced(&workspace_name);
 
+            // Update border colors for the new window
+            if let Some((is_monocle, is_floating)) = get_focused_workspace_layout(mgr) {
+                borders::janky::update_colors_for_state(is_monocle, is_floating);
+            }
+
             return Some(tracked);
         }
     }
@@ -1349,7 +1365,32 @@ fn handle_app_launch(pid: i32, _bundle_id: Option<String>, app_name: Option<Stri
         for workspace_name in &workspaces_changed {
             mgr.apply_layout_forced(workspace_name);
         }
+
+        // Update border colors after layout is applied
+        if !workspaces_changed.is_empty() {
+            let layout_info = get_focused_workspace_layout(&mgr);
+
+            // Drop manager before updating border colors to avoid holding lock
+            drop(mgr);
+
+            if let Some((is_monocle, is_floating)) = layout_info {
+                borders::janky::update_colors_for_state(is_monocle, is_floating);
+            }
+        }
     });
+}
+
+/// Gets the focused workspace's layout info for border color updates.
+///
+/// Returns `Some((is_monocle, is_floating))` if there's a focused workspace.
+fn get_focused_workspace_layout(mgr: &TilingManager) -> Option<(bool, bool)> {
+    use crate::config::LayoutType;
+
+    let focused_ws = mgr.get_focused_workspace()?;
+    let is_monocle = focused_ws.layout == LayoutType::Monocle;
+    let is_floating = focused_ws.layout == LayoutType::Floating;
+
+    Some((is_monocle, is_floating))
 }
 
 // ============================================================================

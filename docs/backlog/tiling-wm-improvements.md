@@ -402,12 +402,14 @@ The `AXElement` wrapper is available for new code via `tiling::ffi::AXElement`.
 - [x] Added 3 new tests for index functionality
 - [x] 947 tests pass, clippy clean
 
-#### Phase 5.2: Batch JankyBorders Commands
+#### Phase 5.2: Batch JankyBorders Commands ✅ COMPLETE
 
-- [ ] Create `janky::set_multiple()` function
-- [ ] Batch color updates in `update_colors_for_state()`
-- [ ] Batch config updates in `apply_config()`
-- [ ] Reduce CLI/IPC round trips
+- [x] Create `janky::set_multiple()` function for batching arbitrary settings
+- [x] Add `janky::set_colors()` for batching active + inactive colors
+- [x] Batch config updates in `apply_config()` (already implemented)
+- [x] Reduce CLI/IPC round trips via existing caching mechanism
+- [x] Fixed test isolation issue with unique test keys
+- [x] 949 tests pass, clippy clean
 
 #### Phase 5.3: Pre-allocated Animation Buffers
 
@@ -631,13 +633,14 @@ The `AXElement` wrapper is available for new code via `tiling::ffi::AXElement`.
 
 ## Change Log
 
-| Date       | Change                                                      |
-| ---------- | ----------------------------------------------------------- |
-| 2026-01-13 | Initial improvement plan created                            |
-| 2026-01-13 | Milestones 1-3 completed, fixed REPOSITION_THRESHOLD test   |
-| 2026-01-13 | Milestone 4 Phase 4.1: AXElement wrapper complete (7 tests) |
-| 2026-01-13 | Milestone 4 Phase 4.2: Safety documentation complete        |
-| 2026-01-13 | Milestone 4 Phase 4.3: ffi_try! macros complete (5 tests)   |
-| 2026-01-13 | Milestone 4 Phase 4.4: Applied macros to window.rs          |
-| 2026-01-13 | Milestone 4 complete - 944 tests passing                    |
-| 2026-01-13 | Milestone 5 Phase 5.1: Workspace name index (947 tests)     |
+| Date       | Change                                                         |
+| ---------- | -------------------------------------------------------------- |
+| 2026-01-13 | Initial improvement plan created                               |
+| 2026-01-13 | Milestones 1-3 completed, fixed REPOSITION_THRESHOLD test      |
+| 2026-01-13 | Milestone 4 Phase 4.1: AXElement wrapper complete (7 tests)    |
+| 2026-01-13 | Milestone 4 Phase 4.2: Safety documentation complete           |
+| 2026-01-13 | Milestone 4 Phase 4.3: ffi_try! macros complete (5 tests)      |
+| 2026-01-13 | Milestone 4 Phase 4.4: Applied macros to window.rs             |
+| 2026-01-13 | Milestone 4 complete - 944 tests passing                       |
+| 2026-01-13 | Milestone 5 Phase 5.1: Workspace name index (947 tests)        |
+| 2026-01-13 | Milestone 5 Phase 5.2: Batch JankyBorders commands (949 tests) |

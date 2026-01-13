@@ -200,6 +200,18 @@ fn start_mouse_event_tap() {
 }
 
 /// Callback function for the mouse event tap.
+///
+/// # Safety (External)
+///
+/// This function is called by the Core Graphics event tap system. While not
+/// marked `unsafe` (the function body doesn't do unsafe operations), it relies
+/// on the OS providing valid parameters:
+///
+/// - `event_type` is a valid `CGEventType` value
+/// - `event` is a valid `CGEventRef` that we must return (we're observing, not consuming)
+/// - This callback is invoked on our dedicated mouse monitor thread
+///
+/// We use atomic operations and mutex-protected state to ensure thread safety.
 extern "C" fn mouse_event_callback(
     _proxy: CGEventTapProxy,
     event_type: u32,

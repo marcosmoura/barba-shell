@@ -235,6 +235,9 @@ static INITIALIZED: AtomicBool = AtomicBool::new(false);
 static EVENT_CALLBACK: AtomicPtr<()> = AtomicPtr::new(ptr::null_mut());
 
 /// Observer data for a single application.
+///
+/// Contains raw pointers to Core Foundation objects (`AXObserver` and `AXUIElement`).
+/// These are reference-counted and released in the `Drop` implementation.
 struct AppObserver {
     /// The `AXObserver` instance.
     observer: *mut c_void,
@@ -245,7 +248,11 @@ struct AppObserver {
     pid: i32,
 }
 
-// SAFETY: AppObserver is only accessed from the main thread via the Mutex.
+// SAFETY: `AppObserver` contains raw pointers to Core Foundation objects, but:
+// 1. All observer operations happen on the main thread (via CFRunLoop)
+// 2. The `OBSERVERS` map is protected by a Mutex, ensuring exclusive access
+// 3. Each `AppObserver` owns its CF references and releases them in Drop
+// 4. We never share the raw pointers outside of this module
 unsafe impl Send for AppObserver {}
 
 impl Drop for AppObserver {
@@ -282,37 +289,41 @@ static OBSERVER_STATE: Mutex<Option<ObserverState>> = Mutex::new(None);
 ///
 /// # Safety
 ///
-/// This function is called from the accessibility system. The parameters are
-/// provided by the system and must be valid.
+/// This function is called by the macOS Accessibility framework when a
+/// registered notification occurs. The caller (the OS) guarantees:
+///
+/// - `element` is a valid `AXUIElementRef` for the UI element that triggered
+///   the event (we don't own it - it's borrowed for the duration of this call)
+/// - `notification` is a valid `CFStringRef` containing the notification name
+/// - `refcon` is the context pointer we registered (contains the PID as `i32`)
+/// - This callback is invoked on the main thread's run loop
 unsafe extern "C" fn observer_callback(
     _observer: AXObserverRef,
     element: AXUIElementRef,
     notification: *const c_void,
     refcon: *mut c_void,
 ) {
-    // SAFETY: This function is called from the accessibility system with valid parameters.
-    unsafe {
-        // refcon contains the PID
-        let pid = refcon as i32;
+    // refcon contains the PID (set during observer registration)
+    let pid = refcon as i32;
 
-        // Get the notification name
-        let notification_cf = CFString::wrap_under_get_rule(notification.cast());
-        let notification_name = notification_cf.to_string();
+    // Get the notification name (wrap_under_get_rule doesn't take ownership)
+    let notification_cf = unsafe { CFString::wrap_under_get_rule(notification.cast()) };
+    let notification_name = notification_cf.to_string();
 
-        // Parse the event type
-        let Some(event_type) = WindowEventType::from_notification(&notification_name) else {
-            return;
-        };
+    // Parse the event type
+    let Some(event_type) = WindowEventType::from_notification(&notification_name) else {
+        return;
+    };
 
-        // Create the event
-        let event = WindowEvent::new(event_type, pid, element as usize);
+    // Create the event
+    let event = WindowEvent::new(event_type, pid, element as usize);
 
-        // Dispatch to the callback
-        let callback_ptr = EVENT_CALLBACK.load(Ordering::SeqCst);
-        if !callback_ptr.is_null() {
-            let callback: fn(WindowEvent) = std::mem::transmute(callback_ptr);
-            callback(event);
-        }
+    // Dispatch to the registered callback
+    let callback_ptr = EVENT_CALLBACK.load(Ordering::SeqCst);
+    if !callback_ptr.is_null() {
+        // SAFETY: callback_ptr was set via init() with a valid fn(WindowEvent) pointer
+        let callback: fn(WindowEvent) = unsafe { std::mem::transmute(callback_ptr) };
+        callback(event);
     }
 }
 

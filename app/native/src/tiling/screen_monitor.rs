@@ -48,8 +48,16 @@ mod cg_flags {
 ///
 /// # Safety
 ///
-/// This function is called from CoreGraphics and must be careful about
-/// what it does. We use atomic flags to prevent reentrancy.
+/// This function is called by the Core Graphics framework when displays are
+/// added, removed, or reconfigured. The caller (the OS) guarantees:
+///
+/// - `_display` is a valid `CGDirectDisplayID` for the affected display
+/// - `flags` contains valid `CGDisplayChangeSummaryFlags`
+/// - `_user_info` is the context pointer we registered (unused, set to null)
+/// - This callback may be called on any thread
+///
+/// We use atomic flags (`PROCESSING_CHANGE`) to prevent reentrancy issues,
+/// and spawn a worker thread to handle the actual screen change processing.
 unsafe extern "C" fn display_reconfiguration_callback(
     _display: u32,
     flags: u32,

@@ -65,6 +65,17 @@ unsafe fn create_workspace_observer() -> *mut Object {
 }
 
 /// Callback function for app launch notifications.
+///
+/// # Safety (External)
+///
+/// This function is called by the Objective-C runtime as a method on our
+/// `StacheAppLaunchObserver` class. While not marked `unsafe`, it relies on:
+///
+/// - `notification` being a valid `NSNotification` object (or null)
+/// - The Objective-C runtime providing valid `_self` and `_cmd` parameters
+/// - Being called on the main thread (NSNotificationCenter default behavior)
+///
+/// All Objective-C message sends within are wrapped in null checks.
 extern "C" fn handle_app_launch_notification(_self: &Object, _cmd: Sel, notification: *mut Object) {
     unsafe {
         if notification.is_null() {

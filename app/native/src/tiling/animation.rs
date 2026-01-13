@@ -304,7 +304,15 @@ impl DisplaySyncState {
 /// Global display sync state for the animation system.
 static DISPLAY_SYNC: OnceLock<Arc<DisplaySyncState>> = OnceLock::new();
 
-/// `CVDisplayLink` callback - called on each vsync.
+/// `CVDisplayLink` callback - called on each vsync by Core Video.
+///
+/// # Safety
+///
+/// This function is called by the Core Video framework on a high-priority
+/// thread. The caller guarantees:
+/// - `context` is a valid pointer to `Arc<DisplaySyncState>` (set in `DisplayLink::new()`)
+/// - The `Arc` remains valid for the lifetime of the display link
+/// - Core Video ensures this callback is not called after `CVDisplayLinkStop()`
 unsafe extern "C" fn display_link_callback(
     _display_link: CVDisplayLinkRef,
     _in_now: *const CVTimeStamp,
@@ -313,12 +321,8 @@ unsafe extern "C" fn display_link_callback(
     _flags_out: *mut CVOptionFlags,
     context: *mut std::ffi::c_void,
 ) -> CVReturn {
-    // SAFETY: context is a pointer to Arc<DisplaySyncState> that we set in DisplayLink::new()
-    // and it remains valid for the lifetime of the display link.
-    unsafe {
-        let state = &*(context.cast::<DisplaySyncState>());
-        state.signal_vsync();
-    }
+    let state = unsafe { &*(context.cast::<DisplaySyncState>()) };
+    state.signal_vsync();
     0 // kCVReturnSuccess
 }
 
@@ -418,6 +422,9 @@ fn wait_for_next_frame(fallback_duration: Duration) {
 // ============================================================================
 
 /// Cached selectors for `CATransaction` methods.
+///
+/// Stores pointers to Objective-C class and selector references that are
+/// looked up once and reused for performance.
 struct CATransactionSelectors {
     class: *const std::ffi::c_void,
     begin: *const std::ffi::c_void,
@@ -425,7 +432,14 @@ struct CATransactionSelectors {
     set_disable_actions: *const std::ffi::c_void,
 }
 
-// SAFETY: These are immutable pointers to Objective-C runtime data that is thread-safe.
+// SAFETY: These pointers reference Objective-C runtime metadata (class and
+// selector registrations) that are:
+// 1. Immutable once registered - the Objective-C runtime never moves or
+//    deallocates registered classes/selectors
+// 2. Thread-safe to read - Apple documents that objc_getClass and
+//    sel_registerName return thread-safe, globally cached values
+// 3. Valid for the lifetime of the process - registered selectors persist
+//    until program termination
 unsafe impl Send for CATransactionSelectors {}
 unsafe impl Sync for CATransactionSelectors {}
 

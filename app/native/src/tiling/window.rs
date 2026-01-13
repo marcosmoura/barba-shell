@@ -48,15 +48,15 @@ const K_AX_ERROR_SUCCESS: AXError = 0;
 /// The macOS Accessibility API is thread-safe for operations on different
 /// windows/elements. This wrapper allows us to use parallel iteration
 /// when positioning multiple windows.
-///
-/// # Safety
-///
-/// Each `AXUIElementRef` should only be used with its own window.
-/// Do not share the same element across threads for the same window.
 #[derive(Clone, Copy)]
 struct SendableAXElement(AXUIElementRef);
 
-// SAFETY: AX API is thread-safe for different windows
+// SAFETY: The macOS Accessibility API is thread-safe for operations on different
+// UI elements. Each `SendableAXElement` wraps a unique window's AX reference,
+// and we only use these in parallel when operating on different windows.
+// Concurrent access to the SAME window from multiple threads is undefined
+// behavior at the OS level, but our usage pattern (parallel layout application
+// where each thread handles a different window) is safe.
 unsafe impl Send for SendableAXElement {}
 unsafe impl Sync for SendableAXElement {}
 

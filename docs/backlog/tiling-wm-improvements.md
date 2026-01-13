@@ -376,7 +376,13 @@ The `AXElement` wrapper is available for new code via `tiling::ffi::AXElement`.
 - [ ] Create `ffi_try_opt!` macro for `Option` returns
 - [ ] Apply macros to reduce boilerplate in FFI code
 - [ ] Ensure consistent error handling across FFI boundaries
+- [ ] Run tests, fix clippy warnings, ensure build passes
 
+#### Phase 4.4: Revisit the Deferred refactoring on the 4.2 Phase
+
+- [ ] Migrate `window.rs` to use `AXElement` wrapper where applicable
+- [ ] Migrate `observer.rs` to use `AXElement` wrapper where applicable
+- [ ] Ensure no performance regressions in animation paths
 - [ ] Run tests, fix clippy warnings, ensure build passes
 
 **Verification**: All unsafe code documented, safe wrappers for AX API

@@ -363,7 +363,19 @@ fn get_color_for_state(state_config: &BorderStateConfig) -> Option<String> {
 ///
 /// This sets width, style, hidpi, and initial colors based on the config.
 /// Uses batch sending for better performance when multiple settings need updating.
-pub fn apply_config(config: &BordersConfig) -> bool {
+pub fn apply_config(config: &BordersConfig) -> bool { apply_config_internal(config, true) }
+
+/// Applies border configuration without setting colors.
+///
+/// This sets width, style, and hidpi only. Colors should be set separately
+/// via `update_colors_for_state` after determining the focused workspace's layout.
+/// This prevents a flash of incorrect colors during startup.
+pub fn apply_config_without_colors(config: &BordersConfig) -> bool {
+    apply_config_internal(config, false)
+}
+
+/// Internal implementation of config application.
+fn apply_config_internal(config: &BordersConfig, include_colors: bool) -> bool {
     if !is_available() {
         eprintln!("stache: borders: JankyBorders not found, borders will not be displayed");
         eprintln!("stache: borders: install with: brew install FelixKratz/formulae/borders");
@@ -393,14 +405,17 @@ pub fn apply_config(config: &BordersConfig) -> bool {
         "hidpi=off".to_string()
     });
 
-    // Active color (focused state)
-    if let Some(color) = get_color_for_state(&config.focused) {
-        args.push(format!("active_color={color}"));
-    }
+    // Only include colors if requested
+    if include_colors {
+        // Active color (focused state)
+        if let Some(color) = get_color_for_state(&config.focused) {
+            args.push(format!("active_color={color}"));
+        }
 
-    // Inactive color (unfocused state)
-    if let Some(color) = get_color_for_state(&config.unfocused) {
-        args.push(format!("inactive_color={color}"));
+        // Inactive color (unfocused state)
+        if let Some(color) = get_color_for_state(&config.unfocused) {
+            args.push(format!("inactive_color={color}"));
+        }
     }
 
     // Send all settings in one batch via Mach IPC

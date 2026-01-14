@@ -356,7 +356,7 @@ Tests are inline with `#[cfg(test)]` modules.
 ```bash
 pnpm lint         # All linters
 pnpm lint:ui      # TypeScript + ESLint + Stylelint
-pnpm lint:rust    # Clippy (pedantic + nursery)
+pnpm lint:native  # Clippy (pedantic + nursery)
 pnpm format       # Prettier + cargo fmt
 ```
 

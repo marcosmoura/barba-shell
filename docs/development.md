@@ -118,16 +118,16 @@ stache/
 | `pnpm test`            | Run all tests      |
 | `pnpm test:ui`         | Run frontend tests |
 | `pnpm test:ui -- --ui` | Run with Vitest UI |
-| `pnpm test:rust`       | Run Rust tests     |
+| `pnpm test:native`     | Run Rust tests     |
 
 ### Linting & Formatting
 
-| Command          | Description                     |
-| ---------------- | ------------------------------- |
-| `pnpm lint`      | Run all linters                 |
-| `pnpm lint:ui`   | TypeScript + ESLint + Stylelint |
-| `pnpm lint:rust` | Clippy (pedantic + nursery)     |
-| `pnpm format`    | Format all code                 |
+| Command            | Description                     |
+| ------------------ | ------------------------------- |
+| `pnpm lint`        | Run all linters                 |
+| `pnpm lint:ui`     | TypeScript + ESLint + Stylelint |
+| `pnpm lint:native` | Clippy (pedantic + nursery)     |
+| `pnpm format`      | Format all code                 |
 
 ### Other
 

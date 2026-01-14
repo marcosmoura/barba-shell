@@ -28,6 +28,9 @@ mod master;
 mod monocle;
 mod split;
 
+#[cfg(test)]
+mod proptest_tests;
+
 pub use floating::{calculate_preset_frame, find_preset, list_preset_names};
 pub use gaps::Gaps;
 use smallvec::SmallVec;

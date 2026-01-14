@@ -60,7 +60,6 @@ rayon = { version = "1.11.0", default-features = false }
 regex = { version = "1.12.2", default-features = false, features = ["std"] }
 schemars = { version = "1.2.0", default-features = true }
 serde = { version = "1.0.228", default-features = false, features = ["derive"] }
-smallvec = { version = "1.15", default-features = false, features = ["serde", "const_new"] }
 serde_json = { version = "1.0.149", default-features = false, features = [
     "std",
 ] }
@@ -68,12 +67,20 @@ shellexpand = { version = "3.1.1", default-features = false, features = [
     "base-0",
     "tilde",
 ] }
+smallvec = { version = "1.15.1", default-features = false, features = [
+    "serde",
+    "const_new",
+] }
 smc = "0.2.4"
 starship-battery = { version = "0.10.3", default-features = false }
 sysinfo = { version = "0.37.2", default-features = false, features = [
     "system",
 ] }
-tabled = { version = "0.20", default-features = false, features = ["std", "derive", "ansi"] }
+tabled = { version = "0.20", default-features = false, features = [
+    "std",
+    "derive",
+    "ansi",
+] }
 
 # Tauri and plugins
 tauri = { version = "2.9.5", default-features = false, features = [

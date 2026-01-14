@@ -1622,6 +1622,9 @@ impl TilingManager {
         // Remove border for this window
         Self::remove_border_for_window(window_id);
 
+        // Invalidate AX element cache for this window
+        super::window::invalidate_ax_element_cache(window_id);
+
         // Re-apply layout if requested and workspace is visible
         if apply_layout && workspace_is_visible {
             self.apply_layout_mut(&workspace_name);

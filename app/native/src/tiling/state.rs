@@ -145,9 +145,9 @@ impl Screen {
 /// This allows skipping expensive recalculations when the inputs haven't changed.
 #[derive(Debug, Clone, Default)]
 pub struct LayoutCache {
-    /// Hash of the layout inputs (window_ids, screen_frame, layout type, ratios, etc.)
+    /// Hash of the layout inputs (`window_ids`, `screen_frame`, layout type, ratios, etc.)
     pub input_hash: u64,
-    /// Cached layout positions: (window_id, frame)
+    /// Cached layout positions: (`window_id`, frame)
     pub positions: Vec<(u32, Rect)>,
 }
 
@@ -163,7 +163,7 @@ impl LayoutCache {
 
     /// Checks if the cache is valid for the given input hash.
     #[must_use]
-    pub fn is_valid(&self, input_hash: u64) -> bool {
+    pub const fn is_valid(&self, input_hash: u64) -> bool {
         self.input_hash != 0 && self.input_hash == input_hash && !self.positions.is_empty()
     }
 

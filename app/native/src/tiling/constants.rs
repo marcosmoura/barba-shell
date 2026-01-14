@@ -99,6 +99,16 @@ pub mod layout {
     pub const MAX_GRID_WINDOWS: usize = 12;
 }
 
+/// Cache TTL constants.
+pub mod cache {
+    /// TTL for cached AX element references (seconds).
+    ///
+    /// AX elements can become invalid if windows are destroyed or apps crash.
+    /// This TTL ensures we periodically refresh the cache while still benefiting
+    /// from caching during rapid operations like animations.
+    pub const AX_ELEMENT_TTL_SECS: u64 = 5;
+}
+
 /// Animation system constants.
 pub mod animation {
     /// Default frame rate when display refresh rate cannot be detected.
@@ -198,5 +208,12 @@ mod tests {
         // Reposition threshold should be small but non-zero
         assert!(layout::REPOSITION_THRESHOLD_PX > 0.0);
         assert!(layout::REPOSITION_THRESHOLD_PX < 10.0);
+    }
+
+    #[test]
+    fn test_cache_constants_are_reasonable() {
+        // AX element TTL should be long enough to be useful but not too stale
+        assert!(cache::AX_ELEMENT_TTL_SECS >= 1);
+        assert!(cache::AX_ELEMENT_TTL_SECS <= 60);
     }
 }

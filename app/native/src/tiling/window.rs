@@ -31,7 +31,9 @@ use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::ptr;
+use std::sync::RwLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 use core_foundation::base::TCFType;
 use core_foundation::boolean::CFBoolean;
@@ -185,6 +187,192 @@ fn cf_main() -> *const c_void { cached_cfstring!(CF_MAIN, "AXMain") }
 
 #[inline]
 fn cf_raise() -> *const c_void { cached_cfstring!(CF_RAISE, "AXRaise") }
+
+// ============================================================================
+// AXUIElement Resolution Cache
+// ============================================================================
+
+use std::sync::OnceLock;
+
+use super::constants::cache::AX_ELEMENT_TTL_SECS;
+
+/// Thread-safe wrapper for cached `AXUIElementRef`.
+///
+/// This wrapper allows the AX element pointer to be stored in a `Send + Sync`
+/// container. The safety rationale is the same as `SendableAXElement`:
+/// the macOS Accessibility API is thread-safe for operations on different
+/// UI elements.
+#[derive(Clone, Copy)]
+struct CachedAXPtr(AXUIElementRef);
+
+// SAFETY: See SendableAXElement safety documentation above.
+// AX elements are immutable references to system-managed UI elements.
+// The cache only stores pointers; actual AX operations are done through
+// the normal AX API functions which are thread-safe.
+unsafe impl Send for CachedAXPtr {}
+unsafe impl Sync for CachedAXPtr {}
+
+/// Cached AX element entry with timestamp for TTL validation.
+#[derive(Clone, Copy)]
+struct CachedAXEntry {
+    /// The cached AX element reference (wrapped for thread safety).
+    ax_ptr: CachedAXPtr,
+    /// When this entry was cached.
+    cached_at: Instant,
+}
+
+impl CachedAXEntry {
+    /// Creates a new cache entry.
+    fn new(ax_element: AXUIElementRef) -> Self {
+        Self {
+            ax_ptr: CachedAXPtr(ax_element),
+            cached_at: Instant::now(),
+        }
+    }
+
+    /// Returns the cached AX element pointer.
+    const fn ax_element(&self) -> AXUIElementRef { self.ax_ptr.0 }
+
+    /// Checks if this entry has expired.
+    fn is_expired(&self, ttl: Duration) -> bool { self.cached_at.elapsed() > ttl }
+}
+
+/// Thread-safe cache for resolved AX element references.
+///
+/// This cache stores `AXUIElementRef` values by window ID to avoid repeatedly
+/// calling `get_all_windows()` during rapid operations like animations.
+///
+/// # Thread Safety
+///
+/// The cache uses `RwLock` for concurrent access:
+/// - Animation threads read from the cache
+/// - Main thread writes and invalidates entries
+///
+/// # TTL
+///
+/// Entries expire after `AX_ELEMENT_TTL_SECS` to ensure stale references
+/// (from destroyed windows) are eventually cleared.
+struct AXElementCache {
+    /// Map of `window_id` -> cached entry.
+    entries: RwLock<HashMap<u32, CachedAXEntry>>,
+    /// Time-to-live for cache entries.
+    ttl: Duration,
+}
+
+impl AXElementCache {
+    /// Creates a new cache with the specified TTL.
+    fn new(ttl_secs: u64) -> Self {
+        Self {
+            entries: RwLock::new(HashMap::new()),
+            ttl: Duration::from_secs(ttl_secs),
+        }
+    }
+
+    /// Gets a cached AX element if it exists and hasn't expired.
+    #[allow(clippy::significant_drop_tightening)]
+    fn get(&self, window_id: u32) -> Option<AXUIElementRef> {
+        let entries = self.entries.read().ok()?;
+        let entry = entries.get(&window_id)?;
+
+        if entry.is_expired(self.ttl) {
+            None
+        } else {
+            Some(entry.ax_element())
+        }
+    }
+
+    /// Gets multiple cached AX elements, returning only valid (non-expired) ones.
+    ///
+    /// Returns a map of `window_id` -> `ax_element` for cached entries,
+    /// and the list of window IDs that were not in cache (cache misses).
+    fn get_multiple(&self, window_ids: &[u32]) -> (HashMap<u32, AXUIElementRef>, Vec<u32>) {
+        let mut cached = HashMap::new();
+        let mut misses = Vec::new();
+
+        let Ok(entries) = self.entries.read() else {
+            // Lock poisoned, treat all as misses
+            return (cached, window_ids.to_vec());
+        };
+
+        for &id in window_ids {
+            if let Some(entry) = entries.get(&id)
+                && !entry.is_expired(self.ttl)
+            {
+                cached.insert(id, entry.ax_element());
+                continue;
+            }
+            misses.push(id);
+        }
+
+        (cached, misses)
+    }
+
+    /// Inserts an AX element into the cache.
+    fn insert(&self, window_id: u32, ax_element: AXUIElementRef) {
+        if let Ok(mut entries) = self.entries.write() {
+            entries.insert(window_id, CachedAXEntry::new(ax_element));
+        }
+    }
+
+    /// Inserts multiple AX elements into the cache.
+    fn insert_multiple(&self, elements: &[(u32, AXUIElementRef)]) {
+        if elements.is_empty() {
+            return;
+        }
+
+        if let Ok(mut entries) = self.entries.write() {
+            for &(window_id, ax_element) in elements {
+                entries.insert(window_id, CachedAXEntry::new(ax_element));
+            }
+        }
+    }
+
+    /// Removes a window from the cache.
+    ///
+    /// Called when a window is destroyed to prevent stale references.
+    fn remove(&self, window_id: u32) {
+        if let Ok(mut entries) = self.entries.write() {
+            entries.remove(&window_id);
+        }
+    }
+
+    /// Clears all expired entries from the cache.
+    #[allow(dead_code)]
+    fn clear_expired(&self) {
+        if let Ok(mut entries) = self.entries.write() {
+            entries.retain(|_, entry| !entry.is_expired(self.ttl));
+        }
+    }
+
+    /// Clears all entries from the cache.
+    #[allow(dead_code)]
+    fn clear(&self) {
+        if let Ok(mut entries) = self.entries.write() {
+            entries.clear();
+        }
+    }
+}
+
+/// Global AX element cache instance (lazily initialized).
+static AX_ELEMENT_CACHE: OnceLock<AXElementCache> = OnceLock::new();
+
+/// Gets the global AX element cache, initializing it if necessary.
+fn get_ax_cache() -> &'static AXElementCache {
+    AX_ELEMENT_CACHE.get_or_init(|| AXElementCache::new(AX_ELEMENT_TTL_SECS))
+}
+
+/// Invalidates a cached AX element when a window is destroyed.
+///
+/// This should be called from the window manager when untracking a window
+/// to ensure stale AX references are not used.
+pub fn invalidate_ax_element_cache(window_id: u32) { get_ax_cache().remove(window_id); }
+
+/// Clears the entire AX element cache.
+///
+/// This can be called during config reload or when the tiling system
+/// is reinitialized.
+#[allow(dead_code)]
+pub fn clear_ax_element_cache() { get_ax_cache().clear(); }
 
 // ============================================================================
 // AXUIElement Attribute Helpers
@@ -1287,8 +1475,15 @@ pub fn set_window_frames_by_id(window_frames: &[(u32, Rect)]) -> usize {
 
 /// Resolves window IDs to their AX element references.
 ///
-/// This is used to cache AX elements for animations, avoiding repeated
-/// calls to `get_all_windows()` on every frame.
+/// This function uses a global cache to avoid repeated calls to `get_all_windows()`.
+/// Cached entries are returned immediately; cache misses trigger a window list
+/// query, and newly resolved elements are added to the cache.
+///
+/// # Cache Behavior
+///
+/// - Entries expire after `AX_ELEMENT_TTL_SECS` (5 seconds by default)
+/// - Cache is invalidated per-window via `invalidate_ax_element_cache()`
+/// - This provides significant speedup for rapid operations like animations
 ///
 /// # Arguments
 ///
@@ -1300,17 +1495,42 @@ pub fn set_window_frames_by_id(window_frames: &[(u32, Rect)]) -> usize {
 pub fn resolve_window_ax_elements(
     window_ids: &[u32],
 ) -> std::collections::HashMap<u32, AXUIElementRef> {
+    if window_ids.is_empty() {
+        return HashMap::new();
+    }
+
+    let cache = get_ax_cache();
+
+    // Check cache first - get cached entries and list of misses
+    let (mut result, cache_misses) = cache.get_multiple(window_ids);
+
+    // If all windows were cached, return immediately (fast path)
+    if cache_misses.is_empty() {
+        return result;
+    }
+
+    // Resolve cache misses by querying the window list
     let windows = get_all_windows();
 
-    window_ids
-        .iter()
-        .filter_map(|&id| {
-            windows
-                .iter()
-                .find(|w| w.id == id)
-                .and_then(|w| w.ax_element.map(|ax| (id, ax)))
-        })
-        .collect()
+    // Build a set for O(1) lookup of which IDs we need
+    let miss_set: std::collections::HashSet<u32> = cache_misses.iter().copied().collect();
+
+    // Collect newly resolved elements for batch cache update
+    let mut new_entries: Vec<(u32, AXUIElementRef)> = Vec::with_capacity(cache_misses.len());
+
+    for window in &windows {
+        if miss_set.contains(&window.id)
+            && let Some(ax_element) = window.ax_element
+        {
+            result.insert(window.id, ax_element);
+            new_entries.push((window.id, ax_element));
+        }
+    }
+
+    // Update cache with newly resolved elements
+    cache.insert_multiple(&new_entries);
+
+    result
 }
 
 /// Sets frames for multiple windows using cached AX element references.
@@ -2334,5 +2554,178 @@ mod tests {
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, 1);
+    }
+
+    // ========================================================================
+    // AX Element Cache Tests
+    // ========================================================================
+
+    #[test]
+    fn test_cached_ax_entry_new() {
+        let dummy_ptr: AXUIElementRef = 0x1234 as *mut _;
+        let entry = CachedAXEntry::new(dummy_ptr);
+        assert_eq!(entry.ax_element(), dummy_ptr);
+        assert!(!entry.is_expired(Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn test_cached_ax_entry_is_expired() {
+        let dummy_ptr: AXUIElementRef = 0x1234 as *mut _;
+        let entry = CachedAXEntry::new(dummy_ptr);
+
+        // Not expired with long TTL
+        assert!(!entry.is_expired(Duration::from_secs(10)));
+
+        // Expired with zero TTL
+        assert!(entry.is_expired(Duration::ZERO));
+    }
+
+    #[test]
+    fn test_cached_ax_ptr_send_sync() {
+        // Verify CachedAXPtr implements Send + Sync
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<CachedAXPtr>();
+    }
+
+    #[test]
+    fn test_ax_element_cache_insert_and_get() {
+        let cache = AXElementCache::new(5);
+        let dummy_ptr: AXUIElementRef = 0xABCD as *mut _;
+
+        // Initially not in cache
+        assert!(cache.get(12345).is_none());
+
+        // Insert and retrieve
+        cache.insert(12345, dummy_ptr);
+        let retrieved = cache.get(12345);
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap(), dummy_ptr);
+    }
+
+    #[test]
+    fn test_ax_element_cache_remove() {
+        let cache = AXElementCache::new(5);
+        let dummy_ptr: AXUIElementRef = 0xABCD as *mut _;
+
+        cache.insert(12345, dummy_ptr);
+        assert!(cache.get(12345).is_some());
+
+        cache.remove(12345);
+        assert!(cache.get(12345).is_none());
+    }
+
+    #[test]
+    fn test_ax_element_cache_clear() {
+        let cache = AXElementCache::new(5);
+        let ptr1: AXUIElementRef = 0x1111 as *mut _;
+        let ptr2: AXUIElementRef = 0x2222 as *mut _;
+
+        cache.insert(1, ptr1);
+        cache.insert(2, ptr2);
+
+        assert!(cache.get(1).is_some());
+        assert!(cache.get(2).is_some());
+
+        cache.clear();
+
+        assert!(cache.get(1).is_none());
+        assert!(cache.get(2).is_none());
+    }
+
+    #[test]
+    fn test_ax_element_cache_get_multiple_all_cached() {
+        let cache = AXElementCache::new(5);
+        let ptr1: AXUIElementRef = 0x1111 as *mut _;
+        let ptr2: AXUIElementRef = 0x2222 as *mut _;
+
+        cache.insert(1, ptr1);
+        cache.insert(2, ptr2);
+
+        let (cached, misses) = cache.get_multiple(&[1, 2]);
+
+        assert_eq!(cached.len(), 2);
+        assert!(misses.is_empty());
+        assert_eq!(cached.get(&1), Some(&ptr1));
+        assert_eq!(cached.get(&2), Some(&ptr2));
+    }
+
+    #[test]
+    fn test_ax_element_cache_get_multiple_some_cached() {
+        let cache = AXElementCache::new(5);
+        let ptr1: AXUIElementRef = 0x1111 as *mut _;
+
+        cache.insert(1, ptr1);
+
+        let (cached, misses) = cache.get_multiple(&[1, 2, 3]);
+
+        assert_eq!(cached.len(), 1);
+        assert_eq!(misses.len(), 2);
+        assert!(misses.contains(&2));
+        assert!(misses.contains(&3));
+    }
+
+    #[test]
+    fn test_ax_element_cache_get_multiple_none_cached() {
+        let cache = AXElementCache::new(5);
+
+        let (cached, misses) = cache.get_multiple(&[1, 2, 3]);
+
+        assert!(cached.is_empty());
+        assert_eq!(misses.len(), 3);
+    }
+
+    #[test]
+    fn test_ax_element_cache_insert_multiple() {
+        let cache = AXElementCache::new(5);
+        let ptr1: AXUIElementRef = 0x1111 as *mut _;
+        let ptr2: AXUIElementRef = 0x2222 as *mut _;
+        let ptr3: AXUIElementRef = 0x3333 as *mut _;
+
+        cache.insert_multiple(&[(1, ptr1), (2, ptr2), (3, ptr3)]);
+
+        assert_eq!(cache.get(1), Some(ptr1));
+        assert_eq!(cache.get(2), Some(ptr2));
+        assert_eq!(cache.get(3), Some(ptr3));
+    }
+
+    #[test]
+    fn test_ax_element_cache_insert_multiple_empty() {
+        let cache = AXElementCache::new(5);
+
+        // Should not panic on empty input
+        cache.insert_multiple(&[]);
+
+        assert!(cache.get(1).is_none());
+    }
+
+    #[test]
+    fn test_ax_element_cache_ttl_expiration() {
+        // Create cache with 0 TTL (immediate expiration)
+        let cache = AXElementCache::new(0);
+        let ptr: AXUIElementRef = 0x1234 as *mut _;
+
+        cache.insert(1, ptr);
+
+        // Entry should be expired immediately
+        assert!(cache.get(1).is_none());
+    }
+
+    #[test]
+    fn test_ax_element_cache_constant() {
+        use super::super::constants::cache::AX_ELEMENT_TTL_SECS;
+
+        // TTL should be reasonable (between 1 and 60 seconds)
+        assert!(AX_ELEMENT_TTL_SECS >= 1);
+        assert!(AX_ELEMENT_TTL_SECS <= 60);
+    }
+
+    #[test]
+    fn test_get_ax_cache_returns_same_instance() {
+        // The cache should be a singleton
+        let cache1 = get_ax_cache();
+        let cache2 = get_ax_cache();
+
+        // Both should point to the same instance (same address)
+        assert!(std::ptr::eq(cache1, cache2));
     }
 }

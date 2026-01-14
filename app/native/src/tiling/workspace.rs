@@ -60,6 +60,7 @@ pub struct WorkspaceSwitchResult {
 /// # Returns
 ///
 /// A tuple of (`success_count`, `failed_pids`)
+#[must_use]
 pub fn hide_workspace_windows(windows: &[&TrackedWindow]) -> (usize, Vec<i32>) {
     let mut hidden = 0;
     let mut failures = Vec::new();
@@ -91,6 +92,7 @@ pub fn hide_workspace_windows(windows: &[&TrackedWindow]) -> (usize, Vec<i32>) {
 /// # Returns
 ///
 /// A tuple of (`success_count`, `failed_pids`)
+#[must_use]
 pub fn show_workspace_windows(windows: &[&TrackedWindow]) -> (usize, Vec<i32>) {
     let mut shown = 0;
     let mut failures = Vec::new();
@@ -140,6 +142,7 @@ pub struct WindowAssignment {
 /// # Returns
 ///
 /// The assignment result including which workspace and whether it matched a rule.
+#[must_use]
 pub fn assign_window_to_workspace(
     window: &WindowInfo,
     workspace_configs: &[WorkspaceConfig],
@@ -233,6 +236,7 @@ const BUILTIN_IGNORE_APP_NAMES: &[&str] = &[
 /// # Returns
 ///
 /// `true` if the window should be ignored
+#[must_use]
 pub fn should_ignore_window(window: &WindowInfo, ignore_rules: &[WindowRule]) -> bool {
     // Check built-in ignore list first
     if should_ignore_builtin(window) {
@@ -384,6 +388,7 @@ impl FocusHistory {
 /// # Returns
 ///
 /// The workspace containing the window, if found.
+#[must_use]
 pub fn find_workspace_for_window(window_id: u32, workspaces: &[Workspace]) -> Option<&Workspace> {
     workspaces.iter().find(|ws| ws.window_ids.contains(&window_id))
 }
@@ -398,6 +403,7 @@ pub fn find_workspace_for_window(window_id: u32, workspaces: &[Workspace]) -> Op
 /// # Returns
 ///
 /// The visible workspace on that screen, if any.
+#[must_use]
 pub fn get_visible_workspace_for_screen(
     screen_id: u32,
     workspaces: &[Workspace],
@@ -415,6 +421,7 @@ pub fn get_visible_workspace_for_screen(
 /// # Returns
 ///
 /// Workspaces assigned to that screen.
+#[must_use]
 pub fn get_workspaces_for_screen(screen_id: u32, workspaces: &[Workspace]) -> Vec<&Workspace> {
     workspaces.iter().filter(|ws| ws.screen_id == screen_id).collect()
 }
@@ -429,6 +436,7 @@ pub fn get_workspaces_for_screen(screen_id: u32, workspaces: &[Workspace]) -> Ve
 /// # Returns
 ///
 /// `true` if a workspace with that name exists.
+#[must_use]
 pub fn workspace_exists(name: &str, workspaces: &[Workspace]) -> bool {
     workspaces.iter().any(|ws| ws.name.eq_ignore_ascii_case(name))
 }

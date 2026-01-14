@@ -38,6 +38,7 @@ use crate::config::get_config;
 ///
 /// Returns `true` if borders were successfully initialized (or are disabled),
 /// `false` if initialization failed.
+#[must_use]
 pub fn init() -> bool {
     let config = get_config();
 

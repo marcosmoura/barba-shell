@@ -367,7 +367,7 @@ impl TilingManager {
 
         // Move windows to main screen (off-screen, since their workspaces are now hidden)
         for (window_id, _ws_name) in &windows_to_move {
-            super::window::move_window_to_screen(*window_id, &main_screen, None);
+            let _ = super::window::move_window_to_screen(*window_id, &main_screen, None);
         }
 
         // Update tracked window frames
@@ -451,7 +451,7 @@ impl TilingManager {
 
             // Move windows to the restored screen
             for window_id in &window_ids {
-                super::window::move_window_to_screen(*window_id, &target_screen, None);
+                let _ = super::window::move_window_to_screen(*window_id, &target_screen, None);
             }
 
             // Update tracked window frames
@@ -820,7 +820,7 @@ impl TilingManager {
 
         // Step 2: Show windows
         let windows_to_show: Vec<&TrackedWindow> = self.state.windows_for_workspace(name);
-        show_workspace_windows(&windows_to_show);
+        let _ = show_workspace_windows(&windows_to_show);
 
         // Step 3: Immediately re-apply layout (no delay) to fix any position overrides
         self.apply_layout_forced(name);
@@ -879,6 +879,7 @@ impl TilingManager {
     /// # Returns
     ///
     /// Number of windows that were repositioned.
+    #[must_use]
     pub fn apply_layout(&self, workspace_name: &str) -> usize {
         let Some(workspace) = self.state.workspace_by_name(workspace_name) else {
             return 0;
@@ -2774,7 +2775,7 @@ impl TilingManager {
 
         // Animate to the new frame
         let transition = WindowTransition::new(window_id, current_frame, target_frame);
-        self.animation_system.animate(vec![transition]);
+        let _ = self.animation_system.animate(vec![transition]);
 
         // Update tracked window frame
         if let Some(window) = self.state.windows.iter_mut().find(|w| w.id == window_id) {

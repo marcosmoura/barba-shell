@@ -767,6 +767,7 @@ pub struct AppInfo {
 }
 
 /// Gets all running applications that can own windows.
+#[must_use]
 pub fn get_running_apps() -> Vec<AppInfo> {
     unsafe {
         let Some(workspace_class) = Class::get("NSWorkspace") else {
@@ -850,6 +851,7 @@ pub struct CGWindowInfo {
 /// Results are cached for 50ms to reduce overhead from repeated queries
 /// within the same frame or rapid operations.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+#[must_use]
 pub fn get_cg_window_list() -> Vec<CGWindowInfo> { get_cached_cg_window_list(true) }
 
 /// Gets ALL windows (including hidden/minimized) using `CGWindowListCopyWindowInfo`.
@@ -860,6 +862,7 @@ pub fn get_cg_window_list() -> Vec<CGWindowInfo> { get_cached_cg_window_list(tru
 ///
 /// Results are cached for 50ms to reduce overhead from repeated queries.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+#[must_use]
 pub fn get_cg_window_list_all() -> Vec<CGWindowInfo> { get_cached_cg_window_list(false) }
 
 /// Internal function to get window list without caching.
@@ -964,12 +967,14 @@ pub struct WindowInfo {
 ///
 /// Note: This only returns on-screen windows. Use `get_all_windows_including_hidden()`
 /// to also get windows from hidden/minimized apps.
+#[must_use]
 pub fn get_all_windows() -> Vec<WindowInfo> { get_all_windows_internal(false) }
 
 /// Gets ALL windows including those from hidden/minimized apps.
 ///
 /// This should be used for initial window tracking at startup to ensure
 /// all windows are tracked regardless of their visibility state.
+#[must_use]
 pub fn get_all_windows_including_hidden() -> Vec<WindowInfo> { get_all_windows_internal(true) }
 
 /// Internal function to get windows with configurable hidden app handling.
@@ -1210,6 +1215,7 @@ unsafe fn get_app_ax_windows(app_element: AXUIElementRef) -> Vec<AXUIElementRef>
 /// 1. Getting the frontmost application
 /// 2. Getting that app's focused window (`AXFocusedWindow`)
 /// 3. Matching it with windows from `CGWindowList` to get the window ID
+#[must_use]
 pub fn get_focused_window() -> Option<WindowInfo> { unsafe { get_focused_window_unsafe() } }
 
 /// Internal implementation for getting the focused window.
@@ -1392,6 +1398,7 @@ pub fn set_window_frame(window_id: u32, frame: &Rect) -> TilingResult<()> {
 /// # Returns
 ///
 /// `true` if the window was found and repositioned successfully.
+#[must_use]
 pub fn set_window_frame_by_pid(pid: i32, current_frame: &Rect, new_frame: &Rect) -> bool {
     // For single-window operations, delegate to the batch function
     set_windows_for_pid(pid, &[(*current_frame, *new_frame)]) > 0
@@ -1410,6 +1417,11 @@ pub fn set_window_frame_by_pid(pid: i32, current_frame: &Rect, new_frame: &Rect)
 /// # Returns
 ///
 /// Number of windows successfully repositioned.
+///
+/// # Panics
+///
+/// This function will not panic. The `unwrap()` call is guarded by a preceding `is_none()` check.
+#[must_use]
 pub fn set_windows_for_pid(pid: i32, window_frames: &[(Rect, Rect)]) -> usize {
     if window_frames.is_empty() {
         return 0;
@@ -1537,6 +1549,7 @@ pub fn set_window_frame_with_retry(
 /// # Returns
 ///
 /// Number of windows successfully positioned.
+#[must_use]
 pub fn set_window_frames_by_id(window_frames: &[(u32, Rect)]) -> usize {
     if window_frames.is_empty() {
         return 0;
@@ -1614,6 +1627,7 @@ pub fn set_window_frames_by_id(window_frames: &[(u32, Rect)]) -> usize {
 /// # Returns
 ///
 /// A map of `window_id` -> `AXUIElementRef` for windows that were found.
+#[must_use]
 pub fn resolve_window_ax_elements(
     window_ids: &[u32],
 ) -> std::collections::HashMap<u32, AXUIElementRef> {
@@ -1797,6 +1811,8 @@ pub fn set_window_positions_only(frames: &[(AXUIElementRef, f64, f64)]) -> usize
 /// # Returns
 ///
 /// Number of windows successfully positioned.
+#[must_use]
+#[allow(clippy::implicit_hasher)]
 pub fn set_window_frames_auto(
     window_frames: &[(u32, Rect)],
     ax_elements: &std::collections::HashMap<u32, AXUIElementRef>,
@@ -2003,6 +2019,7 @@ pub fn show_window(window_id: u32) -> TilingResult<()> {
 /// # Returns
 ///
 /// A vector of `WindowInfo` for all ready windows from the app.
+#[must_use]
 pub fn wait_for_app_windows_ready(
     pid: i32,
     max_wait_ms: u64,
@@ -2051,6 +2068,7 @@ pub fn wait_for_app_windows_ready(
 /// # Returns
 ///
 /// `true` if the window exists and has a valid frame.
+#[must_use]
 pub fn is_window_ready(pid: i32, window_id: u32) -> bool {
     let windows = get_all_windows();
     windows.iter().any(|w| w.pid == pid && w.id == window_id)
@@ -2071,6 +2089,7 @@ pub fn is_window_ready(pid: i32, window_id: u32) -> bool {
 /// # Returns
 ///
 /// `true` if the window was successfully moved.
+#[must_use]
 pub fn move_window_to_screen(
     window_id: u32,
     target_screen: &super::state::Screen,
@@ -2144,6 +2163,7 @@ fn calculate_frame_for_screen(
 /// Determines which screen a point is on.
 ///
 /// Returns the screen containing the point, or None if not found.
+#[must_use]
 pub fn get_screen_for_point(
     x: f64,
     y: f64,
@@ -2155,6 +2175,7 @@ pub fn get_screen_for_point(
 /// Determines which screen a window is primarily on.
 ///
 /// Uses the window's center point to determine the screen.
+#[must_use]
 pub fn get_screen_for_window<'a>(
     window_frame: &Rect,
     screens: &'a [super::state::Screen],

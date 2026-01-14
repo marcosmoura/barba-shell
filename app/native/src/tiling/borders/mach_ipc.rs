@@ -312,6 +312,7 @@ pub fn is_connected() -> bool {
 /// ```ignore
 /// send(&["active_color=0xFFFF0000", "width=4.0"]);
 /// ```
+#[must_use]
 pub fn send(args: &[&str]) -> bool {
     let guard = get_connection().lock();
 
@@ -353,6 +354,7 @@ pub fn send(args: &[&str]) -> bool {
 /// # Returns
 ///
 /// `true` if the message was sent successfully.
+#[must_use]
 pub fn send_one(arg: &str) -> bool { send(&[arg]) }
 
 /// Sends multiple key=value pairs to `JankyBorders` in a single message.
@@ -386,6 +388,7 @@ pub fn invalidate() {
 /// # Returns
 ///
 /// `true` if a connection was established.
+#[must_use]
 pub fn connect() -> bool {
     let guard = get_connection().lock();
     guard.is_some()

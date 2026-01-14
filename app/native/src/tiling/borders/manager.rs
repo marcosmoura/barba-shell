@@ -65,7 +65,7 @@ pub fn init_border_manager() -> bool {
     // Apply initial configuration to JankyBorders (without colors)
     // Colors will be set later after determining the focused workspace's layout
     // This prevents a flash of incorrect colors during startup
-    janky::apply_config_without_colors(&config.tiling.borders);
+    let _ = janky::apply_config_without_colors(&config.tiling.borders);
 
     eprintln!("stache: borders: manager initialized");
 
@@ -158,7 +158,7 @@ impl BorderManager {
 
         if enabled {
             // Re-apply configuration when re-enabled
-            janky::refresh();
+            let _ = janky::refresh();
         }
     }
 
@@ -367,7 +367,7 @@ impl BorderManager {
     /// Call this when the border configuration changes.
     pub fn refresh(&self) {
         if self.enabled {
-            janky::refresh();
+            let _ = janky::refresh();
         }
     }
 

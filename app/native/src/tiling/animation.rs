@@ -1145,6 +1145,7 @@ impl AnimationSystem {
     /// # Returns
     ///
     /// Number of windows that were successfully positioned.
+    #[must_use]
     pub fn animate(&self, transitions: Vec<WindowTransition>) -> usize {
         if transitions.is_empty() {
             return 0;

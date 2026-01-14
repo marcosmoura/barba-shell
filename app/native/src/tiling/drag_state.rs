@@ -77,6 +77,7 @@ pub struct DragInfo {
 
 impl DragInfo {
     /// Returns true if any window in the workspace is tiled (not floating).
+    #[must_use]
     pub fn has_tiled_windows(&self) -> bool { self.window_snapshots.iter().any(|w| !w.is_floating) }
 }
 

@@ -257,6 +257,7 @@ fn send_command_cli(args: &[&str]) -> bool {
 /// Sets the active (focused) border color.
 ///
 /// Supports solid, gradient, and glow formats.
+#[must_use]
 pub fn set_active_color(color: &str) -> bool {
     let arg = format!("active_color={color}");
     send_command(&[&arg])
@@ -265,6 +266,7 @@ pub fn set_active_color(color: &str) -> bool {
 /// Sets the inactive (unfocused) border color.
 ///
 /// Supports solid, gradient, and glow formats.
+#[must_use]
 pub fn set_inactive_color(color: &str) -> bool {
     let arg = format!("inactive_color={color}");
     send_command(&[&arg])
@@ -273,12 +275,14 @@ pub fn set_inactive_color(color: &str) -> bool {
 /// Sets the background color behind the border.
 ///
 /// Use transparent (alpha=0) to disable.
+#[must_use]
 pub fn set_background_color(color: &str) -> bool {
     let arg = format!("background_color={color}");
     send_command(&[&arg])
 }
 
 /// Sets the border width.
+#[must_use]
 pub fn set_width(width: f64) -> bool {
     let arg = format!("width={width}");
     send_command(&[&arg])
@@ -289,6 +293,7 @@ pub fn set_width(width: f64) -> bool {
 /// # Arguments
 ///
 /// * `style` - 'r' for round, 's' for square
+#[must_use]
 pub fn set_style(style: char) -> bool {
     let arg = format!("style={style}");
     send_command(&[&arg])
@@ -299,12 +304,14 @@ pub fn set_style(style: char) -> bool {
 /// # Arguments
 ///
 /// * `above` - `true` for above windows, `false` for below
+#[must_use]
 pub fn set_order(above: bool) -> bool {
     let arg = format!("order={}", if above { 'a' } else { 'b' });
     send_command(&[&arg])
 }
 
 /// Sets the `HiDPI` (retina) mode.
+#[must_use]
 pub fn set_hidpi(enabled: bool) -> bool {
     let arg = if enabled { "hidpi=on" } else { "hidpi=off" };
     send_command(&[arg])
@@ -313,6 +320,7 @@ pub fn set_hidpi(enabled: bool) -> bool {
 /// Sets the accessibility focus tracking mode.
 ///
 /// When enabled, `JankyBorders` uses accessibility API for focus tracking.
+#[must_use]
 pub fn set_ax_focus(enabled: bool) -> bool {
     let arg = if enabled {
         "ax_focus=on"
@@ -327,6 +335,7 @@ pub fn set_ax_focus(enabled: bool) -> bool {
 /// # Arguments
 ///
 /// * `apps` - Comma-separated list of app names or bundle IDs
+#[must_use]
 pub fn set_blacklist(apps: &str) -> bool {
     let arg = format!("blacklist={apps}");
     send_command(&[&arg])
@@ -339,6 +348,7 @@ pub fn set_blacklist(apps: &str) -> bool {
 /// # Arguments
 ///
 /// * `apps` - Comma-separated list of app names or bundle IDs
+#[must_use]
 pub fn set_whitelist(apps: &str) -> bool {
     let arg = format!("whitelist={apps}");
     send_command(&[&arg])
@@ -389,6 +399,7 @@ pub fn set_multiple(settings: &[(&str, &str)]) -> bool {
 /// # Returns
 ///
 /// `true` if the command succeeded.
+#[must_use]
 pub fn set_colors(active: &str, inactive: &str) -> bool {
     let active_arg = format!("active_color={active}");
     let inactive_arg = format!("inactive_color={inactive}");
@@ -414,6 +425,7 @@ fn get_color_for_state(state_config: &BorderStateConfig) -> Option<String> {
 ///
 /// This sets width, style, hidpi, and initial colors based on the config.
 /// Uses batch sending for better performance when multiple settings need updating.
+#[must_use]
 pub fn apply_config(config: &BordersConfig) -> bool { apply_config_internal(config, true) }
 
 /// Applies border configuration without setting colors.
@@ -421,6 +433,7 @@ pub fn apply_config(config: &BordersConfig) -> bool { apply_config_internal(conf
 /// This sets width, style, and hidpi only. Colors should be set separately
 /// via `update_colors_for_state` after determining the focused workspace's layout.
 /// This prevents a flash of incorrect colors during startup.
+#[must_use]
 pub fn apply_config_without_colors(config: &BordersConfig) -> bool {
     apply_config_internal(config, false)
 }
@@ -531,6 +544,7 @@ pub fn update_colors_for_state(is_monocle: bool, is_floating: bool) {
 ///
 /// This clears the command cache and re-applies all configuration settings,
 /// ensuring `JankyBorders` receives the latest values even if they haven't changed.
+#[must_use]
 pub fn refresh() -> bool {
     clear_cache();
     let config = get_config();

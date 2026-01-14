@@ -39,6 +39,105 @@ use super::error::{TilingError, TilingResult};
 use super::window::{AppInfo, get_running_apps};
 
 // ============================================================================
+// Observer Filtering
+// ============================================================================
+
+/// Bundle IDs of apps that should not have observers created.
+///
+/// These are system components that generate high event volume but will never
+/// have windows we want to manage. Filtering them out reduces CPU usage and
+/// improves performance.
+const SKIP_OBSERVER_BUNDLE_IDS: &[&str] = &[
+    // macOS System Components (high event volume, no manageable windows)
+    "com.apple.dock",
+    "com.apple.SystemUIServer",
+    "com.apple.controlcenter",
+    "com.apple.notificationcenterui",
+    "com.apple.Spotlight",
+    "com.apple.WindowManager",
+    "com.apple.loginwindow",
+    "com.apple.screencaptureui",
+    "com.apple.screensaver",
+    "com.apple.SecurityAgent",
+    "com.apple.UserNotificationCenter",
+    "com.apple.universalcontrol",
+    "com.apple.TouchBarServer",
+    "com.apple.AirPlayUIAgent",
+    "com.apple.wifi.WiFiAgent",
+    "com.apple.bluetoothUIServer",
+    "com.apple.CoreLocationAgent",
+    "com.apple.VoiceOver",
+    "com.apple.AssistiveControl",
+    "com.apple.SpeechRecognitionCore",
+    "com.apple.accessibility.universalAccessAuthWarn",
+    "com.apple.launchpad.launcher",
+    "com.apple.FolderActionsDispatcher",
+    "com.marcosmoura.stache",
+];
+
+/// App names to skip observing when bundle ID is not available.
+const SKIP_OBSERVER_APP_NAMES: &[&str] = &[
+    "Dock",
+    "SystemUIServer",
+    "Control Center",
+    "Notification Center",
+    "Spotlight",
+    "Window Manager",
+    "WindowManager",
+    "loginwindow",
+    "Stache",
+    "JankyBorders",
+    "borders",
+];
+
+/// Determines whether an app should have an observer created.
+///
+/// Returns `false` for system apps and utilities that we know will never have
+/// windows we want to manage. This reduces event volume and improves performance.
+///
+/// # Arguments
+///
+/// * `app` - Information about the application to check.
+///
+/// # Returns
+///
+/// `true` if we should create an observer for this app, `false` if we should skip it.
+#[must_use]
+pub fn should_observe_app(app: &AppInfo) -> bool {
+    // Check bundle ID (most reliable)
+    if !app.bundle_id.is_empty()
+        && SKIP_OBSERVER_BUNDLE_IDS
+            .iter()
+            .any(|&id| app.bundle_id.eq_ignore_ascii_case(id))
+    {
+        return false;
+    }
+
+    // Check app name (fallback when bundle ID is not available)
+    if !app.name.is_empty()
+        && SKIP_OBSERVER_APP_NAMES.iter().any(|&name| app.name.eq_ignore_ascii_case(name))
+    {
+        return false;
+    }
+
+    true
+}
+
+/// Checks if an app name should be skipped for observation.
+///
+/// This is a lighter-weight check when only the app name is available.
+#[must_use]
+fn should_skip_app_by_name(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+
+    SKIP_OBSERVER_APP_NAMES
+        .iter()
+        .any(|&skip_name| name.eq_ignore_ascii_case(skip_name))
+}
+
+// ============================================================================
 // Accessibility Observer FFI
 // ============================================================================
 
@@ -362,20 +461,33 @@ pub fn init(callback: fn(WindowEvent)) -> bool {
         *state = Some(ObserverState { observers: HashMap::new() });
     }
 
-    // Set up observers for running apps
+    // Set up observers for running apps (filtered to skip system apps)
     let apps = get_running_apps();
+    let mut observed = 0;
+    let mut skipped = 0;
+
     for app in apps {
+        if !should_observe_app(&app) {
+            skipped += 1;
+            continue;
+        }
+
         if let Err(e) = add_observer(&app) {
             eprintln!("stache: tiling: failed to observe {}: {e}", app.name);
+        } else {
+            observed += 1;
         }
     }
 
+    eprintln!("stache: tiling: observers initialized ({observed} apps, {skipped} filtered)");
     true
 }
 
 /// Adds an observer for a new application.
 ///
 /// Call this when a new application is launched to begin observing its windows.
+/// Apps that match the filter criteria (system apps, window utilities) will be
+/// silently skipped to reduce event volume.
 ///
 /// # Arguments
 ///
@@ -389,6 +501,11 @@ pub fn init(callback: fn(WindowEvent)) -> bool {
 pub fn add_observer(app: &AppInfo) -> TilingResult<()> {
     if !INITIALIZED.load(Ordering::SeqCst) {
         return Err(TilingError::observer("Observer system not initialized"));
+    }
+
+    // Skip apps that should not be observed (system apps, utilities)
+    if !should_observe_app(app) {
+        return Ok(());
     }
 
     let mut state_guard = OBSERVER_STATE
@@ -487,9 +604,16 @@ pub fn add_observer(app: &AppInfo) -> TilingResult<()> {
 /// Returns `TilingError::Observer` if the observer system is not initialized
 /// or if the observer cannot be created.
 #[allow(clippy::significant_drop_tightening)] // Guard must be held for entire function
-pub fn add_observer_by_pid(pid: i32, _name: Option<&str>) -> TilingResult<()> {
+pub fn add_observer_by_pid(pid: i32, name: Option<&str>) -> TilingResult<()> {
     if !INITIALIZED.load(Ordering::SeqCst) {
         return Err(TilingError::observer("Observer system not initialized"));
+    }
+
+    // Skip apps that should not be observed (by name check)
+    if let Some(app_name) = name
+        && should_skip_app_by_name(app_name)
+    {
+        return Ok(());
     }
 
     let mut state_guard = OBSERVER_STATE
@@ -712,5 +836,65 @@ mod tests {
         assert_eq!(event.event_type, WindowEventType::Created);
         assert_eq!(event.pid, 1234);
         assert_eq!(event.element, 0x1234_5678);
+    }
+
+    // ========================================================================
+    // Observer Filtering Tests
+    // ========================================================================
+
+    #[test]
+    fn test_should_skip_app_by_name_dock() {
+        assert!(should_skip_app_by_name("Dock"));
+        assert!(should_skip_app_by_name("dock")); // Case insensitive
+        assert!(should_skip_app_by_name("DOCK"));
+    }
+
+    #[test]
+    fn test_should_skip_app_by_name_system_ui() {
+        assert!(should_skip_app_by_name("SystemUIServer"));
+        assert!(should_skip_app_by_name("Control Center"));
+        assert!(should_skip_app_by_name("Notification Center"));
+        assert!(should_skip_app_by_name("Spotlight"));
+        assert!(should_skip_app_by_name("Window Manager"));
+    }
+
+    #[test]
+    fn test_should_skip_app_by_name_stache() {
+        assert!(should_skip_app_by_name("Stache"));
+        assert!(should_skip_app_by_name("JankyBorders"));
+    }
+
+    #[test]
+    fn test_should_not_skip_regular_apps() {
+        assert!(!should_skip_app_by_name("Safari"));
+        assert!(!should_skip_app_by_name("Chrome"));
+        assert!(!should_skip_app_by_name("Terminal"));
+        assert!(!should_skip_app_by_name("Finder"));
+        assert!(!should_skip_app_by_name("Code"));
+        assert!(!should_skip_app_by_name("Visual Studio Code"));
+    }
+
+    #[test]
+    fn test_should_not_skip_empty_name() {
+        assert!(!should_skip_app_by_name(""));
+    }
+
+    #[test]
+    fn test_skip_observer_bundle_ids_contains_system_apps() {
+        // Verify the bundle ID list contains expected system apps
+        assert!(SKIP_OBSERVER_BUNDLE_IDS.contains(&"com.apple.dock"));
+        assert!(SKIP_OBSERVER_BUNDLE_IDS.contains(&"com.apple.Spotlight"));
+        assert!(SKIP_OBSERVER_BUNDLE_IDS.contains(&"com.apple.SystemUIServer"));
+        assert!(SKIP_OBSERVER_BUNDLE_IDS.contains(&"com.apple.controlcenter"));
+        assert!(SKIP_OBSERVER_BUNDLE_IDS.contains(&"com.marcosmoura.stache"));
+    }
+
+    #[test]
+    fn test_skip_observer_bundle_ids_does_not_contain_regular_apps() {
+        // Verify the bundle ID list doesn't contain regular apps
+        assert!(!SKIP_OBSERVER_BUNDLE_IDS.contains(&"com.apple.Safari"));
+        assert!(!SKIP_OBSERVER_BUNDLE_IDS.contains(&"com.apple.Terminal"));
+        assert!(!SKIP_OBSERVER_BUNDLE_IDS.contains(&"com.apple.finder"));
+        assert!(!SKIP_OBSERVER_BUNDLE_IDS.contains(&"com.google.Chrome"));
     }
 }

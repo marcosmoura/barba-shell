@@ -6,6 +6,7 @@
 
 mod helpers;
 
+use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
@@ -137,6 +138,9 @@ pub struct TilingManager {
     last_workspace_switch: Option<Instant>,
     /// Animation system for smooth window transitions.
     animation_system: AnimationSystem,
+    /// Cached gaps per screen (keyed by screen name).
+    /// Rebuilt when screens change or on initialization.
+    gaps_cache: HashMap<String, Gaps>,
 }
 
 impl TilingManager {
@@ -151,6 +155,7 @@ impl TilingManager {
             last_programmatic_focus: None,
             last_workspace_switch: None,
             animation_system: AnimationSystem::from_config(),
+            gaps_cache: HashMap::new(),
         }
     }
 
@@ -214,6 +219,40 @@ impl TilingManager {
         {
             self.state.focused_screen_id = Some(main.id);
         }
+
+        // Rebuild gaps cache for new screen configuration
+        self.rebuild_gaps_cache();
+    }
+
+    /// Rebuilds the gaps cache for all screens.
+    ///
+    /// This computes and caches the resolved gap values for each screen,
+    /// avoiding repeated calculations during layout application.
+    fn rebuild_gaps_cache(&mut self) {
+        let config = get_config();
+        let bar_offset = f64::from(config.bar.height) + f64::from(config.bar.padding);
+
+        self.gaps_cache.clear();
+
+        for screen in &self.state.screens {
+            let gaps =
+                Gaps::from_config(&config.tiling.gaps, &screen.name, screen.is_main, bar_offset);
+            self.gaps_cache.insert(screen.name.clone(), gaps);
+        }
+    }
+
+    /// Gets the cached gaps for a screen.
+    ///
+    /// Falls back to computing gaps on cache miss (shouldn't happen in normal operation).
+    fn get_gaps_for_screen(&self, screen: &Screen) -> Gaps {
+        if let Some(gaps) = self.gaps_cache.get(&screen.name) {
+            return *gaps;
+        }
+
+        // Cache miss - compute on demand (shouldn't happen normally)
+        let config = get_config();
+        let bar_offset = f64::from(config.bar.height) + f64::from(config.bar.padding);
+        Gaps::from_config(&config.tiling.gaps, &screen.name, screen.is_main, bar_offset)
     }
 
     /// Gets all screens.
@@ -864,10 +903,9 @@ impl TilingManager {
         // Get config values
         let config = get_config();
         let master_ratio = f64::from(config.tiling.master.ratio) / 100.0;
-        let bar_offset = f64::from(config.bar.height) + f64::from(config.bar.padding);
 
-        // Resolve gaps for this screen (bar offset only applies to main screen)
-        let gaps = Gaps::from_config(&config.tiling.gaps, &screen.name, screen.is_main, bar_offset);
+        // Use cached gaps for this screen
+        let gaps = self.get_gaps_for_screen(screen);
 
         // Calculate the layout with gaps
         let layout_result = calculate_layout_with_gaps(
@@ -942,10 +980,9 @@ impl TilingManager {
         let master_ratio = f64::from(config.tiling.master.ratio) / 100.0;
         let layout_type = workspace.layout;
         let split_ratios = workspace.split_ratios.clone();
-        let bar_offset = f64::from(config.bar.height) + f64::from(config.bar.padding);
 
-        // Resolve gaps for this screen (bar offset only applies to main screen)
-        let gaps = Gaps::from_config(&config.tiling.gaps, &screen.name, screen.is_main, bar_offset);
+        // Use cached gaps for this screen
+        let gaps = self.get_gaps_for_screen(screen);
 
         // Compute layout input hash for cache validation
         let layout_hash = crate::tiling::state::compute_layout_hash(
@@ -1223,10 +1260,8 @@ impl TilingManager {
             _ => return,
         };
 
-        // Get config values
-        let config = get_config();
-        let bar_offset = f64::from(config.bar.height) + f64::from(config.bar.padding);
-        let gaps = Gaps::from_config(&config.tiling.gaps, &screen.name, screen.is_main, bar_offset);
+        // Use cached gaps for this screen
+        let gaps = self.get_gaps_for_screen(screen);
 
         let count = window_ids.len();
         let available_space = if is_vertical {
@@ -2730,10 +2765,8 @@ impl TilingManager {
         // Get current window frame for animation
         let current_frame = self.state.window_by_id(window_id).map(|w| w.frame).unwrap_or_default();
 
-        // Resolve gaps for this screen
-        let config = get_config();
-        let bar_offset = f64::from(config.bar.height) + f64::from(config.bar.padding);
-        let gaps = Gaps::from_config(&config.tiling.gaps, &screen.name, screen.is_main, bar_offset);
+        // Use cached gaps for this screen
+        let gaps = self.get_gaps_for_screen(&screen);
 
         // Calculate the frame from the preset
         let target_frame =
@@ -2826,6 +2859,76 @@ mod tests {
         state_mut.focused_workspace = Some("test".to_string());
 
         assert_eq!(manager.state.focused_workspace, Some("test".to_string()));
+    }
+
+    // ========================================================================
+    // Gaps Cache Tests
+    // ========================================================================
+
+    #[test]
+    fn test_gaps_cache_populated_after_refresh_screens() {
+        let mut manager = TilingManager::new();
+        manager.refresh_screens();
+
+        // Gaps cache should have one entry per screen
+        assert_eq!(manager.gaps_cache.len(), manager.state.screens.len());
+    }
+
+    #[test]
+    fn test_gaps_cache_has_entries_for_all_screens() {
+        let mut manager = TilingManager::new();
+        manager.refresh_screens();
+
+        // Every screen should have a corresponding entry in the gaps cache
+        for screen in &manager.state.screens {
+            assert!(
+                manager.gaps_cache.contains_key(&screen.name),
+                "Gaps cache missing entry for screen: {}",
+                screen.name
+            );
+        }
+    }
+
+    #[test]
+    fn test_get_gaps_for_screen_returns_cached_value() {
+        let mut manager = TilingManager::new();
+        manager.refresh_screens();
+
+        if let Some(screen) = manager.state.screens.first().cloned() {
+            // Get gaps from cache
+            let gaps1 = manager.get_gaps_for_screen(&screen);
+            let gaps2 = manager.get_gaps_for_screen(&screen);
+
+            // Should return consistent values (from cache)
+            assert_eq!(gaps1.compute_hash(), gaps2.compute_hash());
+        }
+    }
+
+    #[test]
+    fn test_gaps_cache_main_screen_has_bar_offset() {
+        let mut manager = TilingManager::new();
+        manager.refresh_screens();
+
+        // Find the main screen
+        if let Some(main_screen) = manager.state.screens.iter().find(|s| s.is_main).cloned() {
+            let gaps = manager.get_gaps_for_screen(&main_screen);
+
+            // Main screen gaps should have bar offset included
+            // The exact value depends on config, but outer_top should be non-zero
+            // if bar is configured (which it is by default)
+            let config = get_config();
+            let bar_offset = f64::from(config.bar.height) + f64::from(config.bar.padding);
+
+            if bar_offset > 0.0 {
+                // outer_top should include bar_offset
+                assert!(
+                    gaps.outer_top >= bar_offset,
+                    "Main screen gaps.outer_top ({}) should include bar_offset ({})",
+                    gaps.outer_top,
+                    bar_offset
+                );
+            }
+        }
     }
 
     // Note: Helper function tests are now in helpers.rs

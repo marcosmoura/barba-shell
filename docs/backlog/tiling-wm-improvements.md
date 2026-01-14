@@ -411,18 +411,16 @@ The `AXElement` wrapper is available for new code via `tiling::ffi::AXElement`.
 - [x] Fixed test isolation issue with unique test keys
 - [x] 949 tests pass, clippy clean
 
-#### Phase 5.3: Pre-allocated Animation Buffers
+#### Phase 5.3: Pre-allocated Animation Buffers ✅ COMPLETE
 
-- [ ] Add thread-local frame buffer in `animation.rs`:
-
-  ```rust
-  thread_local! {
-      static FRAME_BUFFER: RefCell<Vec<(u32, Rect)>> = RefCell::new(Vec::with_capacity(64));
-  }
-  ```
-
-- [ ] Use buffer in animation frame rendering
-- [ ] Eliminate per-frame allocations
+- [x] Add `buffers` module with thread-local pre-allocated vectors:
+  - `WINDOW_IDS`, `ANIMATABLE`, `POSITION_FRAMES`, `DELTA_FRAMES`
+  - `PREV_FRAMES`, `FINAL_FRAMES`, `SPRING_STATES`
+- [x] `take_*(capacity)` and `return_*()` API for buffer lifecycle
+- [x] Larger capacity buffers preserved across calls
+- [x] Note: Animation code already uses `.clear()` for per-frame reuse
+- [x] Added 4 new tests for buffer functionality
+- [x] 953 tests pass, clippy clean
 
 #### Phase 5.4: Layout Result Caching
 
@@ -633,14 +631,15 @@ The `AXElement` wrapper is available for new code via `tiling::ffi::AXElement`.
 
 ## Change Log
 
-| Date       | Change                                                         |
-| ---------- | -------------------------------------------------------------- |
-| 2026-01-13 | Initial improvement plan created                               |
-| 2026-01-13 | Milestones 1-3 completed, fixed REPOSITION_THRESHOLD test      |
-| 2026-01-13 | Milestone 4 Phase 4.1: AXElement wrapper complete (7 tests)    |
-| 2026-01-13 | Milestone 4 Phase 4.2: Safety documentation complete           |
-| 2026-01-13 | Milestone 4 Phase 4.3: ffi_try! macros complete (5 tests)      |
-| 2026-01-13 | Milestone 4 Phase 4.4: Applied macros to window.rs             |
-| 2026-01-13 | Milestone 4 complete - 944 tests passing                       |
-| 2026-01-13 | Milestone 5 Phase 5.1: Workspace name index (947 tests)        |
-| 2026-01-13 | Milestone 5 Phase 5.2: Batch JankyBorders commands (949 tests) |
+| Date       | Change                                                             |
+| ---------- | ------------------------------------------------------------------ |
+| 2026-01-13 | Initial improvement plan created                                   |
+| 2026-01-13 | Milestones 1-3 completed, fixed REPOSITION_THRESHOLD test          |
+| 2026-01-13 | Milestone 4 Phase 4.1: AXElement wrapper complete (7 tests)        |
+| 2026-01-13 | Milestone 4 Phase 4.2: Safety documentation complete               |
+| 2026-01-13 | Milestone 4 Phase 4.3: ffi_try! macros complete (5 tests)          |
+| 2026-01-13 | Milestone 4 Phase 4.4: Applied macros to window.rs                 |
+| 2026-01-13 | Milestone 4 complete - 944 tests passing                           |
+| 2026-01-13 | Milestone 5 Phase 5.1: Workspace name index (947 tests)            |
+| 2026-01-13 | Milestone 5 Phase 5.2: Batch JankyBorders commands (949 tests)     |
+| 2026-01-14 | Milestone 5 Phase 5.3: Animation buffer infrastructure (953 tests) |

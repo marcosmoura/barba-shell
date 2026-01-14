@@ -4,6 +4,7 @@
 //! workspaces, and windows in the tiling system.
 
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 
 use serde::{Deserialize, Serialize};
 
@@ -135,11 +136,108 @@ impl Screen {
 }
 
 // ============================================================================
+// Layout Cache
+// ============================================================================
+
+/// Cached layout calculation result.
+///
+/// Stores the result of a layout calculation along with a hash of the inputs.
+/// This allows skipping expensive recalculations when the inputs haven't changed.
+#[derive(Debug, Clone, Default)]
+pub struct LayoutCache {
+    /// Hash of the layout inputs (window_ids, screen_frame, layout type, ratios, etc.)
+    pub input_hash: u64,
+    /// Cached layout positions: (window_id, frame)
+    pub positions: Vec<(u32, Rect)>,
+}
+
+impl LayoutCache {
+    /// Creates a new empty layout cache.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            input_hash: 0,
+            positions: Vec::new(),
+        }
+    }
+
+    /// Checks if the cache is valid for the given input hash.
+    #[must_use]
+    pub fn is_valid(&self, input_hash: u64) -> bool {
+        self.input_hash != 0 && self.input_hash == input_hash && !self.positions.is_empty()
+    }
+
+    /// Updates the cache with new results.
+    pub fn update(&mut self, input_hash: u64, positions: Vec<(u32, Rect)>) {
+        self.input_hash = input_hash;
+        self.positions = positions;
+    }
+
+    /// Invalidates the cache.
+    pub fn invalidate(&mut self) {
+        self.input_hash = 0;
+        self.positions.clear();
+    }
+}
+
+/// Computes a hash of layout inputs for cache validation.
+///
+/// The hash includes all inputs that affect the layout calculation:
+/// - Layout type
+/// - Window IDs (and their order)
+/// - Screen frame dimensions
+/// - Master ratio
+/// - Split ratios
+/// - Gap values
+#[must_use]
+pub fn compute_layout_hash(
+    layout: LayoutType,
+    window_ids: &[u32],
+    screen_frame: &Rect,
+    master_ratio: f64,
+    split_ratios: &[f64],
+    gaps_hash: u64,
+) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+
+    let mut hasher = DefaultHasher::new();
+
+    // Hash layout type
+    std::mem::discriminant(&layout).hash(&mut hasher);
+
+    // Hash window IDs (order matters)
+    window_ids.len().hash(&mut hasher);
+    for id in window_ids {
+        id.hash(&mut hasher);
+    }
+
+    // Hash screen frame (convert to bits to avoid float comparison issues)
+    screen_frame.x.to_bits().hash(&mut hasher);
+    screen_frame.y.to_bits().hash(&mut hasher);
+    screen_frame.width.to_bits().hash(&mut hasher);
+    screen_frame.height.to_bits().hash(&mut hasher);
+
+    // Hash master ratio
+    master_ratio.to_bits().hash(&mut hasher);
+
+    // Hash split ratios
+    split_ratios.len().hash(&mut hasher);
+    for ratio in split_ratios {
+        ratio.to_bits().hash(&mut hasher);
+    }
+
+    // Include gaps hash
+    gaps_hash.hash(&mut hasher);
+
+    hasher.finish()
+}
+
+// ============================================================================
 // Workspace
 // ============================================================================
 
 /// Represents a virtual workspace containing windows.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Workspace {
     /// Unique name of the workspace.
@@ -180,6 +278,13 @@ pub struct Workspace {
     /// If empty or wrong length, equal splits are used.
     #[serde(default)]
     pub split_ratios: Vec<f64>,
+
+    /// Cached layout calculation result.
+    ///
+    /// This caches the result of the last layout calculation to avoid
+    /// recomputing when inputs haven't changed.
+    #[serde(skip)]
+    pub layout_cache: LayoutCache,
 }
 
 impl Workspace {
@@ -197,6 +302,7 @@ impl Workspace {
             window_ids: Vec::new(),
             focused_window_index: None,
             split_ratios: Vec::new(),
+            layout_cache: LayoutCache::new(),
         }
     }
 
@@ -222,6 +328,7 @@ impl Workspace {
             window_ids: Vec::new(),
             focused_window_index: None,
             split_ratios: Vec::new(),
+            layout_cache: LayoutCache::new(),
         }
     }
 
@@ -834,5 +941,267 @@ mod tests {
         );
         assert!(ws.original_screen_id.is_none());
         assert_eq!(ws.configured_screen, "main");
+    }
+
+    // ========================================================================
+    // Layout Cache Tests
+    // ========================================================================
+
+    #[test]
+    fn test_layout_cache_new() {
+        let cache = LayoutCache::new();
+        assert_eq!(cache.input_hash, 0);
+        assert!(cache.positions.is_empty());
+    }
+
+    #[test]
+    fn test_layout_cache_is_valid_empty() {
+        let cache = LayoutCache::new();
+        // Empty cache should not be valid for any hash
+        assert!(!cache.is_valid(0));
+        assert!(!cache.is_valid(12345));
+    }
+
+    #[test]
+    fn test_layout_cache_update_and_is_valid() {
+        let mut cache = LayoutCache::new();
+        let positions = vec![
+            (1, Rect::new(0.0, 0.0, 100.0, 100.0)),
+            (2, Rect::new(100.0, 0.0, 100.0, 100.0)),
+        ];
+
+        cache.update(12345, positions.clone());
+
+        assert_eq!(cache.input_hash, 12345);
+        assert_eq!(cache.positions.len(), 2);
+        assert!(cache.is_valid(12345));
+        assert!(!cache.is_valid(99999)); // Different hash
+    }
+
+    #[test]
+    fn test_layout_cache_invalidate() {
+        let mut cache = LayoutCache::new();
+        let positions = vec![(1, Rect::new(0.0, 0.0, 100.0, 100.0))];
+
+        cache.update(12345, positions);
+        assert!(cache.is_valid(12345));
+
+        cache.invalidate();
+        assert!(!cache.is_valid(12345));
+        assert_eq!(cache.input_hash, 0);
+        assert!(cache.positions.is_empty());
+    }
+
+    #[test]
+    fn test_layout_cache_is_valid_requires_positions() {
+        let mut cache = LayoutCache::new();
+        cache.input_hash = 12345;
+        // Empty positions should make cache invalid even with matching hash
+        assert!(!cache.is_valid(12345));
+    }
+
+    #[test]
+    fn test_compute_layout_hash_deterministic() {
+        let hash1 = compute_layout_hash(
+            LayoutType::Dwindle,
+            &[1, 2, 3],
+            &Rect::new(0.0, 0.0, 1920.0, 1080.0),
+            0.5,
+            &[0.33, 0.66],
+            12345,
+        );
+
+        let hash2 = compute_layout_hash(
+            LayoutType::Dwindle,
+            &[1, 2, 3],
+            &Rect::new(0.0, 0.0, 1920.0, 1080.0),
+            0.5,
+            &[0.33, 0.66],
+            12345,
+        );
+
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_compute_layout_hash_different_layouts() {
+        let hash1 = compute_layout_hash(
+            LayoutType::Dwindle,
+            &[1, 2],
+            &Rect::new(0.0, 0.0, 1920.0, 1080.0),
+            0.5,
+            &[],
+            0,
+        );
+
+        let hash2 = compute_layout_hash(
+            LayoutType::Monocle,
+            &[1, 2],
+            &Rect::new(0.0, 0.0, 1920.0, 1080.0),
+            0.5,
+            &[],
+            0,
+        );
+
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_compute_layout_hash_different_windows() {
+        let hash1 = compute_layout_hash(
+            LayoutType::Dwindle,
+            &[1, 2, 3],
+            &Rect::new(0.0, 0.0, 1920.0, 1080.0),
+            0.5,
+            &[],
+            0,
+        );
+
+        let hash2 = compute_layout_hash(
+            LayoutType::Dwindle,
+            &[1, 2, 4], // Different window ID
+            &Rect::new(0.0, 0.0, 1920.0, 1080.0),
+            0.5,
+            &[],
+            0,
+        );
+
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_compute_layout_hash_window_order_matters() {
+        let hash1 = compute_layout_hash(
+            LayoutType::Dwindle,
+            &[1, 2, 3],
+            &Rect::new(0.0, 0.0, 1920.0, 1080.0),
+            0.5,
+            &[],
+            0,
+        );
+
+        let hash2 = compute_layout_hash(
+            LayoutType::Dwindle,
+            &[3, 2, 1], // Different order
+            &Rect::new(0.0, 0.0, 1920.0, 1080.0),
+            0.5,
+            &[],
+            0,
+        );
+
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_compute_layout_hash_different_screen_frame() {
+        let hash1 = compute_layout_hash(
+            LayoutType::Dwindle,
+            &[1, 2],
+            &Rect::new(0.0, 0.0, 1920.0, 1080.0),
+            0.5,
+            &[],
+            0,
+        );
+
+        let hash2 = compute_layout_hash(
+            LayoutType::Dwindle,
+            &[1, 2],
+            &Rect::new(0.0, 0.0, 2560.0, 1440.0), // Different resolution
+            0.5,
+            &[],
+            0,
+        );
+
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_compute_layout_hash_different_master_ratio() {
+        let hash1 = compute_layout_hash(
+            LayoutType::Dwindle,
+            &[1, 2],
+            &Rect::new(0.0, 0.0, 1920.0, 1080.0),
+            0.5,
+            &[],
+            0,
+        );
+
+        let hash2 = compute_layout_hash(
+            LayoutType::Dwindle,
+            &[1, 2],
+            &Rect::new(0.0, 0.0, 1920.0, 1080.0),
+            0.6, // Different ratio
+            &[],
+            0,
+        );
+
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_compute_layout_hash_different_split_ratios() {
+        let hash1 = compute_layout_hash(
+            LayoutType::Split,
+            &[1, 2, 3],
+            &Rect::new(0.0, 0.0, 1920.0, 1080.0),
+            0.5,
+            &[0.33, 0.66],
+            0,
+        );
+
+        let hash2 = compute_layout_hash(
+            LayoutType::Split,
+            &[1, 2, 3],
+            &Rect::new(0.0, 0.0, 1920.0, 1080.0),
+            0.5,
+            &[0.5, 0.75], // Different ratios
+            0,
+        );
+
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_compute_layout_hash_different_gaps() {
+        let hash1 = compute_layout_hash(
+            LayoutType::Dwindle,
+            &[1, 2],
+            &Rect::new(0.0, 0.0, 1920.0, 1080.0),
+            0.5,
+            &[],
+            12345,
+        );
+
+        let hash2 = compute_layout_hash(
+            LayoutType::Dwindle,
+            &[1, 2],
+            &Rect::new(0.0, 0.0, 1920.0, 1080.0),
+            0.5,
+            &[],
+            99999, // Different gaps hash
+        );
+
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_workspace_layout_cache_default() {
+        let ws = Workspace::new("test".to_string(), 1, LayoutType::Dwindle);
+        assert_eq!(ws.layout_cache.input_hash, 0);
+        assert!(ws.layout_cache.positions.is_empty());
+    }
+
+    #[test]
+    fn test_workspace_layout_cache_skipped_in_serialization() {
+        let mut ws = Workspace::new("test".to_string(), 1, LayoutType::Dwindle);
+        ws.layout_cache.update(12345, vec![(1, Rect::new(0.0, 0.0, 100.0, 100.0))]);
+
+        // Serialize and deserialize
+        let json = serde_json::to_string(&ws).unwrap();
+        let deserialized: Workspace = serde_json::from_str(&json).unwrap();
+
+        // Cache should be reset after deserialization (skipped in serde)
+        assert_eq!(deserialized.layout_cache.input_hash, 0);
+        assert!(deserialized.layout_cache.positions.is_empty());
     }
 }

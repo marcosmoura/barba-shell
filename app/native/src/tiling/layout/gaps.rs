@@ -1,5 +1,7 @@
 //! Gap configuration and handling for layouts.
 
+use std::hash::{Hash, Hasher};
+
 use crate::config::{GapsConfig, GapsConfigValue};
 use crate::tiling::state::Rect;
 
@@ -125,6 +127,21 @@ impl Gaps {
             frame.height - self.outer_top - self.outer_bottom,
         )
     }
+
+    /// Computes a hash of the gap values for cache validation.
+    #[must_use]
+    pub fn compute_hash(&self) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+
+        let mut hasher = DefaultHasher::new();
+        self.inner_h.to_bits().hash(&mut hasher);
+        self.inner_v.to_bits().hash(&mut hasher);
+        self.outer_top.to_bits().hash(&mut hasher);
+        self.outer_right.to_bits().hash(&mut hasher);
+        self.outer_bottom.to_bits().hash(&mut hasher);
+        self.outer_left.to_bits().hash(&mut hasher);
+        hasher.finish()
+    }
 }
 
 #[cfg(test)]
@@ -201,5 +218,41 @@ mod tests {
         // Zero bar offset should not change anything
         let gaps = Gaps::from_config(&config, "Main Display", true, 0.0);
         assert_eq!(gaps.outer_top, 20.0);
+    }
+
+    #[test]
+    fn test_compute_hash_deterministic() {
+        let gaps = Gaps::uniform(10.0, 20.0);
+        let hash1 = gaps.compute_hash();
+        let hash2 = gaps.compute_hash();
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_compute_hash_different_values() {
+        let gaps1 = Gaps::uniform(10.0, 20.0);
+        let gaps2 = Gaps::uniform(15.0, 20.0);
+        assert_ne!(gaps1.compute_hash(), gaps2.compute_hash());
+    }
+
+    #[test]
+    fn test_compute_hash_different_outer_values() {
+        let gaps1 = Gaps {
+            inner_h: 10.0,
+            inner_v: 10.0,
+            outer_top: 20.0,
+            outer_right: 20.0,
+            outer_bottom: 20.0,
+            outer_left: 20.0,
+        };
+        let gaps2 = Gaps {
+            inner_h: 10.0,
+            inner_v: 10.0,
+            outer_top: 25.0, // Different top
+            outer_right: 20.0,
+            outer_bottom: 20.0,
+            outer_left: 20.0,
+        };
+        assert_ne!(gaps1.compute_hash(), gaps2.compute_hash());
     }
 }

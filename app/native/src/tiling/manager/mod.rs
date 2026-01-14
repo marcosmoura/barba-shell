@@ -945,16 +945,39 @@ impl TilingManager {
         // Resolve gaps for this screen (bar offset only applies to main screen)
         let gaps = Gaps::from_config(&config.tiling.gaps, &screen.name, screen.is_main, bar_offset);
 
-        // Calculate the layout with gaps and custom ratios
-        let layout_result = calculate_layout_with_gaps_and_ratios(
+        // Compute layout input hash for cache validation
+        let layout_hash = crate::tiling::state::compute_layout_hash(
             layout_type,
             &window_ids,
             &screen.visible_frame,
             master_ratio,
-            &gaps,
             &split_ratios,
-            config.tiling.master.position,
+            gaps.compute_hash(),
         );
+
+        // Check cache - if valid and not forcing, use cached positions
+        let cached_positions = workspace.layout_cache.is_valid(layout_hash);
+        let layout_result: Vec<(u32, Rect)> = if cached_positions && !force {
+            workspace.layout_cache.positions.clone()
+        } else {
+            // Calculate the layout with gaps and custom ratios
+            let result = calculate_layout_with_gaps_and_ratios(
+                layout_type,
+                &window_ids,
+                &screen.visible_frame,
+                master_ratio,
+                &gaps,
+                &split_ratios,
+                config.tiling.master.position,
+            );
+
+            // Update cache with new results (need mutable access)
+            if let Some(ws) = self.state.workspace_by_name_mut(workspace_name) {
+                ws.layout_cache.update(layout_hash, result.clone());
+            }
+
+            result
+        };
 
         // Build a map of window_id -> (pid, current_frame) from tracked windows
         let window_info: std::collections::HashMap<u32, (i32, Rect)> =
@@ -1040,8 +1063,9 @@ impl TilingManager {
         };
 
         workspace.layout = layout;
-        // Clear custom ratios when layout changes
+        // Clear custom ratios and layout cache when layout changes
         workspace.split_ratios.clear();
+        workspace.layout_cache.invalidate();
 
         // Get window IDs before applying layout
         let window_ids: Vec<u32> = workspace.window_ids.clone();
@@ -1118,9 +1142,10 @@ impl TilingManager {
     ///
     /// Number of windows that were repositioned.
     pub fn balance_workspace(&mut self, workspace_name: &str) -> usize {
-        // Clear custom ratios to reset to default proportions
+        // Clear custom ratios and cache to reset to default proportions
         if let Some(workspace) = self.state.workspace_by_name_mut(workspace_name) {
             workspace.split_ratios.clear();
+            workspace.layout_cache.invalidate();
         } else {
             return 0;
         }
@@ -1275,9 +1300,10 @@ impl TilingManager {
         // Convert back to cumulative ratios
         let ratios = proportions_to_cumulative_ratios(&new_proportions);
 
-        // Update the workspace's ratios
+        // Update the workspace's ratios and invalidate cache
         if let Some(ws) = self.state.workspace_by_name_mut(workspace_name) {
             ws.split_ratios = ratios;
+            ws.layout_cache.invalidate();
         }
 
         // Reapply layout with new ratios
@@ -1293,6 +1319,7 @@ impl TilingManager {
     pub fn set_workspace_ratios(&mut self, workspace_name: &str, ratios: Vec<f64>) {
         if let Some(ws) = self.state.workspace_by_name_mut(workspace_name) {
             ws.split_ratios = ratios;
+            ws.layout_cache.invalidate();
         }
     }
 
@@ -1300,6 +1327,7 @@ impl TilingManager {
     pub fn clear_workspace_ratios(&mut self, workspace_name: &str) {
         if let Some(ws) = self.state.workspace_by_name_mut(workspace_name) {
             ws.split_ratios.clear();
+            ws.layout_cache.invalidate();
         }
     }
 
@@ -1389,9 +1417,10 @@ impl TilingManager {
         {
             ws.window_ids.push(window_id);
 
-            // Clear custom split ratios when window count changes
+            // Clear custom split ratios and layout cache when window count changes
             // This prevents layout issues from stale ratios
             ws.split_ratios.clear();
+            ws.layout_cache.invalidate();
             ws.is_visible
         } else {
             false
@@ -1568,8 +1597,9 @@ impl TilingManager {
                 let is_visible = ws.is_visible;
                 ws.window_ids.retain(|&id| id != window_id);
 
-                // Clear custom split ratios when window count changes
+                // Clear custom split ratios and layout cache when window count changes
                 ws.split_ratios.clear();
+                ws.layout_cache.invalidate();
 
                 // Update focused window index if needed
                 if let Some(focused_idx) = ws.focused_window_index
@@ -2167,6 +2197,7 @@ impl TilingManager {
             // Swap window IDs and update ratios
             ws.window_ids.swap(focused_idx, target_idx);
             ws.split_ratios = new_ratios;
+            ws.layout_cache.invalidate();
 
             // Keep focus on the originally focused window (now at target_idx)
             ws.focused_window_index = Some(target_idx);
@@ -2242,6 +2273,7 @@ impl TilingManager {
             // Swap window IDs and update ratios
             ws.window_ids.swap(idx_a, idx_b);
             ws.split_ratios = new_ratios;
+            ws.layout_cache.invalidate();
 
             // Update focused window index if needed (keep focus on same window)
             if let Some(focused_idx) = ws.focused_window_index {
@@ -2313,6 +2345,7 @@ impl TilingManager {
         if let Some(ws) = self.state.workspace_by_name_mut(&source_workspace) {
             ws.window_ids.retain(|&id| id != window_id);
             ws.split_ratios.clear();
+            ws.layout_cache.invalidate();
 
             // Update focused index for source workspace
             if ws.window_ids.is_empty() {
@@ -2326,6 +2359,7 @@ impl TilingManager {
         let new_window_idx = if let Some(ws) = self.state.workspace_by_name_mut(target_workspace) {
             ws.window_ids.push(window_id);
             ws.split_ratios.clear();
+            ws.layout_cache.invalidate();
             // Set the newly added window as the focused window in target workspace
             let idx = ws.window_ids.len() - 1;
             ws.focused_window_index = Some(idx);

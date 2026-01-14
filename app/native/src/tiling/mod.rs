@@ -48,6 +48,7 @@ pub mod borders;
 pub mod constants;
 pub mod drag_state;
 pub mod error;
+mod event_coalescer;
 mod event_handlers;
 pub mod ffi;
 pub mod layout;

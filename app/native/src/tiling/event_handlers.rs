@@ -19,7 +19,7 @@ use super::manager::{TilingManager, get_manager};
 use super::observer::{self, WindowEvent, WindowEventType};
 use super::state::{Rect, TrackedWindow};
 use super::window::{self, WindowInfo, get_all_windows, get_focused_window};
-use super::{borders, mouse_monitor, screen_monitor, workspace};
+use super::{borders, event_coalescer, mouse_monitor, screen_monitor, workspace};
 use crate::config::LayoutType;
 
 // ============================================================================
@@ -57,9 +57,16 @@ pub fn handle_window_event(event: WindowEvent) {
 /// If the mouse is down and no drag operation is in progress, this starts
 /// tracking a move operation. During a drag, borders are updated to follow
 /// the window but layout changes are deferred until mouse up.
+///
+/// Rapid move events are coalesced to reduce CPU usage during drags.
 fn handle_window_moved(pid: i32) {
     // If mouse is not down, this is a programmatic move (from us) - ignore
     if !mouse_monitor::is_mouse_down() {
+        return;
+    }
+
+    // Coalesce rapid move events to reduce CPU usage during drags
+    if !event_coalescer::should_process_move(pid) {
         return;
     }
 
@@ -78,9 +85,16 @@ fn handle_window_moved(pid: i32) {
 /// If the mouse is down and no resize operation is in progress, this starts
 /// tracking a resize operation. During a resize, borders are updated to follow
 /// the window but layout changes are deferred until mouse up.
+///
+/// Rapid resize events are coalesced to reduce CPU usage during drags.
 fn handle_window_resized(pid: i32) {
     // If mouse is not down, this is a programmatic resize (from us) - ignore
     if !mouse_monitor::is_mouse_down() {
+        return;
+    }
+
+    // Coalesce rapid resize events to reduce CPU usage during drags
+    if !event_coalescer::should_process_resize(pid) {
         return;
     }
 

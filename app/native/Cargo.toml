@@ -35,7 +35,7 @@ core-foundation-sys = { version = "0.8.7", default-features = false }
 core-graphics = { version = "0.25.0", default-features = false }
 
 # macOS native APIs
-coreaudio-rs = { version = "0.13.0", default-features = false, features = [
+coreaudio-rs = { version = "0.14.0", default-features = false, features = [
     "audio_toolbox",
 ] }
 dirs = "6.0"

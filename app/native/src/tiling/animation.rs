@@ -33,7 +33,9 @@
 //! ```
 
 // Import for high-precision sleep
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::ffi::c_void;
 use std::os::raw::c_int;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
@@ -210,6 +212,206 @@ fn clear_interrupted_positions(window_ids: &[u32]) {
         for window_id in window_ids {
             map.remove(window_id);
         }
+    }
+}
+
+// ============================================================================
+// Pre-allocated Animation Buffers
+// ============================================================================
+
+/// Thread-local pre-allocated buffers for animation operations.
+///
+/// These buffers are reused across animation calls to eliminate per-animation
+/// allocation overhead. Each buffer is sized for a typical number of windows (64).
+mod buffers {
+    use super::{Rect, RefCell, SpringState, c_void};
+
+    /// Default capacity for pre-allocated buffers.
+    const BUFFER_CAPACITY: usize = 64;
+
+    thread_local! {
+        /// Buffer for collecting window IDs.
+        pub static WINDOW_IDS: RefCell<Vec<u32>> =
+            const { RefCell::new(Vec::new()) };
+
+        /// Buffer for animatable (index, ax_element) pairs.
+        pub static ANIMATABLE: RefCell<Vec<(usize, *mut c_void)>> =
+            const { RefCell::new(Vec::new()) };
+
+        /// Buffer for position-only frames (ax, x, y).
+        pub static POSITION_FRAMES: RefCell<Vec<(*mut c_void, f64, f64)>> =
+            const { RefCell::new(Vec::new()) };
+
+        /// Buffer for delta frames (ax, new_frame, prev_frame).
+        pub static DELTA_FRAMES: RefCell<Vec<(*mut c_void, Rect, Rect)>> =
+            const { RefCell::new(Vec::new()) };
+
+        /// Buffer for previous frames (for delta calculation).
+        pub static PREV_FRAMES: RefCell<Vec<Rect>> =
+            const { RefCell::new(Vec::new()) };
+
+        /// Buffer for final frames (ax, frame).
+        pub static FINAL_FRAMES: RefCell<Vec<(*mut c_void, Rect)>> =
+            const { RefCell::new(Vec::new()) };
+
+        /// Buffer for spring states.
+        pub static SPRING_STATES: RefCell<Vec<SpringState>> =
+            const { RefCell::new(Vec::new()) };
+    }
+
+    /// Ensures a buffer has at least the required capacity.
+    #[inline]
+    fn ensure_capacity<T>(vec: &mut Vec<T>, capacity: usize) {
+        if vec.capacity() < capacity {
+            vec.reserve(capacity.max(BUFFER_CAPACITY) - vec.len());
+        }
+    }
+
+    /// Clears and returns the window IDs buffer with at least the given capacity.
+    pub fn take_window_ids(capacity: usize) -> Vec<u32> {
+        WINDOW_IDS.with(|cell| {
+            let mut buf = cell.borrow_mut();
+            ensure_capacity(&mut buf, capacity);
+            buf.clear();
+            std::mem::take(&mut *buf)
+        })
+    }
+
+    /// Returns the window IDs buffer for reuse.
+    pub fn return_window_ids(mut buf: Vec<u32>) {
+        buf.clear();
+        WINDOW_IDS.with(|cell| {
+            let mut stored = cell.borrow_mut();
+            if buf.capacity() > stored.capacity() {
+                *stored = buf;
+            }
+        });
+    }
+
+    /// Clears and returns the animatable buffer with at least the given capacity.
+    pub fn take_animatable(capacity: usize) -> Vec<(usize, *mut c_void)> {
+        ANIMATABLE.with(|cell| {
+            let mut buf = cell.borrow_mut();
+            ensure_capacity(&mut buf, capacity);
+            buf.clear();
+            std::mem::take(&mut *buf)
+        })
+    }
+
+    /// Returns the animatable buffer for reuse.
+    pub fn return_animatable(mut buf: Vec<(usize, *mut c_void)>) {
+        buf.clear();
+        ANIMATABLE.with(|cell| {
+            let mut stored = cell.borrow_mut();
+            if buf.capacity() > stored.capacity() {
+                *stored = buf;
+            }
+        });
+    }
+
+    /// Clears and returns the position frames buffer.
+    pub fn take_position_frames(capacity: usize) -> Vec<(*mut c_void, f64, f64)> {
+        POSITION_FRAMES.with(|cell| {
+            let mut buf = cell.borrow_mut();
+            ensure_capacity(&mut buf, capacity);
+            buf.clear();
+            std::mem::take(&mut *buf)
+        })
+    }
+
+    /// Returns the position frames buffer for reuse.
+    pub fn return_position_frames(mut buf: Vec<(*mut c_void, f64, f64)>) {
+        buf.clear();
+        POSITION_FRAMES.with(|cell| {
+            let mut stored = cell.borrow_mut();
+            if buf.capacity() > stored.capacity() {
+                *stored = buf;
+            }
+        });
+    }
+
+    /// Clears and returns the delta frames buffer.
+    pub fn take_delta_frames(capacity: usize) -> Vec<(*mut c_void, Rect, Rect)> {
+        DELTA_FRAMES.with(|cell| {
+            let mut buf = cell.borrow_mut();
+            ensure_capacity(&mut buf, capacity);
+            buf.clear();
+            std::mem::take(&mut *buf)
+        })
+    }
+
+    /// Returns the delta frames buffer for reuse.
+    pub fn return_delta_frames(mut buf: Vec<(*mut c_void, Rect, Rect)>) {
+        buf.clear();
+        DELTA_FRAMES.with(|cell| {
+            let mut stored = cell.borrow_mut();
+            if buf.capacity() > stored.capacity() {
+                *stored = buf;
+            }
+        });
+    }
+
+    /// Clears and returns the previous frames buffer.
+    pub fn take_prev_frames(capacity: usize) -> Vec<Rect> {
+        PREV_FRAMES.with(|cell| {
+            let mut buf = cell.borrow_mut();
+            ensure_capacity(&mut buf, capacity);
+            buf.clear();
+            std::mem::take(&mut *buf)
+        })
+    }
+
+    /// Returns the previous frames buffer for reuse.
+    pub fn return_prev_frames(mut buf: Vec<Rect>) {
+        buf.clear();
+        PREV_FRAMES.with(|cell| {
+            let mut stored = cell.borrow_mut();
+            if buf.capacity() > stored.capacity() {
+                *stored = buf;
+            }
+        });
+    }
+
+    /// Clears and returns the final frames buffer.
+    pub fn take_final_frames(capacity: usize) -> Vec<(*mut c_void, Rect)> {
+        FINAL_FRAMES.with(|cell| {
+            let mut buf = cell.borrow_mut();
+            ensure_capacity(&mut buf, capacity);
+            buf.clear();
+            std::mem::take(&mut *buf)
+        })
+    }
+
+    /// Returns the final frames buffer for reuse.
+    pub fn return_final_frames(mut buf: Vec<(*mut c_void, Rect)>) {
+        buf.clear();
+        FINAL_FRAMES.with(|cell| {
+            let mut stored = cell.borrow_mut();
+            if buf.capacity() > stored.capacity() {
+                *stored = buf;
+            }
+        });
+    }
+
+    /// Clears and returns the spring states buffer.
+    pub fn take_spring_states(capacity: usize) -> Vec<SpringState> {
+        SPRING_STATES.with(|cell| {
+            let mut buf = cell.borrow_mut();
+            ensure_capacity(&mut buf, capacity);
+            buf.clear();
+            std::mem::take(&mut *buf)
+        })
+    }
+
+    /// Returns the spring states buffer for reuse.
+    pub fn return_spring_states(mut buf: Vec<SpringState>) {
+        buf.clear();
+        SPRING_STATES.with(|cell| {
+            let mut stored = cell.borrow_mut();
+            if buf.capacity() > stored.capacity() {
+                *stored = buf;
+            }
+        });
     }
 }
 
@@ -1619,4 +1821,77 @@ mod tests {
 
     // Note: Integration tests for actual window animation would require
     // a real display and accessibility permissions, so they're skipped here.
+
+    // ========================================================================
+    // Pre-allocated Buffer Tests
+    // ========================================================================
+
+    #[test]
+    fn test_buffer_window_ids_take_and_return() {
+        // Take a buffer
+        let mut buf = buffers::take_window_ids(10);
+        assert!(buf.capacity() >= 10);
+
+        // Use it
+        buf.push(1);
+        buf.push(2);
+        buf.push(3);
+        assert_eq!(buf.len(), 3);
+
+        // Return it
+        buffers::return_window_ids(buf);
+
+        // Take again - should get a pre-allocated buffer
+        let buf2 = buffers::take_window_ids(5);
+        assert!(buf2.is_empty()); // Should be cleared
+        assert!(buf2.capacity() >= 10); // Should retain capacity from before
+    }
+
+    #[test]
+    fn test_buffer_position_frames_reuse() {
+        // Take and use buffer
+        let mut buf = buffers::take_position_frames(20);
+        for i in 0..15 {
+            buf.push((std::ptr::null_mut(), i as f64, i as f64 * 2.0));
+        }
+        let cap1 = buf.capacity();
+        buffers::return_position_frames(buf);
+
+        // Second take should reuse
+        let buf2 = buffers::take_position_frames(5);
+        assert!(buf2.is_empty());
+        assert!(buf2.capacity() >= cap1);
+    }
+
+    #[test]
+    fn test_buffer_spring_states_lifecycle() {
+        let mut buf = buffers::take_spring_states(5);
+
+        // Add some spring states
+        buf.push(SpringState::new(Duration::from_millis(200)));
+        buf.push(SpringState::new(Duration::from_millis(300)));
+        assert_eq!(buf.len(), 2);
+
+        // Return and retake
+        buffers::return_spring_states(buf);
+        let buf2 = buffers::take_spring_states(10);
+        assert!(buf2.is_empty());
+    }
+
+    #[test]
+    fn test_buffer_larger_capacity_kept() {
+        // First take with small capacity
+        let buf1 = buffers::take_window_ids(5);
+        buffers::return_window_ids(buf1);
+
+        // Take with larger capacity
+        let mut buf2 = buffers::take_window_ids(100);
+        buf2.reserve(200); // Ensure large capacity
+        let cap = buf2.capacity();
+        buffers::return_window_ids(buf2);
+
+        // Next take should have the larger capacity
+        let buf3 = buffers::take_window_ids(5);
+        assert!(buf3.capacity() >= cap);
+    }
 }

@@ -21,6 +21,12 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 name = "stache"
 path = "src/main.rs"
 
+[features]
+default = []
+# Enable integration tests that create real windows on screen.
+# Run with: cargo test --features integration-tests --test tiling_integration
+integration-tests = []
+
 [dependencies]
 
 # Utilities
@@ -101,7 +107,17 @@ serde_json = "1.0.149"
 tauri-build = { version = "2.5.3", features = [] }
 
 [dev-dependencies]
+criterion = { version = "0.8.1", features = ["html_reports"] }
+proptest = "1.9.0"
 tempfile = "3.24.0"
+
+[[bench]]
+name = "tiling_bench"
+harness = false
+
+[[test]]
+name = "tiling_integration"
+required-features = ["integration-tests"]
 
 [lints]
 workspace = true

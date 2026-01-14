@@ -20,7 +20,7 @@ mod cmd_q;
 mod hotkey;
 mod menu_anywhere;
 mod notunes;
-mod tiling;
+pub mod tiling;
 mod utils;
 mod wallpaper;
 mod widgets;

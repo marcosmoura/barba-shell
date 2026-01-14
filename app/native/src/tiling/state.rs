@@ -7,8 +7,24 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 
 use crate::config::LayoutType;
+
+// ============================================================================
+// Type Aliases
+// ============================================================================
+
+/// Inline capacity for split ratios.
+///
+/// Most workspaces have fewer than 8 windows with custom split ratios.
+pub const SPLIT_RATIOS_INLINE_CAP: usize = 8;
+
+/// Type alias for split ratios storage.
+///
+/// Uses `SmallVec` to avoid heap allocations for workspaces with
+/// up to 8 custom split ratios.
+pub type SplitRatios = SmallVec<[f64; SPLIT_RATIOS_INLINE_CAP]>;
 
 // ============================================================================
 // Geometric Types
@@ -276,8 +292,11 @@ pub struct Workspace {
     /// - Window 3 gets 66% to 100%
     ///
     /// If empty or wrong length, equal splits are used.
+    ///
+    /// Uses `SmallVec` to avoid heap allocations for the common case of
+    /// workspaces with 8 or fewer custom split ratios.
     #[serde(default)]
-    pub split_ratios: Vec<f64>,
+    pub split_ratios: SplitRatios,
 
     /// Cached layout calculation result.
     ///
@@ -301,7 +320,7 @@ impl Workspace {
             is_focused: false,
             window_ids: Vec::new(),
             focused_window_index: None,
-            split_ratios: Vec::new(),
+            split_ratios: SmallVec::new_const(),
             layout_cache: LayoutCache::new(),
         }
     }
@@ -327,7 +346,7 @@ impl Workspace {
             is_focused: false,
             window_ids: Vec::new(),
             focused_window_index: None,
-            split_ratios: Vec::new(),
+            split_ratios: SmallVec::new_const(),
             layout_cache: LayoutCache::new(),
         }
     }

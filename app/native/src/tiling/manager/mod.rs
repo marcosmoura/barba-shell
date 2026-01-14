@@ -1340,7 +1340,7 @@ impl TilingManager {
 
         // Update the workspace's ratios and invalidate cache
         if let Some(ws) = self.state.workspace_by_name_mut(workspace_name) {
-            ws.split_ratios = ratios;
+            ws.split_ratios = ratios.into();
             ws.layout_cache.invalidate();
         }
 
@@ -1356,7 +1356,7 @@ impl TilingManager {
     /// * `ratios` - New split ratios (cumulative 0.0-1.0)
     pub fn set_workspace_ratios(&mut self, workspace_name: &str, ratios: Vec<f64>) {
         if let Some(ws) = self.state.workspace_by_name_mut(workspace_name) {
-            ws.split_ratios = ratios;
+            ws.split_ratios = ratios.into();
             ws.layout_cache.invalidate();
         }
     }
@@ -2237,7 +2237,7 @@ impl TilingManager {
 
             // Swap window IDs and update ratios
             ws.window_ids.swap(focused_idx, target_idx);
-            ws.split_ratios = new_ratios;
+            ws.split_ratios = new_ratios.into();
             ws.layout_cache.invalidate();
 
             // Keep focus on the originally focused window (now at target_idx)
@@ -2313,7 +2313,7 @@ impl TilingManager {
 
             // Swap window IDs and update ratios
             ws.window_ids.swap(idx_a, idx_b);
-            ws.split_ratios = new_ratios;
+            ws.split_ratios = new_ratios.into();
             ws.layout_cache.invalidate();
 
             // Update focused window index if needed (keep focus on same window)

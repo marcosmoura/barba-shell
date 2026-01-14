@@ -65,7 +65,9 @@
 //!             └──┴──┘
 //! ```
 
-use super::{Gaps, LayoutResult, helpers};
+use smallvec::{SmallVec, smallvec};
+
+use super::{Gaps, LAYOUT_INLINE_CAP, LayoutResult, helpers};
 use crate::tiling::state::Rect;
 
 /// Dwindle layout - windows arranged in a dwindling spiral pattern.
@@ -84,11 +86,11 @@ use crate::tiling::state::Rect;
 #[must_use]
 pub fn layout(window_ids: &[u32], screen_frame: &Rect, gaps: &Gaps) -> LayoutResult {
     if window_ids.is_empty() {
-        return Vec::new();
+        return SmallVec::new();
     }
 
     if window_ids.len() == 1 {
-        return vec![(window_ids[0], *screen_frame)];
+        return smallvec![(window_ids[0], *screen_frame)];
     }
 
     // Determine initial split direction based on screen orientation
@@ -96,7 +98,7 @@ pub fn layout(window_ids: &[u32], screen_frame: &Rect, gaps: &Gaps) -> LayoutRes
     // Portrait: start vertical (top/bottom split)
     let is_landscape = screen_frame.width >= screen_frame.height;
 
-    let mut result = Vec::with_capacity(window_ids.len());
+    let mut result: LayoutResult = SmallVec::with_capacity(window_ids.len().min(LAYOUT_INLINE_CAP));
 
     // Build the layout iteratively by splitting the last window's space
     // Start with first window taking full screen

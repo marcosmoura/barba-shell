@@ -14,6 +14,7 @@ use crate::tiling::state::Rect;
 /// * `screen_frame` - The visible frame of the screen (already has outer gaps applied)
 #[must_use]
 pub fn layout(window_ids: &[u32], screen_frame: &Rect) -> LayoutResult {
+    // SmallVec implements FromIterator, so collect() works directly
     window_ids.iter().map(|&id| (id, *screen_frame)).collect()
 }
 

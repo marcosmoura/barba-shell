@@ -12,6 +12,12 @@
 //! - **Split**: Windows split evenly (auto, vertical, or horizontal)
 //! - **Master**: One master window with remaining windows in a stack
 //! - **Grid**: Windows arranged in a balanced grid pattern
+//!
+//! # Performance
+//!
+//! Layout results use `SmallVec` to avoid heap allocations for workspaces with
+//! up to 16 windows (the common case). This reduces memory allocation overhead
+//! during animations and rapid layout recalculations.
 
 mod dwindle;
 mod floating;
@@ -24,6 +30,7 @@ mod split;
 
 pub use floating::{calculate_preset_frame, find_preset, list_preset_names};
 pub use gaps::Gaps;
+use smallvec::SmallVec;
 
 use crate::config::{LayoutType, MasterPosition};
 use crate::tiling::state::Rect;
@@ -32,10 +39,17 @@ use crate::tiling::state::Rect;
 // Layout Result
 // ============================================================================
 
+/// Inline capacity for layout results.
+///
+/// Most workspaces have fewer than 16 windows, so this allows layout results
+/// to be stored on the stack without heap allocation in the common case.
+pub const LAYOUT_INLINE_CAP: usize = 16;
+
 /// Result of a layout calculation.
 ///
-/// Maps window IDs to their calculated frames.
-pub type LayoutResult = Vec<(u32, Rect)>;
+/// Maps window IDs to their calculated frames. Uses `SmallVec` to avoid heap
+/// allocations for workspaces with up to 16 windows.
+pub type LayoutResult = SmallVec<[(u32, Rect); LAYOUT_INLINE_CAP]>;
 
 // ============================================================================
 // Main Layout Function
@@ -121,7 +135,7 @@ pub fn calculate_layout_with_gaps_and_ratios(
     master_position: MasterPosition,
 ) -> LayoutResult {
     if window_ids.is_empty() {
-        return Vec::new();
+        return SmallVec::new();
     }
 
     // Apply outer gaps to get usable area

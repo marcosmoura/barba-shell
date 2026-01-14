@@ -27,6 +27,8 @@
 //! stache tiling window --preset half-left
 //! ```
 
+use smallvec::SmallVec;
+
 use super::{Gaps, LayoutResult};
 use crate::config::{DimensionValue, FloatingPreset, get_config};
 use crate::tiling::state::Rect;
@@ -39,12 +41,11 @@ use crate::tiling::state::Rect;
 ///
 /// Returns an empty result since no repositioning is needed.
 /// The tiling manager will skip applying positions for floating windows.
-#[allow(clippy::missing_const_for_fn)] // Can't be const due to Vec::new()
 #[must_use]
 pub fn layout(_window_ids: &[u32]) -> LayoutResult {
     // Floating windows don't get repositioned by the layout engine
     // Return empty to indicate no changes needed
-    Vec::new()
+    SmallVec::new()
 }
 
 // ============================================================================

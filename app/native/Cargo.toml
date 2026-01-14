@@ -60,6 +60,7 @@ rayon = { version = "1.11.0", default-features = false }
 regex = { version = "1.12.2", default-features = false, features = ["std"] }
 schemars = { version = "1.2.0", default-features = true }
 serde = { version = "1.0.228", default-features = false, features = ["derive"] }
+smallvec = { version = "1.15", default-features = false, features = ["serde", "const_new"] }
 serde_json = { version = "1.0.149", default-features = false, features = [
     "std",
 ] }

@@ -34,7 +34,9 @@
 //! └────┴────┘       └─────────┘
 //! ```
 
-use super::{Gaps, LayoutResult};
+use smallvec::{SmallVec, smallvec};
+
+use super::{Gaps, LAYOUT_INLINE_CAP, LayoutResult};
 use crate::config::MasterPosition;
 use crate::tiling::state::Rect;
 
@@ -60,7 +62,7 @@ pub fn layout(
     position: MasterPosition,
 ) -> LayoutResult {
     if window_ids.is_empty() {
-        return Vec::new();
+        return SmallVec::new();
     }
 
     // Clamp ratio to valid range
@@ -68,7 +70,7 @@ pub fn layout(
 
     // Single window - takes full screen
     if window_ids.len() == 1 {
-        return vec![(window_ids[0], *screen_frame)];
+        return smallvec![(window_ids[0], *screen_frame)];
     }
 
     // Resolve auto position based on screen orientation
@@ -95,7 +97,7 @@ pub fn layout(
 /// Master on left, stack on right (stacked vertically).
 #[allow(clippy::cast_precision_loss)]
 fn layout_left(window_ids: &[u32], screen_frame: &Rect, ratio: f64, gaps: &Gaps) -> LayoutResult {
-    let mut result = Vec::with_capacity(window_ids.len());
+    let mut result: LayoutResult = SmallVec::with_capacity(window_ids.len().min(LAYOUT_INLINE_CAP));
 
     // Account for gap between master and stack
     let available_width = screen_frame.width - gaps.inner_h;
@@ -124,7 +126,7 @@ fn layout_left(window_ids: &[u32], screen_frame: &Rect, ratio: f64, gaps: &Gaps)
 /// Master on right, stack on left (stacked vertically).
 #[allow(clippy::cast_precision_loss)]
 fn layout_right(window_ids: &[u32], screen_frame: &Rect, ratio: f64, gaps: &Gaps) -> LayoutResult {
-    let mut result = Vec::with_capacity(window_ids.len());
+    let mut result: LayoutResult = SmallVec::with_capacity(window_ids.len().min(LAYOUT_INLINE_CAP));
 
     // Account for gap between master and stack
     let available_width = screen_frame.width - gaps.inner_h;
@@ -153,7 +155,7 @@ fn layout_right(window_ids: &[u32], screen_frame: &Rect, ratio: f64, gaps: &Gaps
 /// Master on top, stack below (arranged horizontally).
 #[allow(clippy::cast_precision_loss)]
 fn layout_top(window_ids: &[u32], screen_frame: &Rect, ratio: f64, gaps: &Gaps) -> LayoutResult {
-    let mut result = Vec::with_capacity(window_ids.len());
+    let mut result: LayoutResult = SmallVec::with_capacity(window_ids.len().min(LAYOUT_INLINE_CAP));
 
     // Account for gap between master and stack
     let available_height = screen_frame.height - gaps.inner_v;
@@ -182,7 +184,7 @@ fn layout_top(window_ids: &[u32], screen_frame: &Rect, ratio: f64, gaps: &Gaps) 
 /// Master on bottom, stack above (arranged horizontally).
 #[allow(clippy::cast_precision_loss)]
 fn layout_bottom(window_ids: &[u32], screen_frame: &Rect, ratio: f64, gaps: &Gaps) -> LayoutResult {
-    let mut result = Vec::with_capacity(window_ids.len());
+    let mut result: LayoutResult = SmallVec::with_capacity(window_ids.len().min(LAYOUT_INLINE_CAP));
 
     // Account for gap between master and stack
     let available_height = screen_frame.height - gaps.inner_v;

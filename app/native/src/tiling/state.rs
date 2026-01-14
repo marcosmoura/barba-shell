@@ -148,7 +148,7 @@ pub struct LayoutCache {
     /// Hash of the layout inputs (`window_ids`, `screen_frame`, layout type, ratios, etc.)
     pub input_hash: u64,
     /// Cached layout positions: (`window_id`, frame)
-    pub positions: Vec<(u32, Rect)>,
+    pub positions: super::layout::LayoutResult,
 }
 
 impl LayoutCache {
@@ -157,18 +157,18 @@ impl LayoutCache {
     pub const fn new() -> Self {
         Self {
             input_hash: 0,
-            positions: Vec::new(),
+            positions: smallvec::SmallVec::new_const(),
         }
     }
 
     /// Checks if the cache is valid for the given input hash.
     #[must_use]
-    pub const fn is_valid(&self, input_hash: u64) -> bool {
+    pub fn is_valid(&self, input_hash: u64) -> bool {
         self.input_hash != 0 && self.input_hash == input_hash && !self.positions.is_empty()
     }
 
     /// Updates the cache with new results.
-    pub fn update(&mut self, input_hash: u64, positions: Vec<(u32, Rect)>) {
+    pub fn update(&mut self, input_hash: u64, positions: super::layout::LayoutResult) {
         self.input_hash = input_hash;
         self.positions = positions;
     }
@@ -964,8 +964,10 @@ mod tests {
 
     #[test]
     fn test_layout_cache_update_and_is_valid() {
+        use crate::tiling::layout::LayoutResult;
+
         let mut cache = LayoutCache::new();
-        let positions = vec![
+        let positions: LayoutResult = smallvec::smallvec![
             (1, Rect::new(0.0, 0.0, 100.0, 100.0)),
             (2, Rect::new(100.0, 0.0, 100.0, 100.0)),
         ];
@@ -980,8 +982,10 @@ mod tests {
 
     #[test]
     fn test_layout_cache_invalidate() {
+        use crate::tiling::layout::LayoutResult;
+
         let mut cache = LayoutCache::new();
-        let positions = vec![(1, Rect::new(0.0, 0.0, 100.0, 100.0))];
+        let positions: LayoutResult = smallvec::smallvec![(1, Rect::new(0.0, 0.0, 100.0, 100.0))];
 
         cache.update(12345, positions);
         assert!(cache.is_valid(12345));
@@ -1194,7 +1198,10 @@ mod tests {
     #[test]
     fn test_workspace_layout_cache_skipped_in_serialization() {
         let mut ws = Workspace::new("test".to_string(), 1, LayoutType::Dwindle);
-        ws.layout_cache.update(12345, vec![(1, Rect::new(0.0, 0.0, 100.0, 100.0))]);
+        ws.layout_cache.update(12345, smallvec::smallvec![(
+            1,
+            Rect::new(0.0, 0.0, 100.0, 100.0)
+        )]);
 
         // Serialize and deserialize
         let json = serde_json::to_string(&ws).unwrap();

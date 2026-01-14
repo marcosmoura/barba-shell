@@ -25,7 +25,9 @@
 //! - 11 windows: 3×4 grid with W1 spanning 2 cells in left column
 //! - 12 windows: 3×4 grid
 
-use super::{Gaps, LayoutResult};
+use smallvec::{SmallVec, smallvec};
+
+use super::{Gaps, LAYOUT_INLINE_CAP, LayoutResult};
 use crate::tiling::constants::layout::MAX_GRID_WINDOWS;
 use crate::tiling::state::Rect;
 
@@ -43,7 +45,7 @@ use crate::tiling::state::Rect;
 #[must_use]
 pub fn layout(window_ids: &[u32], screen_frame: &Rect, gaps: &Gaps) -> LayoutResult {
     if window_ids.is_empty() {
-        return Vec::new();
+        return SmallVec::new();
     }
 
     // Limit to maximum supported windows
@@ -73,7 +75,7 @@ pub fn layout(window_ids: &[u32], screen_frame: &Rect, gaps: &Gaps) -> LayoutRes
 
 /// Layout for a single window - takes full screen.
 fn layout_single(window_ids: &[u32], screen_frame: &Rect) -> LayoutResult {
-    vec![(window_ids[0], *screen_frame)]
+    smallvec![(window_ids[0], *screen_frame)]
 }
 
 /// Layout for exactly 2 windows - side by side (landscape) or stacked (portrait).
@@ -87,7 +89,7 @@ fn layout_two(
         // Side by side
         let gap = gaps.inner_h;
         let width = (screen_frame.width - gap) / 2.0;
-        vec![
+        smallvec![
             (
                 window_ids[0],
                 Rect::new(screen_frame.x, screen_frame.y, width, screen_frame.height),
@@ -106,7 +108,7 @@ fn layout_two(
         // Stacked vertically
         let gap = gaps.inner_v;
         let height = (screen_frame.height - gap) / 2.0;
-        vec![
+        smallvec![
             (
                 window_ids[0],
                 Rect::new(screen_frame.x, screen_frame.y, screen_frame.width, height),
@@ -143,7 +145,7 @@ fn layout_grid(
     let cell_width = (screen_frame.width - h_gaps_total) / cols as f64;
     let cell_height = (screen_frame.height - v_gaps_total) / rows as f64;
 
-    let mut result = Vec::with_capacity(count);
+    let mut result: LayoutResult = SmallVec::with_capacity(count.min(LAYOUT_INLINE_CAP));
     let mut idx = 0;
 
     for row in 0..rows {
@@ -209,7 +211,7 @@ fn layout_master_stack(
     let stack_cols = stack_count.div_ceil(rows);
     let total_cols = 1 + stack_cols; // W1 column + stack columns
 
-    let mut result = Vec::with_capacity(count);
+    let mut result: LayoutResult = SmallVec::with_capacity(count.min(LAYOUT_INLINE_CAP));
 
     if is_landscape {
         // Calculate cell dimensions with equal column widths
@@ -317,7 +319,7 @@ fn layout_master_3x4(
     let cell_width = (screen_frame.width - h_gaps_total) / cols as f64;
     let cell_height = (screen_frame.height - v_gaps_total) / rows as f64;
 
-    let mut result = Vec::with_capacity(count);
+    let mut result: LayoutResult = SmallVec::with_capacity(count.min(LAYOUT_INLINE_CAP));
 
     // W1: spans master_span rows in the first column
     let master_height = cell_height * master_span as f64 + gaps.inner_v * (master_span - 1) as f64;

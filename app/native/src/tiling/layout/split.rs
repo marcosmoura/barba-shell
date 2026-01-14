@@ -7,6 +7,8 @@
 //!
 //! All modes support custom split ratios for manual resizing.
 
+use smallvec::SmallVec;
+
 use super::{Gaps, LayoutResult};
 use crate::tiling::state::Rect;
 
@@ -53,7 +55,7 @@ pub fn layout_horizontal(
     ratios: &[f64],
 ) -> LayoutResult {
     if window_ids.is_empty() {
-        return Vec::new();
+        return SmallVec::new();
     }
 
     let count = window_ids.len();
@@ -86,7 +88,7 @@ pub fn layout_vertical(
     ratios: &[f64],
 ) -> LayoutResult {
     if window_ids.is_empty() {
-        return Vec::new();
+        return SmallVec::new();
     }
 
     let count = window_ids.len();
@@ -149,11 +151,13 @@ fn layout_horizontal_with_ratios(
     gaps: &Gaps,
     ratios: &[f64],
 ) -> LayoutResult {
+    use super::LAYOUT_INLINE_CAP;
+
     let count = window_ids.len();
     let total_gap = gaps.inner_h * (count - 1) as f64;
     let available_width = screen_frame.width - total_gap;
 
-    let mut result = Vec::with_capacity(count);
+    let mut result: LayoutResult = SmallVec::with_capacity(count.min(LAYOUT_INLINE_CAP));
     let mut prev_ratio = 0.0;
 
     for (i, &id) in window_ids.iter().enumerate() {
@@ -182,11 +186,13 @@ fn layout_vertical_with_ratios(
     gaps: &Gaps,
     ratios: &[f64],
 ) -> LayoutResult {
+    use super::LAYOUT_INLINE_CAP;
+
     let count = window_ids.len();
     let total_gap = gaps.inner_v * (count - 1) as f64;
     let available_height = screen_frame.height - total_gap;
 
-    let mut result = Vec::with_capacity(count);
+    let mut result: LayoutResult = SmallVec::with_capacity(count.min(LAYOUT_INLINE_CAP));
     let mut prev_ratio = 0.0;
 
     for (i, &id) in window_ids.iter().enumerate() {

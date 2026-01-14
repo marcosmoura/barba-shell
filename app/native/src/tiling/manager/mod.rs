@@ -22,7 +22,9 @@ use tauri::{AppHandle, Emitter, Runtime};
 
 use super::animation::{AnimationSystem, WindowTransition, get_interrupted_position};
 use super::borders::{BorderManager, BorderState, get_border_manager};
-use super::layout::{Gaps, calculate_layout_with_gaps, calculate_layout_with_gaps_and_ratios};
+use super::layout::{
+    Gaps, LayoutResult, calculate_layout_with_gaps, calculate_layout_with_gaps_and_ratios,
+};
 use super::screen;
 use super::state::{Rect, Screen, TilingState, TrackedWindow, Workspace};
 use super::window::{
@@ -957,7 +959,7 @@ impl TilingManager {
 
         // Check cache - if valid and not forcing, use cached positions
         let cached_positions = workspace.layout_cache.is_valid(layout_hash);
-        let layout_result: Vec<(u32, Rect)> = if cached_positions && !force {
+        let layout_result: LayoutResult = if cached_positions && !force {
             workspace.layout_cache.positions.clone()
         } else {
             // Calculate the layout with gaps and custom ratios

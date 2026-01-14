@@ -62,6 +62,9 @@ pub mod state;
 pub mod window;
 pub mod workspace;
 
+#[cfg(test)]
+pub mod testing;
+
 // Re-export commonly used types
 pub use animation::{
     AnimationConfig, AnimationSystem, WindowTransition, begin_animation, cancel_animation,
@@ -363,12 +366,12 @@ fn apply_initial_window_visibility(mgr: &TilingManager) {
         if ws.is_visible {
             TilingManager::show_borders_for_workspace(&ws.name);
             if !windows.is_empty() {
-                show_workspace_windows(&windows);
+                let _ = show_workspace_windows(&windows);
             }
         } else {
             TilingManager::hide_borders_for_workspace(&ws.name);
             if !windows.is_empty() {
-                hide_workspace_windows(&windows);
+                let _ = hide_workspace_windows(&windows);
             }
         }
     }
@@ -403,6 +406,7 @@ use crate::utils::ipc_socket::{IpcQuery, IpcResponse};
 /// Handles IPC queries for tiling state.
 ///
 /// This is called by the IPC server when a query is received from the CLI.
+#[must_use]
 pub fn handle_ipc_query(query: IpcQuery) -> IpcResponse {
     match query {
         IpcQuery::Ping => IpcResponse::success(serde_json::json!({"status": "ok"})),

@@ -1293,6 +1293,12 @@ impl BorderColor {
 ///
 /// All specified properties must match (AND logic).
 /// At least one property must be specified.
+///
+/// # Performance
+///
+/// Call [`WindowRule::prepare()`] after loading rules from config to pre-compute
+/// lowercase versions of string fields. This avoids repeated `to_lowercase()` calls
+/// during window matching.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default, rename_all = "kebab-case")]
 pub struct WindowRule {
@@ -1307,6 +1313,19 @@ pub struct WindowRule {
     /// Match by application name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app_name: Option<String>,
+
+    // Cached lowercase versions for fast matching (computed by prepare())
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub(crate) app_id_lower: Option<String>,
+
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub(crate) title_lower: Option<String>,
+
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub(crate) app_name_lower: Option<String>,
 }
 
 impl WindowRule {
@@ -1314,6 +1333,34 @@ impl WindowRule {
     #[must_use]
     pub const fn is_valid(&self) -> bool {
         self.app_id.is_some() || self.title.is_some() || self.app_name.is_some()
+    }
+
+    /// Pre-computes lowercase versions of string fields for faster matching.
+    ///
+    /// Call this after loading rules from config. The lowercase values are cached
+    /// and reused by [`crate::tiling::rules::matches_window()`].
+    pub fn prepare(&mut self) {
+        self.app_id_lower = self.app_id.as_ref().map(|s| s.to_ascii_lowercase());
+        self.title_lower = self.title.as_ref().map(|s| s.to_lowercase());
+        self.app_name_lower = self.app_name.as_ref().map(|s| s.to_lowercase());
+    }
+
+    /// Returns the cached lowercase `app_id`, or the original if not cached.
+    #[must_use]
+    pub fn app_id_lowercase(&self) -> Option<&str> {
+        self.app_id_lower.as_deref().or(self.app_id.as_deref())
+    }
+
+    /// Returns the cached lowercase title, or the original if not cached.
+    #[must_use]
+    pub fn title_lowercase(&self) -> Option<&str> {
+        self.title_lower.as_deref().or(self.title.as_deref())
+    }
+
+    /// Returns the cached lowercase `app_name`, or the original if not cached.
+    #[must_use]
+    pub fn app_name_lowercase(&self) -> Option<&str> {
+        self.app_name_lower.as_deref().or(self.app_name.as_deref())
     }
 }
 
@@ -1439,6 +1486,33 @@ pub struct StacheConfig {
     /// Provides virtual workspace management with multiple layout modes.
     /// Disabled by default.
     pub tiling: TilingConfig,
+}
+
+impl StacheConfig {
+    /// Prepares the configuration for use by pre-computing cached values.
+    ///
+    /// This method should be called after loading the configuration to:
+    /// - Pre-compute lowercase versions of window rule strings for faster matching
+    ///
+    /// This is called automatically by [`load_config()`].
+    pub fn prepare(&mut self) {
+        // Prepare ignore rules
+        for rule in &mut self.tiling.ignore {
+            rule.prepare();
+        }
+
+        // Prepare workspace rules
+        for workspace in &mut self.tiling.workspaces {
+            for rule in &mut workspace.rules {
+                rule.prepare();
+            }
+        }
+
+        // Prepare border ignore rules
+        for rule in &mut self.tiling.borders.ignore {
+            rule.prepare();
+        }
+    }
 }
 
 /// Commands to execute for a keyboard shortcut.
@@ -1613,7 +1687,9 @@ pub fn load_config() -> Result<(StacheConfig, PathBuf), ConfigError> {
             let file = fs::File::open(&path)?;
             // Strip comments from JSONC before parsing
             let reader = json_comments::StripComments::new(file);
-            let config: StacheConfig = serde_json::from_reader(reader)?;
+            let mut config: StacheConfig = serde_json::from_reader(reader)?;
+            // Pre-compute cached values for faster runtime operations
+            config.prepare();
             return Ok((config, path));
         }
     }

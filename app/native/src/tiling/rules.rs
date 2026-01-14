@@ -28,9 +28,15 @@ use crate::config::WindowRule;
 ///
 /// # Matching Behavior
 ///
-/// - `app_id`: Exact match against bundle identifier
+/// - `app_id`: Exact match against bundle identifier (case-insensitive)
 /// - `app_name`: Case-insensitive substring match
 /// - `title`: Case-insensitive substring match
+///
+/// # Performance
+///
+/// If rules have been prepared with [`WindowRule::prepare()`], this function
+/// uses cached lowercase strings. Otherwise, it falls back to computing
+/// lowercase on each call.
 ///
 /// # Arguments
 ///
@@ -47,26 +53,51 @@ pub fn matches_window(rule: &WindowRule, window: &WindowInfo) -> bool {
         return false;
     }
 
-    // Check app_id (bundle identifier) - exact match
-    if let Some(app_id) = &rule.app_id
-        && !window.bundle_id.eq_ignore_ascii_case(app_id)
-    {
-        return false;
+    // Check app_id (bundle identifier) - case-insensitive exact match
+    // Use cached lowercase if available, otherwise use eq_ignore_ascii_case
+    if rule.app_id.is_some() {
+        if let Some(app_id_lower) = &rule.app_id_lower {
+            // Fast path: use pre-computed lowercase
+            if !window.bundle_id.to_ascii_lowercase().eq(app_id_lower) {
+                return false;
+            }
+        } else if let Some(app_id) = &rule.app_id {
+            // Fallback: case-insensitive comparison
+            if !window.bundle_id.eq_ignore_ascii_case(app_id) {
+                return false;
+            }
+        }
     }
 
     // Check app_name - case-insensitive substring match
-    if let Some(app_name) = &rule.app_name {
-        let app_name_lower = app_name.to_lowercase();
-        if !window.app_name.to_lowercase().contains(&app_name_lower) {
-            return false;
+    if rule.app_name.is_some() {
+        let window_app_lower = window.app_name.to_lowercase();
+        if let Some(app_name_lower) = &rule.app_name_lower {
+            // Fast path: use pre-computed lowercase
+            if !window_app_lower.contains(app_name_lower.as_str()) {
+                return false;
+            }
+        } else if let Some(app_name) = &rule.app_name {
+            // Fallback: compute lowercase
+            if !window_app_lower.contains(&app_name.to_lowercase()) {
+                return false;
+            }
         }
     }
 
     // Check title - case-insensitive substring match
-    if let Some(title) = &rule.title {
-        let title_lower = title.to_lowercase();
-        if !window.title.to_lowercase().contains(&title_lower) {
-            return false;
+    if rule.title.is_some() {
+        let window_title_lower = window.title.to_lowercase();
+        if let Some(title_lower) = &rule.title_lower {
+            // Fast path: use pre-computed lowercase
+            if !window_title_lower.contains(title_lower.as_str()) {
+                return false;
+            }
+        } else if let Some(title) = &rule.title {
+            // Fallback: compute lowercase
+            if !window_title_lower.contains(&title.to_lowercase()) {
+                return false;
+            }
         }
     }
 
@@ -168,13 +199,18 @@ mod tests {
         )
     }
 
-    /// Creates a rule with optional properties.
+    /// Creates a rule with optional properties (with pre-computed lowercase).
     fn make_rule(app_id: Option<&str>, app_name: Option<&str>, title: Option<&str>) -> WindowRule {
-        WindowRule {
+        let mut rule = WindowRule {
             app_id: app_id.map(String::from),
             app_name: app_name.map(String::from),
             title: title.map(String::from),
-        }
+            app_id_lower: None,
+            app_name_lower: None,
+            title_lower: None,
+        };
+        rule.prepare();
+        rule
     }
 
     // ========================================================================

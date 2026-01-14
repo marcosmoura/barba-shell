@@ -474,11 +474,16 @@ mod tests {
     }
 
     fn make_rule(app_id: Option<&str>, app_name: Option<&str>, title: Option<&str>) -> WindowRule {
-        WindowRule {
+        let mut rule = WindowRule {
             app_id: app_id.map(String::from),
             app_name: app_name.map(String::from),
             title: title.map(String::from),
-        }
+            app_id_lower: None,
+            app_name_lower: None,
+            title_lower: None,
+        };
+        rule.prepare();
+        rule
     }
 
     fn make_workspace_config(name: &str, rules: Vec<WindowRule>) -> WorkspaceConfig {

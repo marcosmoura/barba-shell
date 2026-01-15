@@ -23,7 +23,7 @@
     "test:native": "cargo nextest run --workspace",
     "test:native:bench": "cargo bench -p stache",
     "test:native:bench:open": "open target/criterion/report/index.html",
-    "test:native:integration": "cargo nextest run -p stache --features integration-tests --test tiling_integration --no-capture -j 1",
+    "test:native:integration": "cargo nextest run -p stache --features integration-tests --test integration",
     "test:ui": "vitest run",
     "test:ui:coverage": "vitest run --coverage"
   },
@@ -74,7 +74,7 @@
     "playwright": "^1.57.0",
     "postcss": "^8.5.6",
     "postcss-styled-syntax": "^0.7.1",
-    "prettier": "^3.7.4",
+    "prettier": "^3.8.0",
     "prettier-plugin-packagejson": "^2.5.21",
     "stylelint": "^16.26.1",
     "stylelint-config-clean-order": "^8.0.0",

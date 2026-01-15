@@ -564,7 +564,9 @@ fn wait_for_new_windows(pid: i32, currently_tracked: usize) -> Vec<WindowInfo> {
     std::thread::sleep(Duration::from_millis(20));
 
     loop {
-        let windows = window::get_all_windows_including_hidden();
+        // Use get_all_windows() (not including_hidden) to ensure we only get windows
+        // with real CG window IDs. Windows with synthetic IDs can't be positioned.
+        let windows = window::get_all_windows();
         let app_windows: Vec<WindowInfo> = windows.into_iter().filter(|w| w.pid == pid).collect();
 
         // If we found more windows than tracked, or if there are new IDs, we're done

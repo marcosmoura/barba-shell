@@ -1393,8 +1393,16 @@ impl TilingManager {
         for window_info in windows {
             // Skip ignored windows
             if should_ignore_window(&window_info, &ignore_rules) {
+                eprintln!(
+                    "stache: tiling: DEBUG ignoring window '{}' from app '{}'",
+                    window_info.title, window_info.app_name
+                );
                 continue;
             }
+            eprintln!(
+                "stache: tiling: DEBUG tracking window '{}' from app '{}' (bundle: {})",
+                window_info.title, window_info.app_name, window_info.bundle_id
+            );
 
             // Skip windows without AX elements - these are "phantom" windows
             if !window_info.has_ax_element() {
@@ -2752,7 +2760,34 @@ impl TilingManager {
         }
 
         let focused_idx = workspace.focused_window_index.unwrap_or(0);
+        let Some(&_window_id) = workspace.window_ids.get(focused_idx) else {
+            return false;
+        };
+
+        let screen_id = workspace.screen_id;
+
+        // Get the screen
+        let Some(_screen) = self.state.screen_by_id(screen_id).cloned() else {
+            return false;
+        };
+
+        // Presets can only be applied to floating workspaces
+        if workspace.layout != LayoutType::Floating {
+            eprintln!(
+                "stache: tiling: apply_preset failed: workspace '{}' layout is {:?}, not Floating",
+                workspace.name, workspace.layout
+            );
+            return false;
+        }
+
+        let focused_idx = workspace.focused_window_index.unwrap_or(0);
         let Some(&window_id) = workspace.window_ids.get(focused_idx) else {
+            eprintln!(
+                "stache: tiling: apply_preset failed: no window at index {} in workspace '{}' (has {} windows)",
+                focused_idx,
+                workspace.name,
+                workspace.window_ids.len()
+            );
             return false;
         };
 
@@ -2760,6 +2795,7 @@ impl TilingManager {
 
         // Get the screen
         let Some(screen) = self.state.screen_by_id(screen_id).cloned() else {
+            eprintln!("stache: tiling: apply_preset failed: screen {screen_id} not found");
             return false;
         };
 

@@ -6,6 +6,34 @@
 
 pub use crate::framework::*;
 
+/// Checks if multiple screens are available, skipping the test if not.
+///
+/// Use this at the beginning of multi-screen tests to skip gracefully
+/// when only one screen is connected.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// #[test]
+/// fn test_multi_screen_feature() {
+///     let test = Test::new("tiling_multi_screen");
+///     require_multiple_screens!(&test);
+///     // ... rest of test
+/// }
+/// ```
+#[macro_export]
+macro_rules! require_multiple_screens {
+    ($test:expr) => {
+        if !$test.has_multiple_screens() {
+            println!(
+                "SKIPPED: Test requires multiple screens (only {} connected)",
+                $test.screen_count()
+            );
+            return;
+        }
+    };
+}
+
 /// Tolerance in pixels for frame comparisons.
 ///
 /// Window positions can vary slightly due to:

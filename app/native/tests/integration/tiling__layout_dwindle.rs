@@ -325,3 +325,60 @@ fn test_dwindle_window_removal_relayout() {
         eprintln!("  Window {}: {}", i + 1, frame);
     }
 }
+
+/// Test dwindle layout with windows from multiple applications.
+///
+/// This verifies that tiling works correctly when windows from different
+/// apps (Dictionary and TextEdit) are mixed together.
+#[test]
+fn test_dwindle_multiple_apps() {
+    let mut test = Test::new("tiling_basic");
+
+    // Create windows from both apps - create all from one app first,
+    // then all from the other to minimize manager confusion
+    let _ = test.create_window("Dictionary");
+    let _ = test.create_window("Dictionary");
+    let _ = test.create_window("TextEdit");
+    let _ = test.create_window("TextEdit");
+
+    // Get stable frames from each app separately (simpler, more reliable)
+    let dict_frames = test.get_app_stable_frames("Dictionary", 2);
+    let textedit_frames = test.get_app_stable_frames("TextEdit", 2);
+
+    assert!(
+        dict_frames.len() >= 2,
+        "Should have at least 2 Dictionary windows, got {}",
+        dict_frames.len()
+    );
+    assert!(
+        textedit_frames.len() >= 2,
+        "Should have at least 2 TextEdit windows, got {}",
+        textedit_frames.len()
+    );
+
+    // Combine all frames - take only the expected count from each
+    let dict_frames: Vec<_> = dict_frames.into_iter().take(2).collect();
+    let textedit_frames: Vec<_> = textedit_frames.into_iter().take(2).collect();
+    let all_frames: Vec<_> = dict_frames.iter().chain(textedit_frames.iter()).collect();
+
+    // All windows should have reasonable sizes
+    for (i, frame) in all_frames.iter().enumerate() {
+        assert!(
+            frame.width > 100 && frame.height > 100,
+            "Window {} should have reasonable size: {}x{}",
+            i + 1,
+            frame.width,
+            frame.height
+        );
+    }
+
+    eprintln!("Multi-app dwindle layout (4 windows from 2 apps):");
+    eprintln!("  Dictionary windows:");
+    for (i, frame) in dict_frames.iter().enumerate() {
+        eprintln!("    Window {}: {}", i + 1, frame);
+    }
+    eprintln!("  TextEdit windows:");
+    for (i, frame) in textedit_frames.iter().enumerate() {
+        eprintln!("    Window {}: {}", i + 1, frame);
+    }
+}

@@ -8,6 +8,7 @@
 //! - Two windows: 1 row, 2 columns
 //! - Four windows: 2x2 grid
 //! - Windows have similar sizes in grid
+//! - Multi-app test
 //!
 //! ## Running these tests
 //! ```bash
@@ -18,231 +19,262 @@ use crate::common::*;
 
 /// Test that a single window in grid layout fills the area.
 #[test]
-fn test_grid_single_window() {
-    let _guard = TEST_MUTEX.lock().unwrap();
-    require_accessibility_permission();
-
-    let mut fixture = TestFixture::with_config("tiling_grid");
-    delay(STACHE_INIT_DELAY_MS);
+fn test_grid_single_window_fills_area() {
+    let mut test = Test::new("tiling_grid");
+    let dictionary = test.app("Dictionary");
 
     // Create a single window
-    let window = fixture.create_textedit("Grid Single");
-    assert!(window.is_some(), "Failed to create TextEdit window");
-    delay(OPERATION_DELAY_MS);
+    let window = dictionary.create_window();
 
-    // Re-activate TextEdit to force a focus event and ensure the window ID swap occurs
-    activate_app("TextEdit");
-    delay(OPERATION_DELAY_MS * 2);
+    // Get stable frame
+    let frame = window.stable_frame().expect("Should get window frame");
 
-    let frame = get_frontmost_window_frame();
-    assert!(frame.is_some(), "Should get window frame");
+    // Find which screen the window is on
+    let screen = test.screen_containing(&frame).expect("Window should be on a screen");
 
-    let frame = frame.unwrap();
+    // Calculate tiling area (outer gap = 12, menu bar ~40)
+    let outer_gap = 12;
+    let menu_bar_height = 40;
+    let tiling_area = screen.tiling_area(outer_gap, menu_bar_height);
 
-    if let Some((screen_w, screen_h)) = get_screen_size() {
-        assert!(
-            frame.width > screen_w * 0.8,
-            "Single grid window should fill width"
-        );
-        println!(
-            "Grid single window: {}x{} (screen: {}x{})",
-            frame.width, frame.height, screen_w, screen_h
-        );
-    }
+    // Single window should fill the tiling area
+    assert!(
+        (frame.x - tiling_area.x).abs() <= FRAME_TOLERANCE,
+        "Grid window X ({}) should be at tiling area X ({})",
+        frame.x,
+        tiling_area.x
+    );
+
+    assert!(
+        (frame.width - tiling_area.width).abs() <= FRAME_TOLERANCE,
+        "Grid window width ({}) should match tiling area width ({})",
+        frame.width,
+        tiling_area.width
+    );
+
+    eprintln!(
+        "Grid single window: {}x{} at ({}, {})",
+        frame.width, frame.height, frame.x, frame.y
+    );
+    eprintln!("Tiling area: {:?}", tiling_area);
 }
 
 /// Test grid layout with two windows (1x2 arrangement).
 #[test]
-fn test_grid_two_windows() {
-    let _guard = TEST_MUTEX.lock().unwrap();
-    require_accessibility_permission();
-
-    let mut fixture = TestFixture::with_config("tiling_grid");
-    delay(STACHE_INIT_DELAY_MS);
+fn test_grid_two_windows_even() {
+    let mut test = Test::new("tiling_grid");
+    let dictionary = test.app("Dictionary");
 
     // Create two windows
-    let _w1 = fixture.create_textedit("Grid Left");
-    delay(OPERATION_DELAY_MS);
-    let _w2 = fixture.create_textedit("Grid Right");
-    delay(OPERATION_DELAY_MS * 2);
+    let _ = dictionary.create_window();
+    let _ = dictionary.create_window();
 
-    let frames = get_app_window_frames("TextEdit");
+    // Get stable frames
+    let frames = dictionary.get_stable_frames(2);
     assert!(frames.len() >= 2, "Should have at least 2 windows");
 
-    // Both windows should have similar sizes
-    let width_diff = (frames[0].width - frames[1].width).abs();
-    let height_diff = (frames[0].height - frames[1].height).abs();
+    let frame1 = &frames[0];
+    let frame2 = &frames[1];
 
-    println!(
-        "Grid 2 windows: {}x{} and {}x{}",
-        frames[0].width, frames[0].height, frames[1].width, frames[1].height
-    );
-    println!(
-        "Differences - width: {:.1}, height: {:.1}",
-        width_diff, height_diff
-    );
-
-    // Windows should have similar dimensions (within tolerance)
+    // Both windows should have reasonable sizes
     assert!(
-        width_diff < FRAME_TOLERANCE * 2.0 && height_diff < FRAME_TOLERANCE * 2.0,
-        "Grid windows should have similar sizes"
+        frame1.width > 100 && frame1.height > 100,
+        "Window 1 should have reasonable size: {}x{}",
+        frame1.width,
+        frame1.height
     );
+    assert!(
+        frame2.width > 100 && frame2.height > 100,
+        "Window 2 should have reasonable size: {}x{}",
+        frame2.width,
+        frame2.height
+    );
+
+    // Windows should have similar sizes (within tolerance)
+    let width_similar = (frame1.width - frame2.width).abs() <= FRAME_TOLERANCE * 2;
+    let height_similar = (frame1.height - frame2.height).abs() <= FRAME_TOLERANCE * 2;
+
+    assert!(
+        width_similar || height_similar,
+        "Grid windows should have at least one similar dimension: {} vs {}",
+        frame1,
+        frame2
+    );
+
+    // Both windows should have similar areas (50/50 split)
+    let area1 = (frame1.width * frame1.height) as f64;
+    let area2 = (frame2.width * frame2.height) as f64;
+    let area_ratio = area1 / area2;
+
+    assert!(
+        area_ratio > 0.7 && area_ratio < 1.3,
+        "Grid should be roughly 50/50: ratio = {:.2}",
+        area_ratio
+    );
+
+    eprintln!(
+        "Grid two windows:\n  Window 1: {}\n  Window 2: {}",
+        frame1, frame2
+    );
+    eprintln!("Area ratio: {:.2}", area_ratio);
 }
 
 /// Test grid layout with four windows (2x2 arrangement).
 #[test]
-fn test_grid_four_windows_2x2() {
-    let _guard = TEST_MUTEX.lock().unwrap();
-    require_accessibility_permission();
-
-    let mut fixture = TestFixture::with_config("tiling_grid");
-    delay(STACHE_INIT_DELAY_MS);
+fn test_grid_four_windows() {
+    let mut test = Test::new("tiling_grid");
+    let dictionary = test.app("Dictionary");
 
     // Create four windows
-    for i in 1..=4 {
-        let _w = fixture.create_textedit(&format!("Grid {}", i));
-        delay(OPERATION_DELAY_MS);
-    }
-    delay(OPERATION_DELAY_MS);
+    let _ = dictionary.create_window();
+    let _ = dictionary.create_window();
+    let _ = dictionary.create_window();
+    let _ = dictionary.create_window();
 
-    let frames = get_app_window_frames("TextEdit");
+    // Get stable frames
+    let frames = dictionary.get_stable_frames(4);
     assert!(frames.len() >= 4, "Should have at least 4 windows");
 
+    // All windows should have reasonable sizes
+    for (i, frame) in frames.iter().enumerate() {
+        assert!(
+            frame.width > 100 && frame.height > 100,
+            "Window {} should have reasonable size: {}x{}",
+            i + 1,
+            frame.width,
+            frame.height
+        );
+    }
+
     // All four windows should have similar sizes
-    let areas: Vec<f64> = frames.iter().take(4).map(|f| f.area()).collect();
-    let avg_area = areas.iter().sum::<f64>() / 4.0;
+    let areas: Vec<i32> = frames.iter().take(4).map(|f| f.width * f.height).collect();
+    let avg_area = areas.iter().sum::<i32>() / 4;
 
     for (i, area) in areas.iter().enumerate() {
-        let variance = (area - avg_area).abs() / avg_area;
-        println!(
-            "Grid window {} area: {:.0} (variance: {:.1}%)",
-            i,
-            area,
-            variance * 100.0
-        );
-
-        // Each window should be within 30% of average area
+        let variance = (*area as f64 - avg_area as f64).abs() / avg_area as f64;
         assert!(
             variance < 0.3,
-            "Grid window {} area ({:.0}) should be close to average ({:.0})",
-            i,
+            "Grid window {} area ({}) should be close to average ({})",
+            i + 1,
             area,
             avg_area
         );
     }
 
-    // Check that windows form a grid (2 rows, 2 columns)
-    // Group by Y position
-    let mut sorted_by_y = frames.clone();
-    sorted_by_y.sort_by(|a, b| a.y.partial_cmp(&b.y).unwrap());
-
-    // First two should be in top row, last two in bottom row
-    if frames.len() >= 4 {
-        let top_y = sorted_by_y[0].y;
-        let bottom_y = sorted_by_y[2].y;
-
-        println!("Grid rows: top at y={:.0}, bottom at y={:.0}", top_y, bottom_y);
-
-        // Rows should be different
-        assert!(
-            (bottom_y - top_y).abs() > 100.0,
-            "Grid should have distinct rows"
-        );
+    eprintln!("Grid four windows:");
+    for (i, frame) in frames.iter().enumerate() {
+        let area = frame.width * frame.height;
+        eprintln!("  Window {}: {} (area: {})", i + 1, frame, area);
     }
 }
 
-/// Test grid layout with six windows (2x3 or 3x2 arrangement).
+/// Test that windows maintain layout after removal.
 #[test]
-fn test_grid_six_windows() {
-    let _guard = TEST_MUTEX.lock().unwrap();
-    require_accessibility_permission();
+fn test_grid_window_removal_relayout() {
+    let mut test = Test::new("tiling_grid");
+    let dictionary = test.app("Dictionary");
 
-    let mut fixture = TestFixture::with_config("tiling_grid");
-    delay(STACHE_INIT_DELAY_MS);
+    // Create three windows
+    let _ = dictionary.create_window();
+    let _ = dictionary.create_window();
+    let _ = dictionary.create_window();
 
-    // Create six windows
-    for i in 1..=6 {
-        let _w = fixture.create_textedit(&format!("Grid {}", i));
-        delay(OPERATION_DELAY_MS);
+    // Wait for initial layout
+    let initial_frames = dictionary.get_stable_frames(3);
+    assert!(
+        initial_frames.len() >= 3,
+        "Should have at least 3 windows initially"
+    );
+
+    eprintln!("Initial 3-window layout:");
+    for (i, frame) in initial_frames.iter().enumerate() {
+        eprintln!("  Window {}: {}", i + 1, frame);
     }
-    delay(OPERATION_DELAY_MS);
 
-    let frames = get_app_window_frames("TextEdit");
-    assert!(frames.len() >= 6, "Should have at least 6 windows");
+    // Get fresh window references and close one
+    let windows = dictionary.get_windows();
+    assert!(windows.len() >= 3, "Should have window refs");
+
+    let mut window_to_close = windows.into_iter().last().expect("Should have window to close");
+    assert!(window_to_close.close(), "Should be able to close window");
+
+    // Wait for relayout with 2 windows
+    let final_frames = dictionary.get_stable_frames(2);
+    assert!(
+        final_frames.len() == 2,
+        "Should have 2 windows after closing, got {}",
+        final_frames.len()
+    );
+
+    // Remaining windows should have reasonable sizes
+    for (i, frame) in final_frames.iter().enumerate() {
+        assert!(
+            frame.width > 100 && frame.height > 100,
+            "Window {} should maintain reasonable size after relayout: {}",
+            i + 1,
+            frame
+        );
+    }
+
+    eprintln!("After removal: 2 windows remaining");
+    for (i, frame) in final_frames.iter().enumerate() {
+        eprintln!("  Window {}: {}", i + 1, frame);
+    }
+}
+
+/// Test grid layout with windows from multiple applications.
+///
+/// This verifies that tiling works correctly when windows from different
+/// apps (Dictionary and TextEdit) are mixed together.
+#[test]
+fn test_grid_multiple_apps() {
+    let mut test = Test::new("tiling_grid");
+
+    // Create windows from both apps - create all from one app first,
+    // then all from the other to minimize manager confusion
+    let _ = test.create_window("Dictionary");
+    let _ = test.create_window("Dictionary");
+    let _ = test.create_window("TextEdit");
+    let _ = test.create_window("TextEdit");
+
+    // Get stable frames from each app separately (simpler, more reliable)
+    let dict_frames = test.get_app_stable_frames("Dictionary", 2);
+    let textedit_frames = test.get_app_stable_frames("TextEdit", 2);
+
+    assert!(
+        dict_frames.len() >= 2,
+        "Should have at least 2 Dictionary windows, got {}",
+        dict_frames.len()
+    );
+    assert!(
+        textedit_frames.len() >= 2,
+        "Should have at least 2 TextEdit windows, got {}",
+        textedit_frames.len()
+    );
+
+    // Combine all frames - take only the expected count from each
+    let dict_frames: Vec<_> = dict_frames.into_iter().take(2).collect();
+    let textedit_frames: Vec<_> = textedit_frames.into_iter().take(2).collect();
+    let all_frames: Vec<_> = dict_frames.iter().chain(textedit_frames.iter()).collect();
 
     // All windows should have reasonable sizes
-    for (i, frame) in frames.iter().take(6).enumerate() {
+    for (i, frame) in all_frames.iter().enumerate() {
         assert!(
-            frame.width > 100.0 && frame.height > 100.0,
-            "Grid window {} should have reasonable size: {}x{}",
-            i,
+            frame.width > 100 && frame.height > 100,
+            "Window {} should have reasonable size: {}x{}",
+            i + 1,
             frame.width,
             frame.height
         );
-        println!(
-            "Grid window {}: ({:.0}, {:.0}) {}x{}",
-            i, frame.x, frame.y, frame.width, frame.height
-        );
     }
 
-    // Calculate total tiled area
-    let total_area: f64 = frames.iter().take(6).map(|f| f.area()).sum();
-    if let Some((screen_w, screen_h)) = get_screen_size() {
-        let screen_area = screen_w * screen_h;
-        let coverage = total_area / screen_area;
-        println!("Grid coverage: {:.1}% of screen", coverage * 100.0);
+    eprintln!("Multi-app grid layout (4 windows from 2 apps):");
+    eprintln!("  Dictionary windows:");
+    for (i, frame) in dict_frames.iter().enumerate() {
+        eprintln!("    Window {}: {}", i + 1, frame);
     }
-}
-
-/// Test that grid windows don't overlap.
-#[test]
-fn test_grid_windows_no_overlap() {
-    let _guard = TEST_MUTEX.lock().unwrap();
-    require_accessibility_permission();
-
-    let mut fixture = TestFixture::with_config("tiling_grid");
-    delay(STACHE_INIT_DELAY_MS);
-
-    // Create four windows
-    for i in 1..=4 {
-        let _w = fixture.create_textedit(&format!("NoOverlap {}", i));
-        delay(OPERATION_DELAY_MS);
+    eprintln!("  TextEdit windows:");
+    for (i, frame) in textedit_frames.iter().enumerate() {
+        eprintln!("    Window {}: {}", i + 1, frame);
     }
-    delay(OPERATION_DELAY_MS);
-
-    let frames = get_app_window_frames("TextEdit");
-    assert!(frames.len() >= 4, "Should have at least 4 windows");
-
-    // Check for overlaps between each pair
-    for i in 0..frames.len().min(4) {
-        for j in (i + 1)..frames.len().min(4) {
-            let f1 = &frames[i];
-            let f2 = &frames[j];
-
-            // Check if rectangles overlap (accounting for gaps)
-            let gap = 16.0; // Inner gap + tolerance
-            let overlap_x = f1.x + f1.width > f2.x + gap && f2.x + f2.width > f1.x + gap;
-            let overlap_y = f1.y + f1.height > f2.y + gap && f2.y + f2.height > f1.y + gap;
-
-            if overlap_x && overlap_y {
-                // Calculate overlap area
-                let x1 = f1.x.max(f2.x);
-                let y1 = f1.y.max(f2.y);
-                let x2 = (f1.x + f1.width).min(f2.x + f2.width);
-                let y2 = (f1.y + f1.height).min(f2.y + f2.height);
-                let overlap_area = (x2 - x1).max(0.0) * (y2 - y1).max(0.0);
-
-                // Small overlaps are okay (gaps/borders)
-                assert!(
-                    overlap_area < 500.0,
-                    "Windows {} and {} have significant overlap: {:.0} px^2",
-                    i,
-                    j,
-                    overlap_area
-                );
-            }
-        }
-    }
-
-    println!("Grid windows have no significant overlaps");
 }

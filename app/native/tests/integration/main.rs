@@ -61,16 +61,17 @@ fn check_preconditions() { framework::check_suite_preconditions(); }
 
 // Tiling layout tests
 mod tiling__layout_dwindle;
-// TODO: Refactor to use new Test API
-// mod tiling__layout_floating;
-// mod tiling__layout_grid;
-// mod tiling__layout_master;
-// mod tiling__layout_monocle;
-// mod tiling__layout_split;
+mod tiling__layout_floating;
+mod tiling__layout_grid;
+mod tiling__layout_master;
+mod tiling__layout_monocle;
+mod tiling__layout_split;
 
 // Tiling operation tests
-// TODO: Refactor to use new Test API
-// mod tiling__window_focus;
-// mod tiling__window_operations;
-// mod tiling__window_rules;
-// mod tiling__workspace_operations;
+mod tiling__window_focus;
+mod tiling__window_operations;
+mod tiling__window_rules;
+mod tiling__workspace_operations;
+
+// Multi-screen tests
+mod tiling__multi_screen;

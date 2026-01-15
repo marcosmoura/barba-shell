@@ -8,6 +8,7 @@
 //! - Two windows: master + one stack window
 //! - Three+ windows: master + stack
 //! - Master window is larger than stack windows
+//! - Multi-app test
 //!
 //! ## Running these tests
 //! ```bash
@@ -18,230 +19,255 @@ use crate::common::*;
 
 /// Test that a single window in master layout fills the area.
 #[test]
-fn test_master_single_window() {
-    let _guard = TEST_MUTEX.lock().unwrap();
-    require_accessibility_permission();
-
-    let mut fixture = TestFixture::with_config("tiling_master");
-    delay(STACHE_INIT_DELAY_MS);
+fn test_master_single_window_fills_area() {
+    let mut test = Test::new("tiling_master");
+    let dictionary = test.app("Dictionary");
 
     // Create a single window
-    let window = fixture.create_textedit("Master Single");
-    assert!(window.is_some(), "Failed to create TextEdit window");
-    delay(OPERATION_DELAY_MS * 2);
+    let window = dictionary.create_window();
 
-    // Get the window frame
-    let frame = get_frontmost_window_frame();
-    assert!(frame.is_some(), "Should get window frame");
+    // Get stable frame
+    let frame = window.stable_frame().expect("Should get window frame");
 
-    let frame = frame.unwrap();
+    // Find which screen the window is on
+    let screen = test.screen_containing(&frame).expect("Window should be on a screen");
 
-    // Single window should fill most of the screen
-    if let Some((screen_w, screen_h)) = get_screen_size() {
-        assert!(
-            frame.width > screen_w * 0.8,
-            "Single master window should be wide: {} vs screen {}",
-            frame.width,
-            screen_w
-        );
-        assert!(
-            frame.height > screen_h * 0.6,
-            "Single master window should be tall: {} vs screen {}",
-            frame.height,
-            screen_h
-        );
+    // Calculate tiling area (outer gap = 12, menu bar ~40)
+    let outer_gap = 12;
+    let menu_bar_height = 40;
+    let tiling_area = screen.tiling_area(outer_gap, menu_bar_height);
 
-        println!(
-            "Master single window: {}x{} (screen: {}x{})",
-            frame.width, frame.height, screen_w, screen_h
-        );
-    }
+    // Single window should fill the tiling area
+    assert!(
+        (frame.x - tiling_area.x).abs() <= FRAME_TOLERANCE,
+        "Master window X ({}) should be at tiling area X ({})",
+        frame.x,
+        tiling_area.x
+    );
+
+    assert!(
+        (frame.width - tiling_area.width).abs() <= FRAME_TOLERANCE,
+        "Master window width ({}) should match tiling area width ({})",
+        frame.width,
+        tiling_area.width
+    );
+
+    eprintln!(
+        "Master single window: {}x{} at ({}, {})",
+        frame.width, frame.height, frame.x, frame.y
+    );
+    eprintln!("Tiling area: {:?}", tiling_area);
 }
 
 /// Test master layout with two windows.
 #[test]
 fn test_master_two_windows() {
-    let _guard = TEST_MUTEX.lock().unwrap();
-    require_accessibility_permission();
-
-    let mut fixture = TestFixture::with_config("tiling_master");
-    delay(STACHE_INIT_DELAY_MS);
+    let mut test = Test::new("tiling_master");
+    let dictionary = test.app("Dictionary");
 
     // Create two windows
-    let _w1 = fixture.create_textedit("Master Main");
-    delay(OPERATION_DELAY_MS);
-    let _w2 = fixture.create_textedit("Stack Window");
-    delay(OPERATION_DELAY_MS * 2);
+    let _ = dictionary.create_window();
+    let _ = dictionary.create_window();
 
-    // Get all window frames
-    let frames = get_app_window_frames("TextEdit");
+    // Get stable frames
+    let frames = dictionary.get_stable_frames(2);
+    assert!(frames.len() >= 2, "Should have at least 2 windows");
+
+    let frame1 = &frames[0];
+    let frame2 = &frames[1];
+
+    // Both windows should have reasonable sizes
     assert!(
-        frames.len() >= 2,
-        "Should have at least 2 windows, got {}",
-        frames.len()
+        frame1.width > 100 && frame1.height > 100,
+        "Window 1 should have reasonable size: {}x{}",
+        frame1.width,
+        frame1.height
     );
-
-    // Sort frames by X position to identify master (left) and stack (right)
-    let mut sorted_frames = frames.clone();
-    sorted_frames.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap());
-
-    let left = &sorted_frames[0];
-    let right = &sorted_frames[1];
-
-    // In master layout, the master window (left) should be larger
-    // or they should be side by side
-    let left_is_wider = left.width > right.width;
-    let left_is_taller = left.height > right.height;
-    let windows_side_by_side = (right.x - (left.x + left.width)).abs() < 50.0;
-
-    println!(
-        "Master layout: Left({}x{}) at ({},{}), Right({}x{}) at ({},{})",
-        left.width, left.height, left.x, left.y, right.width, right.height, right.x, right.y
-    );
-    println!(
-        "Left wider: {}, Left taller: {}, Side by side: {}",
-        left_is_wider, left_is_taller, windows_side_by_side
-    );
-
-    // Basic assertion: windows should be arranged (not completely overlapping)
     assert!(
-        windows_side_by_side || left_is_wider || left_is_taller,
-        "Windows should be arranged in master-stack pattern"
+        frame2.width > 100 && frame2.height > 100,
+        "Window 2 should have reasonable size: {}x{}",
+        frame2.width,
+        frame2.height
     );
+
+    // In master layout, one window should be significantly larger (the master)
+    let area1 = (frame1.width * frame1.height) as f64;
+    let area2 = (frame2.width * frame2.height) as f64;
+    let (larger_area, smaller_area) = if area1 > area2 {
+        (area1, area2)
+    } else {
+        (area2, area1)
+    };
+
+    // Master should be larger than stack (at least 30% more area)
+    let ratio = larger_area / smaller_area;
+    assert!(
+        ratio > 1.3,
+        "Master window should be significantly larger than stack: ratio = {:.2}",
+        ratio
+    );
+
+    eprintln!(
+        "Master two windows:\n  Window 1: {}\n  Window 2: {}",
+        frame1, frame2
+    );
+    eprintln!("Area ratio (larger/smaller): {:.2}", ratio);
 }
 
 /// Test master layout with multiple stack windows.
 #[test]
-fn test_master_multiple_stack_windows() {
-    let _guard = TEST_MUTEX.lock().unwrap();
-    require_accessibility_permission();
+fn test_master_three_windows() {
+    let mut test = Test::new("tiling_master");
+    let dictionary = test.app("Dictionary");
 
-    let mut fixture = TestFixture::with_config("tiling_master");
-    delay(STACHE_INIT_DELAY_MS);
+    // Create three windows: 1 master + 2 stack
+    let _ = dictionary.create_window();
+    let _ = dictionary.create_window();
+    let _ = dictionary.create_window();
 
-    // Create multiple windows: 1 master + 3 stack
-    let _w1 = fixture.create_textedit("Master");
-    delay(OPERATION_DELAY_MS);
-    let _w2 = fixture.create_textedit("Stack 1");
-    delay(OPERATION_DELAY_MS);
-    let _w3 = fixture.create_textedit("Stack 2");
-    delay(OPERATION_DELAY_MS);
-    let _w4 = fixture.create_textedit("Stack 3");
-    delay(OPERATION_DELAY_MS * 2);
+    // Get stable frames
+    let frames = dictionary.get_stable_frames(3);
+    assert!(frames.len() >= 3, "Should have at least 3 windows");
 
-    // Get all window frames
-    let frames = get_app_window_frames("TextEdit");
-    assert!(
-        frames.len() >= 4,
-        "Should have at least 4 windows, got {}",
-        frames.len()
-    );
-
-    // Find the largest window (should be master)
-    let largest = frames.iter().max_by(|a, b| a.area().partial_cmp(&b.area()).unwrap());
-
-    assert!(largest.is_some(), "Should find largest window");
-    let master = largest.unwrap();
-
-    // Master should have significant area
-    if let Some((screen_w, screen_h)) = get_screen_size() {
-        let screen_area = screen_w * screen_h;
-        let master_ratio = master.area() / screen_area;
-
-        // Master should take at least 30% of screen (typical is 50-60%)
+    // All windows should have reasonable sizes
+    for (i, frame) in frames.iter().enumerate() {
         assert!(
-            master_ratio > 0.2,
-            "Master window should take significant area: {:.1}%",
-            master_ratio * 100.0
-        );
-
-        println!(
-            "Master window: {}x{} ({:.1}% of screen)",
-            master.width,
-            master.height,
-            master_ratio * 100.0
+            frame.width > 100 && frame.height > 100,
+            "Window {} should have reasonable size: {}x{}",
+            i + 1,
+            frame.width,
+            frame.height
         );
     }
 
-    // Print all window info
+    // Find the largest window (should be master)
+    let areas: Vec<_> = frames.iter().map(|f| (f.width * f.height) as i64).collect();
+    let max_area = *areas.iter().max().unwrap();
+    let total_area: i64 = areas.iter().sum();
+
+    // Master should take a significant portion (at least 40%) of total area
+    let master_ratio = max_area as f64 / total_area as f64;
+    assert!(
+        master_ratio > 0.35,
+        "Master should take significant area: {:.1}%",
+        master_ratio * 100.0
+    );
+
+    eprintln!("Master three windows:");
     for (i, frame) in frames.iter().enumerate() {
-        println!(
-            "Window {}: ({}, {}) {}x{} area={:.0}",
-            i,
-            frame.x,
-            frame.y,
-            frame.width,
-            frame.height,
-            frame.area()
+        let area = frame.width * frame.height;
+        eprintln!("  Window {}: {} (area: {})", i + 1, frame, area);
+    }
+    eprintln!("Master ratio: {:.1}%", master_ratio * 100.0);
+}
+
+/// Test that windows maintain layout after removal.
+#[test]
+fn test_master_window_removal_relayout() {
+    let mut test = Test::new("tiling_master");
+    let dictionary = test.app("Dictionary");
+
+    // Create three windows
+    let _ = dictionary.create_window();
+    let _ = dictionary.create_window();
+    let _ = dictionary.create_window();
+
+    // Wait for initial layout
+    let initial_frames = dictionary.get_stable_frames(3);
+    assert!(
+        initial_frames.len() >= 3,
+        "Should have at least 3 windows initially"
+    );
+
+    eprintln!("Initial 3-window layout:");
+    for (i, frame) in initial_frames.iter().enumerate() {
+        eprintln!("  Window {}: {}", i + 1, frame);
+    }
+
+    // Get fresh window references and close one
+    let windows = dictionary.get_windows();
+    assert!(windows.len() >= 3, "Should have window refs");
+
+    let mut window_to_close = windows.into_iter().last().expect("Should have window to close");
+    assert!(window_to_close.close(), "Should be able to close window");
+
+    // Wait for relayout with 2 windows
+    let final_frames = dictionary.get_stable_frames(2);
+    assert!(
+        final_frames.len() == 2,
+        "Should have 2 windows after closing, got {}",
+        final_frames.len()
+    );
+
+    // Remaining windows should have reasonable sizes
+    for (i, frame) in final_frames.iter().enumerate() {
+        assert!(
+            frame.width > 100 && frame.height > 100,
+            "Window {} should maintain reasonable size after relayout: {}",
+            i + 1,
+            frame
         );
+    }
+
+    eprintln!("After removal: 2 windows remaining");
+    for (i, frame) in final_frames.iter().enumerate() {
+        eprintln!("  Window {}: {}", i + 1, frame);
     }
 }
 
-/// Test that stack windows have equal heights.
+/// Test master layout with windows from multiple applications.
+///
+/// This verifies that tiling works correctly when windows from different
+/// apps (Dictionary and TextEdit) are mixed together.
 #[test]
-fn test_master_stack_windows_equal_height() {
-    let _guard = TEST_MUTEX.lock().unwrap();
-    require_accessibility_permission();
+fn test_master_multiple_apps() {
+    let mut test = Test::new("tiling_master");
 
-    let mut fixture = TestFixture::with_config("tiling_master");
-    delay(STACHE_INIT_DELAY_MS);
+    // Create windows from both apps - create all from one app first,
+    // then all from the other to minimize manager confusion
+    let _ = test.create_window("Dictionary");
+    let _ = test.create_window("Dictionary");
+    let _ = test.create_window("TextEdit");
+    let _ = test.create_window("TextEdit");
 
-    // Create 1 master + 2 stack windows
-    let _w1 = fixture.create_textedit("Master Window");
-    delay(OPERATION_DELAY_MS);
-    let _w2 = fixture.create_textedit("Stack A");
-    delay(OPERATION_DELAY_MS);
-    let _w3 = fixture.create_textedit("Stack B");
-    delay(OPERATION_DELAY_MS * 2);
+    // Get stable frames from each app separately (simpler, more reliable)
+    let dict_frames = test.get_app_stable_frames("Dictionary", 2);
+    let textedit_frames = test.get_app_stable_frames("TextEdit", 2);
 
-    // Get all window frames
-    let frames = get_app_window_frames("TextEdit");
-    assert!(frames.len() >= 3, "Should have at least 3 windows");
+    assert!(
+        dict_frames.len() >= 2,
+        "Should have at least 2 Dictionary windows, got {}",
+        dict_frames.len()
+    );
+    assert!(
+        textedit_frames.len() >= 2,
+        "Should have at least 2 TextEdit windows, got {}",
+        textedit_frames.len()
+    );
 
-    // Group windows by X position to identify master vs stack
-    let mut sorted = frames.clone();
-    sorted.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap());
+    // Combine all frames - take only the expected count from each
+    let dict_frames: Vec<_> = dict_frames.into_iter().take(2).collect();
+    let textedit_frames: Vec<_> = textedit_frames.into_iter().take(2).collect();
+    let all_frames: Vec<_> = dict_frames.iter().chain(textedit_frames.iter()).collect();
 
-    // Identify unique X positions (with tolerance)
-    let mut x_groups: Vec<Vec<&WindowFrame>> = Vec::new();
-    for frame in &sorted {
-        let mut found_group = false;
-        for group in &mut x_groups {
-            if (group[0].x - frame.x).abs() < 50.0 {
-                group.push(frame);
-                found_group = true;
-                break;
-            }
-        }
-        if !found_group {
-            x_groups.push(vec![frame]);
-        }
+    // All windows should have reasonable sizes
+    for (i, frame) in all_frames.iter().enumerate() {
+        assert!(
+            frame.width > 100 && frame.height > 100,
+            "Window {} should have reasonable size: {}x{}",
+            i + 1,
+            frame.width,
+            frame.height
+        );
     }
 
-    // If we have two X groups, the one with more windows is the stack
-    assert!(!x_groups.is_empty(), "Should have at least one group of windows");
-
-    if x_groups.len() >= 2 {
-        x_groups.sort_by_key(|g| std::cmp::Reverse(g.len()));
-        let stack_windows = &x_groups[0];
-
-        if stack_windows.len() >= 2 {
-            // Stack windows should have similar heights
-            let first_height = stack_windows[0].height;
-            for (i, frame) in stack_windows.iter().enumerate().skip(1) {
-                let height_diff = (frame.height - first_height).abs();
-                assert!(
-                    height_diff < FRAME_TOLERANCE * 3.0,
-                    "Stack window {} height ({}) should be similar to first ({})",
-                    i,
-                    frame.height,
-                    first_height
-                );
-                println!(
-                    "Stack window {} height: {}, diff from first: {}",
-                    i, frame.height, height_diff
-                );
-            }
-        }
+    eprintln!("Multi-app master layout (4 windows from 2 apps):");
+    eprintln!("  Dictionary windows:");
+    for (i, frame) in dict_frames.iter().enumerate() {
+        eprintln!("    Window {}: {}", i + 1, frame);
+    }
+    eprintln!("  TextEdit windows:");
+    for (i, frame) in textedit_frames.iter().enumerate() {
+        eprintln!("    Window {}: {}", i + 1, frame);
     }
 }

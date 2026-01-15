@@ -25,11 +25,39 @@ pub struct Frame {
 }
 
 impl Frame {
+    /// Creates a new Frame with the given position and size.
+    pub fn new(x: f64, y: f64, width: f64, height: f64) -> Self {
+        Self {
+            x: x as i32,
+            y: y as i32,
+            width: width as i32,
+            height: height as i32,
+        }
+    }
+
     /// Returns the right edge X coordinate.
     pub fn right(&self) -> i32 { self.x + self.width }
 
     /// Returns the bottom edge Y coordinate.
     pub fn bottom(&self) -> i32 { self.y + self.height }
+
+    /// Returns the area of this frame.
+    pub fn area(&self) -> f64 { (self.width as f64) * (self.height as f64) }
+
+    /// Checks if this frame is approximately equal to another within a tolerance.
+    ///
+    /// Tolerance is applied to position (x, y) and size (width, height) independently.
+    pub fn approximately_equals(&self, other: &Frame, tolerance: i32) -> bool {
+        (self.x - other.x).abs() <= tolerance
+            && (self.y - other.y).abs() <= tolerance
+            && (self.width - other.width).abs() <= tolerance
+            && (self.height - other.height).abs() <= tolerance
+    }
+
+    /// Alias for `approximately_equals` to match old API naming.
+    pub fn approx_eq(&self, other: &Frame, tolerance: i32) -> bool {
+        self.approximately_equals(other, tolerance)
+    }
 }
 
 impl std::fmt::Display for Frame {

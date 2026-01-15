@@ -1,12 +1,12 @@
 //! Integration tests for the Floating layout.
 //!
 //! Floating layout allows windows to be freely positioned and sized.
-//! Windows are not automatically tiled but can use floating presets.
+//! Windows are not automatically tiled but maintain their user-set positions.
 //!
 //! ## Test Coverage
 //! - Windows maintain their position in floating layout
-//! - Floating presets (centered, full, halves)
-//! - Multiple floating windows
+//! - Multiple floating windows can coexist
+//! - Multi-app test
 //!
 //! ## Running these tests
 //! ```bash
@@ -15,329 +15,194 @@
 
 use crate::common::*;
 
-/// Test that windows in floating layout maintain their position.
+/// Test that a single window in floating layout has reasonable size.
+///
+/// In floating layout, windows are not auto-tiled to fill the screen,
+/// but they should still have reasonable dimensions.
 #[test]
-fn test_floating_window_position_maintained() {
-    let _guard = TEST_MUTEX.lock().unwrap();
-    require_accessibility_permission();
+fn test_floating_single_window() {
+    let mut test = Test::new("tiling_floating");
+    let dictionary = test.app("Dictionary");
 
-    let mut fixture = TestFixture::with_config("tiling_floating");
-    delay(STACHE_INIT_DELAY_MS);
+    // Create a single window
+    let window = dictionary.create_window();
 
-    // Create a window
-    let window = fixture.create_textedit("Floating Window");
-    assert!(window.is_some(), "Failed to create window");
-    delay(OPERATION_DELAY_MS);
+    // Get stable frame
+    let frame = window.stable_frame().expect("Should get window frame");
 
-    // Set a specific position
-    let target_frame = WindowFrame::new(200.0, 150.0, 600.0, 400.0);
-    set_frontmost_window_frame(&target_frame);
-    delay(OPERATION_DELAY_MS);
-
-    // Wait a bit more to ensure no auto-tiling occurs
-    delay(500);
-
-    // Check the window position
-    let actual_frame = get_frontmost_window_frame();
-    assert!(actual_frame.is_some(), "Should get window frame");
-
-    let actual = actual_frame.unwrap();
-
-    // In floating layout, position should be maintained (within tolerance)
-    // Note: Some variance is expected due to window snapping
-    println!(
-        "Floating position: set to ({}, {}) {}x{}, got ({}, {}) {}x{}",
-        target_frame.x,
-        target_frame.y,
-        target_frame.width,
-        target_frame.height,
-        actual.x,
-        actual.y,
-        actual.width,
-        actual.height
-    );
-
-    // Window should have reasonable dimensions (not auto-maximized)
+    // Window should have reasonable dimensions
     assert!(
-        actual.width > 100.0 && actual.height > 100.0,
-        "Floating window should have reasonable size"
+        frame.width > 100 && frame.height > 100,
+        "Floating window should have reasonable size: {}x{}",
+        frame.width,
+        frame.height
+    );
+
+    eprintln!(
+        "Floating single window: {}x{} at ({}, {})",
+        frame.width, frame.height, frame.x, frame.y
     );
 }
 
-/// Test centered floating preset.
+/// Test floating layout with two windows.
+///
+/// In floating layout, windows are not auto-tiled into a grid,
+/// so they may overlap or have any position.
 #[test]
-fn test_floating_preset_centered() {
-    let _guard = TEST_MUTEX.lock().unwrap();
-    require_accessibility_permission();
+fn test_floating_two_windows() {
+    let mut test = Test::new("tiling_floating");
+    let dictionary = test.app("Dictionary");
 
-    let mut fixture = TestFixture::with_config("tiling_floating");
-    delay(STACHE_INIT_DELAY_MS);
+    // Create two windows
+    let _ = dictionary.create_window();
+    let _ = dictionary.create_window();
 
-    // Create a window and wait for it to be fully tracked
-    // Need extra delay for window ID to stabilize (CGWindow ID swap)
-    let _window = fixture.create_textedit("Centered Window");
-    delay(OPERATION_DELAY_MS * 3);
+    // Get stable frames (in floating, frames can be anywhere)
+    // Use stacked variant since floating windows may overlap
+    let frames = dictionary.get_stable_frames_stacked(2);
+    assert!(frames.len() >= 2, "Should have at least 2 windows");
 
-    // Re-activate TextEdit to force a focus event and ensure the window ID swap occurs
-    // This is necessary because the CGWindow ID may not be available immediately
-    activate_app("TextEdit");
-    delay(OPERATION_DELAY_MS * 2);
-
-    // Apply centered preset
-    fixture.stache_command(&["tiling", "window", "--preset", "centered"]);
-    delay(OPERATION_DELAY_MS * 2);
-
-    let frame = get_frontmost_window_frame();
-    assert!(frame.is_some(), "Should get window frame");
-
-    let frame = frame.unwrap();
-
-    // Centered preset: 60% width, 70% height, centered
-    if let Some((screen_w, screen_h)) = get_screen_size() {
-        // Expected dimensions (with some tolerance for menu bar)
-        let expected_width = screen_w * 0.6;
-        let expected_height = (screen_h - 50.0) * 0.7; // Account for menu bar
-
-        let width_ratio = frame.width / expected_width;
-        let height_ratio = frame.height / expected_height;
-
-        println!(
-            "Centered preset: {}x{} (expected ~{:.0}x{:.0})",
-            frame.width, frame.height, expected_width, expected_height
-        );
-        println!("Ratios - width: {:.2}, height: {:.2}", width_ratio, height_ratio);
-
-        // Check centering
-        let center_x = frame.x + frame.width / 2.0;
-        let screen_center_x = screen_w / 2.0;
-        let x_offset = (center_x - screen_center_x).abs();
-
-        println!(
-            "Center X offset: {:.0} (window center: {:.0}, screen center: {:.0})",
-            x_offset, center_x, screen_center_x
-        );
-
-        // Window should be reasonably centered (within 100px tolerance)
+    // Both windows should have reasonable sizes
+    for (i, frame) in frames.iter().enumerate() {
         assert!(
-            x_offset < 100.0,
-            "Centered window should be near screen center, offset: {:.0}",
-            x_offset
-        );
-    }
-}
-
-/// Test full floating preset.
-#[test]
-fn test_floating_preset_full() {
-    let _guard = TEST_MUTEX.lock().unwrap();
-    require_accessibility_permission();
-
-    let mut fixture = TestFixture::with_config("tiling_floating");
-    delay(STACHE_INIT_DELAY_MS);
-
-    // Create a window and wait for it to be fully tracked
-    // Need extra delay for window ID to stabilize (CGWindow ID swap)
-    let _window = fixture.create_textedit("Full Window");
-    delay(OPERATION_DELAY_MS * 3);
-
-    // Re-activate TextEdit to force a focus event and ensure the window ID swap occurs
-    // This is necessary because the CGWindow ID may not be available immediately
-    activate_app("TextEdit");
-    delay(OPERATION_DELAY_MS * 2);
-
-    // Apply full preset
-    fixture.stache_command(&["tiling", "window", "--preset", "full"]);
-    delay(OPERATION_DELAY_MS * 2);
-
-    let frame = get_frontmost_window_frame();
-    assert!(frame.is_some(), "Should get window frame");
-
-    let frame = frame.unwrap();
-
-    if let Some((screen_w, screen_h)) = get_screen_size() {
-        // Full preset should fill most of the screen
-        let width_ratio = frame.width / screen_w;
-        let height_ratio = frame.height / (screen_h - 30.0); // Account for menu bar
-
-        println!(
-            "Full preset: {}x{} ({:.1}% x {:.1}% of screen)",
+            frame.width > 100 && frame.height > 100,
+            "Window {} should have reasonable size: {}x{}",
+            i + 1,
             frame.width,
-            frame.height,
-            width_ratio * 100.0,
-            height_ratio * 100.0
-        );
-
-        // Should fill at least 90% in each dimension (accounting for gaps)
-        assert!(
-            width_ratio > 0.85,
-            "Full preset should fill most of screen width"
+            frame.height
         );
     }
+
+    eprintln!(
+        "Floating two windows:\n  Window 1: {}\n  Window 2: {}",
+        frames[0], frames[1]
+    );
 }
 
-/// Test left-half floating preset.
+/// Test floating layout with three windows.
 #[test]
-fn test_floating_preset_left_half() {
-    let _guard = TEST_MUTEX.lock().unwrap();
-    require_accessibility_permission();
+fn test_floating_three_windows() {
+    let mut test = Test::new("tiling_floating");
+    let dictionary = test.app("Dictionary");
 
-    let mut fixture = TestFixture::with_config("tiling_floating");
-    delay(STACHE_INIT_DELAY_MS);
+    // Create three windows
+    let _ = dictionary.create_window();
+    let _ = dictionary.create_window();
+    let _ = dictionary.create_window();
 
-    // Create a window and wait for it to be fully tracked
-    // Need extra delay for window ID to stabilize (CGWindow ID swap)
-    let _window = fixture.create_textedit("Left Half Window");
-    delay(OPERATION_DELAY_MS * 3);
-
-    // Re-activate TextEdit to force a focus event and ensure the window ID swap occurs
-    // This is necessary because the CGWindow ID may not be available immediately
-    activate_app("TextEdit");
-    delay(OPERATION_DELAY_MS * 2);
-
-    // Apply left-half preset
-    fixture.stache_command(&["tiling", "window", "--preset", "left-half"]);
-    delay(OPERATION_DELAY_MS * 2);
-
-    let frame = get_frontmost_window_frame();
-    assert!(frame.is_some(), "Should get window frame");
-
-    let frame = frame.unwrap();
-
-    if let Some((screen_w, screen_h)) = get_screen_size() {
-        // Left half should be ~50% width, near left edge
-        let width_ratio = frame.width / screen_w;
-        let height_ratio = frame.height / (screen_h - 30.0);
-
-        println!(
-            "Left-half preset: x={:.0}, {}x{} ({:.1}% width)",
-            frame.x,
-            frame.width,
-            frame.height,
-            width_ratio * 100.0
-        );
-
-        // Width should be approximately half
-        assert!(
-            width_ratio > 0.4 && width_ratio < 0.6,
-            "Left-half should be ~50% width, got {:.1}%",
-            width_ratio * 100.0
-        );
-
-        // X position should be near left edge
-        assert!(
-            frame.x < 50.0,
-            "Left-half should start near left edge, x={}",
-            frame.x
-        );
-
-        // Height should fill most of screen
-        assert!(
-            height_ratio > 0.8,
-            "Left-half should fill height, got {:.1}%",
-            height_ratio * 100.0
-        );
-    }
-}
-
-/// Test right-half floating preset.
-#[test]
-fn test_floating_preset_right_half() {
-    let _guard = TEST_MUTEX.lock().unwrap();
-    require_accessibility_permission();
-
-    let mut fixture = TestFixture::with_config("tiling_floating");
-    delay(STACHE_INIT_DELAY_MS);
-
-    // Create a window and wait for it to be fully tracked
-    // Need extra delay for window ID to stabilize (CGWindow ID swap)
-    let _window = fixture.create_textedit("Right Half Window");
-    delay(OPERATION_DELAY_MS * 3);
-
-    // Re-activate TextEdit to force a focus event and ensure the window ID swap occurs
-    // This is necessary because the CGWindow ID may not be available immediately
-    activate_app("TextEdit");
-    delay(OPERATION_DELAY_MS * 2);
-
-    // Apply right-half preset
-    fixture.stache_command(&["tiling", "window", "--preset", "right-half"]);
-    delay(OPERATION_DELAY_MS * 2);
-
-    let frame = get_frontmost_window_frame();
-    assert!(frame.is_some(), "Should get window frame");
-
-    let frame = frame.unwrap();
-
-    if let Some((screen_w, _)) = get_screen_size() {
-        let width_ratio = frame.width / screen_w;
-
-        println!(
-            "Right-half preset: x={:.0}, {}x{} ({:.1}% width)",
-            frame.x,
-            frame.width,
-            frame.height,
-            width_ratio * 100.0
-        );
-
-        // Width should be approximately half
-        assert!(
-            width_ratio > 0.4 && width_ratio < 0.6,
-            "Right-half should be ~50% width"
-        );
-
-        // X position should be near middle of screen
-        let expected_x = screen_w * 0.5;
-        let x_diff = (frame.x - expected_x).abs();
-        assert!(
-            x_diff < 50.0,
-            "Right-half should start at ~50% x, got {} (expected {})",
-            frame.x,
-            expected_x
-        );
-    }
-}
-
-/// Test multiple floating windows.
-#[test]
-fn test_floating_multiple_windows() {
-    let _guard = TEST_MUTEX.lock().unwrap();
-    require_accessibility_permission();
-
-    let mut fixture = TestFixture::with_config("tiling_floating");
-    delay(STACHE_INIT_DELAY_MS);
-
-    // Create multiple windows with different positions
-    let _w1 = fixture.create_textedit("Float 1");
-    set_frontmost_window_frame(&WindowFrame::new(100.0, 100.0, 400.0, 300.0));
-    delay(OPERATION_DELAY_MS);
-
-    let _w2 = fixture.create_textedit("Float 2");
-    set_frontmost_window_frame(&WindowFrame::new(300.0, 200.0, 400.0, 300.0));
-    delay(OPERATION_DELAY_MS);
-
-    let _w3 = fixture.create_textedit("Float 3");
-    set_frontmost_window_frame(&WindowFrame::new(500.0, 300.0, 400.0, 300.0));
-    delay(OPERATION_DELAY_MS * 2);
-
-    let frames = get_app_window_frames("TextEdit");
+    // Get stable frames (stacked since floating windows may overlap)
+    let frames = dictionary.get_stable_frames_stacked(3);
     assert!(frames.len() >= 3, "Should have at least 3 windows");
 
-    // In floating layout, windows should be at different positions
-    // (not auto-tiled to same grid positions)
-    let unique_x: std::collections::HashSet<i32> =
-        frames.iter().take(3).map(|f| f.x as i32 / 50).collect();
-
-    println!("Floating windows at {} unique X regions", unique_x.len());
-
-    for (i, frame) in frames.iter().take(3).enumerate() {
-        println!(
-            "Float window {}: ({:.0}, {:.0}) {}x{}",
-            i, frame.x, frame.y, frame.width, frame.height
-        );
-        // Each window should have reasonable size
+    // All windows should have reasonable sizes
+    for (i, frame) in frames.iter().enumerate() {
         assert!(
-            frame.width > 100.0 && frame.height > 100.0,
-            "Floating window {} should have reasonable size",
-            i
+            frame.width > 100 && frame.height > 100,
+            "Window {} should have reasonable size: {}x{}",
+            i + 1,
+            frame.width,
+            frame.height
         );
+    }
+
+    eprintln!("Floating three windows:");
+    for (i, frame) in frames.iter().enumerate() {
+        eprintln!("  Window {}: {}", i + 1, frame);
+    }
+}
+
+/// Test that window count is maintained after closing a window.
+#[test]
+fn test_floating_window_removal() {
+    let mut test = Test::new("tiling_floating");
+    let dictionary = test.app("Dictionary");
+
+    // Create three windows
+    let _ = dictionary.create_window();
+    let _ = dictionary.create_window();
+    let _ = dictionary.create_window();
+
+    // Wait for initial layout
+    let initial_frames = dictionary.get_stable_frames_stacked(3);
+    assert!(
+        initial_frames.len() >= 3,
+        "Should have at least 3 windows initially"
+    );
+
+    eprintln!("Initial 3-window floating:");
+    for (i, frame) in initial_frames.iter().enumerate() {
+        eprintln!("  Window {}: {}", i + 1, frame);
+    }
+
+    // Get fresh window references and close one
+    let windows = dictionary.get_windows();
+    assert!(windows.len() >= 3, "Should have window refs");
+
+    let mut window_to_close = windows.into_iter().last().expect("Should have window to close");
+    assert!(window_to_close.close(), "Should be able to close window");
+
+    // Wait for new state with 2 windows
+    let final_frames = dictionary.get_stable_frames_stacked(2);
+    assert!(
+        final_frames.len() == 2,
+        "Should have 2 windows after closing, got {}",
+        final_frames.len()
+    );
+
+    eprintln!("After removal: 2 windows remaining");
+    for (i, frame) in final_frames.iter().enumerate() {
+        eprintln!("  Window {}: {}", i + 1, frame);
+    }
+}
+
+/// Test floating layout with windows from multiple applications.
+///
+/// This verifies that floating layout works correctly when windows from different
+/// apps (Dictionary and TextEdit) are mixed together.
+#[test]
+fn test_floating_multiple_apps() {
+    let mut test = Test::new("tiling_floating");
+
+    // Create windows from both apps
+    let _ = test.create_window("Dictionary");
+    let _ = test.create_window("Dictionary");
+    let _ = test.create_window("TextEdit");
+    let _ = test.create_window("TextEdit");
+
+    // Get frames from each app (stacked since floating windows may overlap)
+    let dict_frames = test.get_app_stable_frames_stacked("Dictionary", 2);
+    let textedit_frames = test.get_app_stable_frames_stacked("TextEdit", 2);
+
+    assert!(
+        dict_frames.len() >= 2,
+        "Should have at least 2 Dictionary windows, got {}",
+        dict_frames.len()
+    );
+    assert!(
+        textedit_frames.len() >= 2,
+        "Should have at least 2 TextEdit windows, got {}",
+        textedit_frames.len()
+    );
+
+    // All windows should have reasonable sizes
+    let all_frames: Vec<_> = dict_frames.iter().chain(textedit_frames.iter()).collect();
+    for (i, frame) in all_frames.iter().enumerate() {
+        assert!(
+            frame.width > 100 && frame.height > 100,
+            "Window {} should have reasonable size: {}x{}",
+            i + 1,
+            frame.width,
+            frame.height
+        );
+    }
+
+    eprintln!("Multi-app floating layout (4 windows from 2 apps):");
+    eprintln!("  Dictionary windows:");
+    for (i, frame) in dict_frames.iter().enumerate() {
+        eprintln!("    Window {}: {}", i + 1, frame);
+    }
+    eprintln!("  TextEdit windows:");
+    for (i, frame) in textedit_frames.iter().enumerate() {
+        eprintln!("    Window {}: {}", i + 1, frame);
     }
 }

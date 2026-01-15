@@ -812,10 +812,288 @@ pub fn create_textedit_window() -> bool {
     click_menu_item("TextEdit", &["File", "New"])
 }
 
+// =============================================================================
+// Frontmost Window/App Helpers (for operation tests)
+// =============================================================================
+
+/// Gets the frontmost (focused) application's AXUIElement.
+fn get_frontmost_app_element() -> Option<AXUIElementRef> {
+    unsafe {
+        let system_wide = AXUIElementCreateSystemWide();
+        if system_wide.is_null() {
+            return None;
+        }
+
+        let attr = CFString::new("AXFocusedApplication");
+        let mut value: *mut c_void = ptr::null_mut();
+        let err =
+            AXUIElementCopyAttributeValue(system_wide, attr.as_concrete_TypeRef(), &mut value);
+
+        CFRelease(system_wide as *const c_void);
+
+        if err != K_AX_ERROR_SUCCESS || value.is_null() {
+            return None;
+        }
+
+        Some(value as AXUIElementRef)
+    }
+}
+
+/// Gets the frontmost (focused) window's AXUIElement.
+///
+/// First tries AXFocusedWindow, then falls back to the first window if no focused window.
+fn get_frontmost_window_element() -> Option<AXUIElementRef> {
+    unsafe {
+        let app = get_frontmost_app_element()?;
+
+        // Try to get focused window first
+        let attr = CFString::new("AXFocusedWindow");
+        let mut value: *mut c_void = ptr::null_mut();
+        let err = AXUIElementCopyAttributeValue(app, attr.as_concrete_TypeRef(), &mut value);
+
+        if err == K_AX_ERROR_SUCCESS && !value.is_null() {
+            CFRelease(app as *const c_void);
+            return Some(value as AXUIElementRef);
+        }
+
+        // Fallback: get the first window from AXWindows
+        let windows_attr = CFString::new("AXWindows");
+        let mut windows_value: *mut c_void = ptr::null_mut();
+        let windows_err = AXUIElementCopyAttributeValue(
+            app,
+            windows_attr.as_concrete_TypeRef(),
+            &mut windows_value,
+        );
+
+        CFRelease(app as *const c_void);
+
+        if windows_err != K_AX_ERROR_SUCCESS || windows_value.is_null() {
+            return None;
+        }
+
+        let array = windows_value as CFArrayRef;
+        let count = CFArrayGetCount(array);
+
+        if count == 0 {
+            CFRelease(windows_value);
+            return None;
+        }
+
+        // Get the first window
+        let window = CFArrayGetValueAtIndex(array, 0);
+        if window.is_null() {
+            CFRelease(windows_value);
+            return None;
+        }
+
+        // Retain the window since we're returning it
+        CFRetain(window);
+        CFRelease(windows_value);
+
+        Some(window as AXUIElementRef)
+    }
+}
+
+/// Gets the title of the frontmost (focused) window.
+///
+/// First tries the Accessibility API's AXFocusedApplication -> AXFocusedWindow path.
+/// If that fails, falls back to getting windows from the frontmost app by name.
+pub fn get_frontmost_window_title() -> Option<String> {
+    // Try the AX focused path first
+    if let Some(window) = get_frontmost_window_element() {
+        let title = get_window_title(window);
+        release_window(window);
+        if title.is_some() {
+            return title;
+        }
+    }
+
+    // Fallback: get frontmost app name and use that to get windows
+    let app_name = get_frontmost_app_name()?;
+    let windows = get_app_windows(&app_name);
+
+    if windows.is_empty() {
+        return None;
+    }
+
+    // Get title of first window
+    let title = get_window_title(windows[0]);
+
+    // Release all windows
+    for window in windows {
+        release_window(window);
+    }
+
+    title
+}
+
+/// Gets the frame of the frontmost (focused) window.
+///
+/// First tries the Accessibility API's AXFocusedApplication -> AXFocusedWindow path.
+/// If that fails, falls back to getting windows from the frontmost app by name.
+pub fn get_frontmost_window_frame() -> Option<Frame> {
+    // Try the AX focused path first
+    if let Some(window) = get_frontmost_window_element() {
+        let frame = get_window_frame(window);
+        release_window(window);
+        if frame.is_some() {
+            return frame;
+        }
+    }
+
+    // Fallback: get frontmost app name and use that to get windows
+    let app_name = get_frontmost_app_name()?;
+    let windows = get_app_windows(&app_name);
+
+    if windows.is_empty() {
+        return None;
+    }
+
+    // Get frame of first window
+    let frame = get_window_frame(windows[0]);
+
+    // Release all windows
+    for window in windows {
+        release_window(window);
+    }
+
+    frame
+}
+
+/// Gets the name of the frontmost (focused) application.
+pub fn get_frontmost_app_name() -> Option<String> {
+    unsafe {
+        let workspace = msg_send!(class!("NSWorkspace"), "sharedWorkspace");
+        let frontmost = msg_send!(workspace, "frontmostApplication");
+
+        if frontmost.is_null() {
+            return None;
+        }
+
+        let localized_name = msg_send!(frontmost, "localizedName");
+        if localized_name.is_null() {
+            return None;
+        }
+
+        let utf8: *const i8 = std::mem::transmute(msg_send!(localized_name, "UTF8String"));
+        if utf8.is_null() {
+            return None;
+        }
+
+        Some(std::ffi::CStr::from_ptr(utf8).to_string_lossy().to_string())
+    }
+}
+
+/// Gets frames for all windows of the named app.
+pub fn get_app_window_frames(app_name: &str) -> Vec<Frame> {
+    let windows = get_app_windows(app_name);
+    let mut frames = Vec::new();
+
+    for window in &windows {
+        if let Some(frame) = get_window_frame(*window) {
+            frames.push(frame);
+        }
+    }
+
+    // Release all windows
+    for window in windows {
+        release_window(window);
+    }
+
+    frames
+}
+
+/// Gets the count of windows for the named app.
+pub fn get_app_window_count(app_name: &str) -> usize {
+    let windows = get_app_windows(app_name);
+    let count = windows.len();
+
+    // Release all windows
+    for window in windows {
+        release_window(window);
+    }
+
+    count
+}
+
+/// Sets the frame (position and size) of the frontmost window.
+pub fn set_frontmost_window_frame(frame: &Frame) -> bool {
+    let window = match get_frontmost_window_element() {
+        Some(w) => w,
+        None => return false,
+    };
+
+    let result = set_window_frame(window, frame);
+    release_window(window);
+    result
+}
+
+/// Sets the frame of a window using Accessibility API.
+fn set_window_frame(window: AXUIElementRef, frame: &Frame) -> bool {
+    if window.is_null() {
+        return false;
+    }
+
+    unsafe {
+        // Set position
+        let pos_attr = CFString::new("AXPosition");
+        let point = core_graphics::geometry::CGPoint::new(frame.x as f64, frame.y as f64);
+
+        // Create AXValue for position
+        let pos_value =
+            AXValueCreate(K_AX_VALUE_TYPE_CG_POINT, &point as *const _ as *const c_void);
+        if pos_value.is_null() {
+            return false;
+        }
+
+        let pos_err = AXUIElementSetAttributeValue(
+            window,
+            pos_attr.as_concrete_TypeRef(),
+            pos_value as *const c_void,
+        );
+        CFRelease(pos_value as *const c_void);
+
+        if pos_err != K_AX_ERROR_SUCCESS {
+            return false;
+        }
+
+        // Set size
+        let size_attr = CFString::new("AXSize");
+        let size = core_graphics::geometry::CGSize::new(frame.width as f64, frame.height as f64);
+
+        let size_value = AXValueCreate(K_AX_VALUE_TYPE_CG_SIZE, &size as *const _ as *const c_void);
+        if size_value.is_null() {
+            return false;
+        }
+
+        let size_err = AXUIElementSetAttributeValue(
+            window,
+            size_attr.as_concrete_TypeRef(),
+            size_value as *const c_void,
+        );
+        CFRelease(size_value as *const c_void);
+
+        size_err == K_AX_ERROR_SUCCESS
+    }
+}
+
+/// Gets the main screen size as (width, height).
+pub fn get_screen_size() -> Option<(f64, f64)> {
+    let frame = get_main_screen_frame();
+    Some((frame.width as f64, frame.height as f64))
+}
+
+// FFI for AXValueCreate
+#[link(name = "ApplicationServices", kind = "framework")]
+unsafe extern "C" {
+    fn AXValueCreate(value_type: u32, value_ptr: *const c_void) -> *mut c_void;
+}
+
 /// Sends a keyboard shortcut using CGEvent (system-wide).
 ///
 /// Note: This posts events system-wide, not to a specific app.
 /// The target app should be frontmost when calling this.
+#[allow(dead_code)]
 fn send_keyboard_shortcut(key: &str, cmd: bool, shift: bool, option: bool) -> bool {
     use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation, CGKeyCode};
     use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};

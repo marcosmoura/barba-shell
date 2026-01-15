@@ -6,7 +6,7 @@
 //! ## Test Coverage
 //! - Single window fills entire area
 //! - Multiple windows all maximize to same size
-//! - Window focus cycles through windows
+//! - Windows are stacked at the same position
 //! - Adding windows maintains monocle behavior
 //!
 //! ## Running these tests
@@ -18,94 +18,85 @@ use crate::common::*;
 
 /// Test that a single window in monocle fills the tiling area.
 #[test]
-fn test_monocle_single_window_maximized() {
-    let _guard = TEST_MUTEX.lock().unwrap();
-    require_accessibility_permission();
+fn test_monocle_single_window_fills_area() {
+    let mut test = Test::new("tiling_monocle");
+    let dictionary = test.app("Dictionary");
 
-    let mut fixture = TestFixture::with_config("tiling_monocle");
-    delay(STACHE_INIT_DELAY_MS);
+    // Create a single window
+    let window = dictionary.create_window();
 
-    // Create a TextEdit window
-    let window = fixture.create_textedit("Monocle Single");
-    assert!(window.is_some(), "Failed to create TextEdit window");
-    delay(OPERATION_DELAY_MS * 2);
+    // Get stable frame
+    let frame = window.stable_frame().expect("Should get window frame");
 
-    // Re-activate TextEdit to force a focus event and ensure the window ID swap occurs
-    activate_app("TextEdit");
-    delay(OPERATION_DELAY_MS * 2);
+    // Find which screen the window is on
+    let screen = test.screen_containing(&frame).expect("Window should be on a screen");
 
-    // Force a workspace balance to re-apply layout with correct window IDs
-    fixture.stache_command(&["tiling", "workspace", "--balance"]);
-    delay(OPERATION_DELAY_MS * 2);
+    // Calculate tiling area (outer gap = 12, menu bar ~40)
+    let outer_gap = 12;
+    let menu_bar_height = 40;
+    let tiling_area = screen.tiling_area(outer_gap, menu_bar_height);
 
-    // Get the window frame
-    let frame = get_frontmost_window_frame();
-    assert!(frame.is_some(), "Should get window frame");
+    // In monocle, the window should fill the tiling area
+    assert!(
+        (frame.x - tiling_area.x).abs() <= FRAME_TOLERANCE,
+        "Monocle window X ({}) should be at tiling area X ({})",
+        frame.x,
+        tiling_area.x
+    );
 
-    let frame = frame.unwrap();
+    assert!(
+        (frame.width - tiling_area.width).abs() <= FRAME_TOLERANCE,
+        "Monocle window width ({}) should match tiling area width ({})",
+        frame.width,
+        tiling_area.width
+    );
 
-    // In monocle, the window should fill most of the screen
-    if let Some((screen_w, screen_h)) = get_screen_size() {
-        // Account for gaps and menu bar
-        let expected_min_width = screen_w * 0.8;
-        let expected_min_height = screen_h * 0.7;
+    // Height should fill most of the available space
+    let min_expected_height = (tiling_area.height as f64 * 0.7) as i32;
+    assert!(
+        frame.height > min_expected_height,
+        "Monocle window height ({}) should be > {} (70% of tiling area {})",
+        frame.height,
+        min_expected_height,
+        tiling_area.height
+    );
 
-        assert!(
-            frame.width >= expected_min_width,
-            "Monocle window width ({}) should be at least {}",
-            frame.width,
-            expected_min_width
-        );
-        assert!(
-            frame.height >= expected_min_height,
-            "Monocle window height ({}) should be at least {}",
-            frame.height,
-            expected_min_height
-        );
-
-        println!(
-            "Monocle single window: {}x{} (screen: {}x{})",
-            frame.width, frame.height, screen_w, screen_h
-        );
-    }
+    eprintln!(
+        "Monocle single window: {}x{} at ({}, {})",
+        frame.width, frame.height, frame.x, frame.y
+    );
+    eprintln!("Tiling area: {:?}", tiling_area);
 }
 
 /// Test that multiple windows in monocle all have the same size.
 #[test]
 fn test_monocle_multiple_windows_same_size() {
-    let _guard = TEST_MUTEX.lock().unwrap();
-    require_accessibility_permission();
+    let mut test = Test::new("tiling_monocle");
+    let dictionary = test.app("Dictionary");
 
-    let mut fixture = TestFixture::with_config("tiling_monocle");
-    delay(STACHE_INIT_DELAY_MS);
+    // Create multiple windows
+    let _ = dictionary.create_window();
+    let _ = dictionary.create_window();
+    let _ = dictionary.create_window();
 
-    // Create multiple TextEdit windows
-    let _w1 = fixture.create_textedit("Monocle 1");
-    delay(OPERATION_DELAY_MS);
-    let _w2 = fixture.create_textedit("Monocle 2");
-    delay(OPERATION_DELAY_MS);
-    let _w3 = fixture.create_textedit("Monocle 3");
-    delay(OPERATION_DELAY_MS * 2);
-
-    // Get all TextEdit window frames
-    let frames = get_app_window_frames("TextEdit");
+    // Get stable frames for all windows (stacked - same position allowed)
+    let frames = dictionary.get_stable_frames_stacked(3);
     assert!(
         frames.len() >= 3,
-        "Should have at least 3 TextEdit windows, got {}",
+        "Should have at least 3 windows, got {}",
         frames.len()
     );
 
     // In monocle, all windows should have the same size
     let first = &frames[0];
     for (i, frame) in frames.iter().enumerate().skip(1) {
-        // Allow small tolerance for frame differences
         let width_diff = (frame.width - first.width).abs();
         let height_diff = (frame.height - first.height).abs();
 
         assert!(
-            width_diff < FRAME_TOLERANCE && height_diff < FRAME_TOLERANCE,
+            width_diff <= FRAME_TOLERANCE && height_diff <= FRAME_TOLERANCE,
             "Window {} size ({}x{}) should match window 0 size ({}x{})",
-            i,
+            i + 1,
             frame.width,
             frame.height,
             first.width,
@@ -113,7 +104,7 @@ fn test_monocle_multiple_windows_same_size() {
         );
     }
 
-    println!(
+    eprintln!(
         "All {} monocle windows have size: {}x{}",
         frames.len(),
         first.width,
@@ -124,21 +115,16 @@ fn test_monocle_multiple_windows_same_size() {
 /// Test that windows in monocle are stacked (same position).
 #[test]
 fn test_monocle_windows_stacked() {
-    let _guard = TEST_MUTEX.lock().unwrap();
-    require_accessibility_permission();
-
-    let mut fixture = TestFixture::with_config("tiling_monocle");
-    delay(STACHE_INIT_DELAY_MS);
+    let mut test = Test::new("tiling_monocle");
+    let dictionary = test.app("Dictionary");
 
     // Create multiple windows
-    let _w1 = fixture.create_textedit("Stack 1");
-    delay(OPERATION_DELAY_MS);
-    let _w2 = fixture.create_textedit("Stack 2");
-    delay(OPERATION_DELAY_MS * 2);
+    let _ = dictionary.create_window();
+    let _ = dictionary.create_window();
 
-    // Get all TextEdit window frames
-    let frames = get_app_window_frames("TextEdit");
-    assert!(frames.len() >= 2, "Should have at least 2 TextEdit windows");
+    // Get stable frames (stacked - same position allowed)
+    let frames = dictionary.get_stable_frames_stacked(2);
+    assert!(frames.len() >= 2, "Should have at least 2 windows");
 
     // In monocle, windows should be at the same position (stacked)
     let first = &frames[0];
@@ -146,11 +132,10 @@ fn test_monocle_windows_stacked() {
         let x_diff = (frame.x - first.x).abs();
         let y_diff = (frame.y - first.y).abs();
 
-        // Windows should be at the same position
         assert!(
-            x_diff < FRAME_TOLERANCE && y_diff < FRAME_TOLERANCE,
+            x_diff <= FRAME_TOLERANCE && y_diff <= FRAME_TOLERANCE,
             "Window {} position ({}, {}) should match window 0 position ({}, {})",
-            i,
+            i + 1,
             frame.x,
             frame.y,
             first.x,
@@ -158,97 +143,126 @@ fn test_monocle_windows_stacked() {
         );
     }
 
-    println!("Monocle windows stacked at position: ({}, {})", first.x, first.y);
-}
-
-/// Test focus cycling in monocle layout.
-#[test]
-fn test_monocle_focus_cycle() {
-    let _guard = TEST_MUTEX.lock().unwrap();
-    require_accessibility_permission();
-
-    let mut fixture = TestFixture::with_config("tiling_monocle");
-    delay(STACHE_INIT_DELAY_MS);
-
-    // Create windows with distinct titles
-    let _w1 = fixture.create_textedit("Cycle-First");
-    delay(OPERATION_DELAY_MS);
-    let _w2 = fixture.create_textedit("Cycle-Second");
-    delay(OPERATION_DELAY_MS);
-
-    // The last created window should be focused
-    let initial_title = get_frontmost_window_title();
-    assert!(initial_title.is_some(), "Should have a focused window");
-
-    // Use focus-next command to cycle
-    fixture.stache_command(&["tiling", "window", "--focus", "next"]);
-    delay(OPERATION_DELAY_MS);
-
-    let after_next_title = get_frontmost_window_title();
-    assert!(after_next_title.is_some(), "Should still have focus after next");
-
-    println!(
-        "Focus cycle: '{}' -> '{}'",
-        initial_title.as_deref().unwrap_or("unknown"),
-        after_next_title.as_deref().unwrap_or("unknown")
-    );
-
-    // Use focus-previous to go back
-    fixture.stache_command(&["tiling", "window", "--focus", "previous"]);
-    delay(OPERATION_DELAY_MS);
-
-    let after_prev_title = get_frontmost_window_title();
-    assert!(
-        after_prev_title.is_some(),
-        "Should still have focus after previous"
-    );
-
-    // Verify cycling occurred (focus changed at least once)
-    let focus_changed = initial_title != after_next_title || after_next_title != after_prev_title;
-    assert!(
-        focus_changed || initial_title == after_prev_title,
-        "Focus should cycle through windows"
-    );
-
-    println!(
-        "Focus after previous: '{}'",
-        after_prev_title.as_deref().unwrap_or("unknown")
-    );
+    eprintln!("Monocle windows stacked at position: ({}, {})", first.x, first.y);
 }
 
 /// Test adding a window to monocle maintains behavior.
 #[test]
 fn test_monocle_add_window_maintains_layout() {
-    let _guard = TEST_MUTEX.lock().unwrap();
-    require_accessibility_permission();
-
-    let mut fixture = TestFixture::with_config("tiling_monocle");
-    delay(STACHE_INIT_DELAY_MS);
+    let mut test = Test::new("tiling_monocle");
+    let dictionary = test.app("Dictionary");
 
     // Create initial window and record its size
-    let _w1 = fixture.create_textedit("Initial Monocle");
-    delay(OPERATION_DELAY_MS * 2);
-
-    let initial_frame = get_frontmost_window_frame();
-    assert!(initial_frame.is_some(), "Should get initial frame");
-    let initial_frame = initial_frame.unwrap();
+    let window1 = dictionary.create_window();
+    let initial_frame = window1.stable_frame().expect("Should get initial frame");
 
     // Add another window
-    let _w2 = fixture.create_textedit("Added Monocle");
-    delay(OPERATION_DELAY_MS * 2);
+    let _ = dictionary.create_window();
 
-    let new_frame = get_frontmost_window_frame();
-    assert!(new_frame.is_some(), "Should get new window frame");
-    let new_frame = new_frame.unwrap();
+    // Get all frames after adding second window (stacked - same position allowed)
+    let frames = dictionary.get_stable_frames_stacked(2);
+    assert!(frames.len() >= 2, "Should have at least 2 windows");
 
-    // New window should have same dimensions as initial (monocle behavior)
+    // All windows should have same dimensions as initial (monocle behavior)
+    for (i, frame) in frames.iter().enumerate() {
+        let width_diff = (frame.width - initial_frame.width).abs();
+        let height_diff = (frame.height - initial_frame.height).abs();
+        let x_diff = (frame.x - initial_frame.x).abs();
+        let y_diff = (frame.y - initial_frame.y).abs();
+
+        assert!(
+            width_diff <= FRAME_TOLERANCE
+                && height_diff <= FRAME_TOLERANCE
+                && x_diff <= FRAME_TOLERANCE
+                && y_diff <= FRAME_TOLERANCE,
+            "Window {} frame ({}, {}, {}x{}) should match initial frame ({}, {}, {}x{})",
+            i + 1,
+            frame.x,
+            frame.y,
+            frame.width,
+            frame.height,
+            initial_frame.x,
+            initial_frame.y,
+            initial_frame.width,
+            initial_frame.height
+        );
+    }
+
+    eprintln!(
+        "Monocle maintained: all {} windows at {}x{} position ({}, {})",
+        frames.len(),
+        initial_frame.width,
+        initial_frame.height,
+        initial_frame.x,
+        initial_frame.y
+    );
+}
+
+/// Test monocle layout with windows from multiple applications.
+///
+/// This verifies that monocle works correctly when windows from different
+/// apps (Dictionary and TextEdit) are mixed together - all should be stacked
+/// at the same position with the same size.
+#[test]
+fn test_monocle_multiple_apps() {
+    let mut test = Test::new("tiling_monocle");
+
+    // Create windows from both apps - create all from one app first,
+    // then all from the other to minimize manager confusion
+    let _ = test.create_window("Dictionary");
+    let _ = test.create_window("Dictionary");
+    let _ = test.create_window("TextEdit");
+    let _ = test.create_window("TextEdit");
+
+    // Get stable frames from each app separately (stacked - same position allowed)
+    let dict_frames = test.get_app_stable_frames_stacked("Dictionary", 2);
+    let textedit_frames = test.get_app_stable_frames_stacked("TextEdit", 2);
+
     assert!(
-        new_frame.approximately_equals(&initial_frame, FRAME_TOLERANCE),
-        "New window frame should match initial frame in monocle"
+        dict_frames.len() >= 2,
+        "Should have at least 2 Dictionary windows, got {}",
+        dict_frames.len()
+    );
+    assert!(
+        textedit_frames.len() >= 2,
+        "Should have at least 2 TextEdit windows, got {}",
+        textedit_frames.len()
     );
 
-    println!(
-        "Monocle maintained: initial {}x{}, new {}x{}",
-        initial_frame.width, initial_frame.height, new_frame.width, new_frame.height
+    // Combine all frames - take only the expected count from each
+    let dict_frames: Vec<_> = dict_frames.into_iter().take(2).collect();
+    let textedit_frames: Vec<_> = textedit_frames.into_iter().take(2).collect();
+
+    // Get a reference frame (first Dictionary window)
+    let reference_frame = &dict_frames[0];
+
+    // Combine all frames for checking
+    let all_frames: Vec<_> = dict_frames.iter().chain(textedit_frames.iter()).collect();
+
+    // In monocle, ALL windows should have the same size and position
+    for (i, frame) in all_frames.iter().enumerate() {
+        let width_diff = (frame.width - reference_frame.width).abs();
+        let height_diff = (frame.height - reference_frame.height).abs();
+        let x_diff = (frame.x - reference_frame.x).abs();
+        let y_diff = (frame.y - reference_frame.y).abs();
+
+        assert!(
+            width_diff <= FRAME_TOLERANCE
+                && height_diff <= FRAME_TOLERANCE
+                && x_diff <= FRAME_TOLERANCE
+                && y_diff <= FRAME_TOLERANCE,
+            "Window {} should match reference frame. Got: {}, Expected: {}",
+            i + 1,
+            frame,
+            reference_frame
+        );
+    }
+
+    eprintln!("Multi-app monocle layout (4 windows from 2 apps):");
+    eprintln!(
+        "  All windows stacked at {}x{} position ({}, {})",
+        reference_frame.width, reference_frame.height, reference_frame.x, reference_frame.y
     );
+    eprintln!("  Dictionary: {} windows", dict_frames.len());
+    eprintln!("  TextEdit: {} windows", textedit_frames.len());
 }

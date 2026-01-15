@@ -11,7 +11,7 @@
 //!
 //! ## Running these tests
 //! ```bash
-//! cargo nextest run -p stache --features integration-tests -E 'test(/tiling__window_focus/)' --no-capture
+//! cargo nextest run -p stache --features integration-tests -E 'test(/tiling__window_focus/)' --test-threads 1 --no-capture
 //! ```
 
 use crate::common::*;
@@ -19,19 +19,15 @@ use crate::common::*;
 /// Test focus next cycles through windows.
 #[test]
 fn test_focus_next_cycles() {
-    let _guard = TEST_MUTEX.lock().unwrap();
-    require_accessibility_permission();
+    let mut test = Test::new("tiling_basic");
 
-    let mut fixture = TestFixture::with_config("tiling_basic");
-    delay(STACHE_INIT_DELAY_MS);
+    // Create multiple windows
+    let _ = test.create_window("Dictionary");
+    let _ = test.create_window("Dictionary");
+    let _ = test.create_window("Dictionary");
 
-    // Create multiple windows with distinct titles
-    let _w1 = fixture.create_textedit("Focus-A");
-    delay(OPERATION_DELAY_MS);
-    let _w2 = fixture.create_textedit("Focus-B");
-    delay(OPERATION_DELAY_MS);
-    let _w3 = fixture.create_textedit("Focus-C");
-    delay(OPERATION_DELAY_MS * 2);
+    // Wait for windows to stabilize
+    let _ = test.get_app_stable_frames("Dictionary", 3);
 
     // Record initial focused window
     let initial_title = get_frontmost_window_title();
@@ -40,7 +36,7 @@ fn test_focus_next_cycles() {
     // Focus next multiple times
     let mut titles = vec![initial_title.clone()];
     for _ in 0..4 {
-        fixture.stache_command(&["tiling", "window", "--focus", "next"]);
+        test.stache_command(&["tiling", "window", "--focus", "next"]);
         delay(OPERATION_DELAY_MS);
         let title = get_frontmost_window_title();
         titles.push(title.clone());
@@ -61,19 +57,15 @@ fn test_focus_next_cycles() {
 /// Test focus previous cycles backwards.
 #[test]
 fn test_focus_previous_cycles() {
-    let _guard = TEST_MUTEX.lock().unwrap();
-    require_accessibility_permission();
-
-    let mut fixture = TestFixture::with_config("tiling_basic");
-    delay(STACHE_INIT_DELAY_MS);
+    let mut test = Test::new("tiling_basic");
 
     // Create multiple windows
-    let _w1 = fixture.create_textedit("Prev-A");
-    delay(OPERATION_DELAY_MS);
-    let _w2 = fixture.create_textedit("Prev-B");
-    delay(OPERATION_DELAY_MS);
-    let _w3 = fixture.create_textedit("Prev-C");
-    delay(OPERATION_DELAY_MS * 2);
+    let _ = test.create_window("Dictionary");
+    let _ = test.create_window("Dictionary");
+    let _ = test.create_window("Dictionary");
+
+    // Wait for windows to stabilize
+    let _ = test.get_app_stable_frames("Dictionary", 3);
 
     let initial_title = get_frontmost_window_title();
     assert!(initial_title.is_some(), "Should have initial focused window");
@@ -81,7 +73,7 @@ fn test_focus_previous_cycles() {
 
     // Focus previous multiple times
     for i in 0..4 {
-        fixture.stache_command(&["tiling", "window", "--focus", "previous"]);
+        test.stache_command(&["tiling", "window", "--focus", "previous"]);
         delay(OPERATION_DELAY_MS);
         let title = get_frontmost_window_title();
         assert!(
@@ -96,23 +88,17 @@ fn test_focus_previous_cycles() {
 /// Test focus left in dwindle layout.
 #[test]
 fn test_focus_left() {
-    let _guard = TEST_MUTEX.lock().unwrap();
-    require_accessibility_permission();
-
-    let mut fixture = TestFixture::with_config("tiling_basic");
-    delay(STACHE_INIT_DELAY_MS);
+    let mut test = Test::new("tiling_basic");
 
     // Create two windows side by side in dwindle
-    let _w1 = fixture.create_textedit("Left Window");
-    delay(OPERATION_DELAY_MS);
-    let _w2 = fixture.create_textedit("Right Window");
-    delay(OPERATION_DELAY_MS * 2);
+    let _ = test.create_window("Dictionary");
+    let _ = test.create_window("Dictionary");
 
     // Get frames to understand layout
-    let frames = get_app_window_frames("TextEdit");
+    let frames = test.get_app_stable_frames("Dictionary", 2);
     if frames.len() >= 2 {
         println!(
-            "Window positions: ({:.0}, {:.0}) and ({:.0}, {:.0})",
+            "Window positions: ({}, {}) and ({}, {})",
             frames[0].x, frames[0].y, frames[1].x, frames[1].y
         );
     }
@@ -121,7 +107,7 @@ fn test_focus_left() {
     let before = get_frontmost_window_frame();
 
     // Focus left
-    fixture.stache_command(&["tiling", "window", "--focus", "left"]);
+    test.stache_command(&["tiling", "window", "--focus", "left"]);
     delay(OPERATION_DELAY_MS);
 
     let after = get_frontmost_window_frame();
@@ -131,33 +117,29 @@ fn test_focus_left() {
 
     if let (Some(b), Some(a)) = (before, after) {
         let moved_left = a.x < b.x;
-        println!("Focus moved left: {} (x: {:.0} -> {:.0})", moved_left, b.x, a.x);
+        println!("Focus moved left: {} (x: {} -> {})", moved_left, b.x, a.x);
     }
 }
 
 /// Test focus right in dwindle layout.
 #[test]
 fn test_focus_right() {
-    let _guard = TEST_MUTEX.lock().unwrap();
-    require_accessibility_permission();
-
-    let mut fixture = TestFixture::with_config("tiling_basic");
-    delay(STACHE_INIT_DELAY_MS);
+    let mut test = Test::new("tiling_basic");
 
     // Create two windows
-    let _w1 = fixture.create_textedit("Left Side");
-    delay(OPERATION_DELAY_MS);
-    let _w2 = fixture.create_textedit("Right Side");
-    delay(OPERATION_DELAY_MS * 2);
+    let _ = test.create_window("Dictionary");
+    let _ = test.create_window("Dictionary");
+
+    let _ = test.get_app_stable_frames("Dictionary", 2);
 
     // Focus left first to ensure we're on left window
-    fixture.stache_command(&["tiling", "window", "--focus", "left"]);
+    test.stache_command(&["tiling", "window", "--focus", "left"]);
     delay(OPERATION_DELAY_MS);
 
     let before = get_frontmost_window_frame();
 
     // Focus right
-    fixture.stache_command(&["tiling", "window", "--focus", "right"]);
+    test.stache_command(&["tiling", "window", "--focus", "right"]);
     delay(OPERATION_DELAY_MS);
 
     let after = get_frontmost_window_frame();
@@ -166,31 +148,26 @@ fn test_focus_right() {
     assert!(after.is_some(), "Should have frame after focus right");
 
     if let (Some(b), Some(a)) = (before, after) {
-        println!("Focus right: x changed from {:.0} to {:.0}", b.x, a.x);
+        println!("Focus right: x changed from {} to {}", b.x, a.x);
     }
 }
 
 /// Test focus up with vertically arranged windows.
 #[test]
 fn test_focus_up() {
-    let _guard = TEST_MUTEX.lock().unwrap();
-    require_accessibility_permission();
-
-    let mut fixture = TestFixture::with_config("tiling_basic");
-    delay(STACHE_INIT_DELAY_MS);
+    let mut test = Test::new("tiling_basic");
 
     // Create three windows to get vertical stacking in dwindle
-    let _w1 = fixture.create_textedit("Top Area");
-    delay(OPERATION_DELAY_MS);
-    let _w2 = fixture.create_textedit("Middle");
-    delay(OPERATION_DELAY_MS);
-    let _w3 = fixture.create_textedit("Bottom");
-    delay(OPERATION_DELAY_MS * 2);
+    let _ = test.create_window("Dictionary");
+    let _ = test.create_window("Dictionary");
+    let _ = test.create_window("Dictionary");
+
+    let _ = test.get_app_stable_frames("Dictionary", 3);
 
     let before = get_frontmost_window_frame();
 
     // Focus up
-    fixture.stache_command(&["tiling", "window", "--focus", "up"]);
+    test.stache_command(&["tiling", "window", "--focus", "up"]);
     delay(OPERATION_DELAY_MS);
 
     let after = get_frontmost_window_frame();
@@ -199,33 +176,29 @@ fn test_focus_up() {
     assert!(after.is_some(), "Should have frame after focus up");
 
     if let (Some(b), Some(a)) = (before, after) {
-        println!("Focus up: y changed from {:.0} to {:.0}", b.y, a.y);
+        println!("Focus up: y changed from {} to {}", b.y, a.y);
     }
 }
 
 /// Test focus down with vertically arranged windows.
 #[test]
 fn test_focus_down() {
-    let _guard = TEST_MUTEX.lock().unwrap();
-    require_accessibility_permission();
-
-    let mut fixture = TestFixture::with_config("tiling_basic");
-    delay(STACHE_INIT_DELAY_MS);
+    let mut test = Test::new("tiling_basic");
 
     // Create windows
-    let _w1 = fixture.create_textedit("Upper");
-    delay(OPERATION_DELAY_MS);
-    let _w2 = fixture.create_textedit("Lower");
-    delay(OPERATION_DELAY_MS * 2);
+    let _ = test.create_window("Dictionary");
+    let _ = test.create_window("Dictionary");
+
+    let _ = test.get_app_stable_frames("Dictionary", 2);
 
     // Focus up first
-    fixture.stache_command(&["tiling", "window", "--focus", "up"]);
+    test.stache_command(&["tiling", "window", "--focus", "up"]);
     delay(OPERATION_DELAY_MS);
 
     let before = get_frontmost_window_frame();
 
     // Focus down
-    fixture.stache_command(&["tiling", "window", "--focus", "down"]);
+    test.stache_command(&["tiling", "window", "--focus", "down"]);
     delay(OPERATION_DELAY_MS);
 
     let after = get_frontmost_window_frame();
@@ -234,28 +207,24 @@ fn test_focus_down() {
     assert!(after.is_some(), "Should have frame after focus down");
 
     if let (Some(b), Some(a)) = (before, after) {
-        println!("Focus down: y changed from {:.0} to {:.0}", b.y, a.y);
+        println!("Focus down: y changed from {} to {}", b.y, a.y);
     }
 }
 
 /// Test focus with single window doesn't crash.
 #[test]
 fn test_focus_single_window() {
-    let _guard = TEST_MUTEX.lock().unwrap();
-    require_accessibility_permission();
-
-    let mut fixture = TestFixture::with_config("tiling_basic");
-    delay(STACHE_INIT_DELAY_MS);
+    let mut test = Test::new("tiling_basic");
 
     // Create only one window
-    let _window = fixture.create_textedit("Only Window");
-    delay(OPERATION_DELAY_MS);
+    let _ = test.create_window("Dictionary");
+    let _ = test.get_app_stable_frames("Dictionary", 1);
 
     let frame_before = get_frontmost_window_frame();
 
     // Try all focus directions - should not crash
     for direction in &["next", "previous", "up", "down", "left", "right"] {
-        fixture.stache_command(&["tiling", "window", "--focus", direction]);
+        test.stache_command(&["tiling", "window", "--focus", direction]);
         delay(OPERATION_DELAY_MS);
         println!("Focus {} with single window: OK", direction);
     }
@@ -274,23 +243,19 @@ fn test_focus_single_window() {
 /// Test focus wrapping at boundaries.
 #[test]
 fn test_focus_wrap() {
-    let _guard = TEST_MUTEX.lock().unwrap();
-    require_accessibility_permission();
-
-    let mut fixture = TestFixture::with_config("tiling_basic");
-    delay(STACHE_INIT_DELAY_MS);
+    let mut test = Test::new("tiling_basic");
 
     // Create windows
-    let _w1 = fixture.create_textedit("Wrap 1");
-    delay(OPERATION_DELAY_MS);
-    let _w2 = fixture.create_textedit("Wrap 2");
-    delay(OPERATION_DELAY_MS * 2);
+    let _ = test.create_window("Dictionary");
+    let _ = test.create_window("Dictionary");
+
+    let _ = test.get_app_stable_frames("Dictionary", 2);
 
     // Keep focusing in one direction to test wrapping
     println!("Testing focus wrapping...");
     let mut titles = Vec::new();
     for i in 0..5 {
-        fixture.stache_command(&["tiling", "window", "--focus", "next"]);
+        test.stache_command(&["tiling", "window", "--focus", "next"]);
         delay(OPERATION_DELAY_MS);
         let title = get_frontmost_window_title();
         titles.push(title.clone());
@@ -307,22 +272,19 @@ fn test_focus_wrap() {
 /// Test rapid focus changes.
 #[test]
 fn test_rapid_focus_changes() {
-    let _guard = TEST_MUTEX.lock().unwrap();
-    require_accessibility_permission();
-
-    let mut fixture = TestFixture::with_config("tiling_basic");
-    delay(STACHE_INIT_DELAY_MS);
+    let mut test = Test::new("tiling_basic");
 
     // Create windows
-    let _w1 = fixture.create_textedit("Rapid 1");
-    let _w2 = fixture.create_textedit("Rapid 2");
-    let _w3 = fixture.create_textedit("Rapid 3");
-    delay(OPERATION_DELAY_MS * 2);
+    let _ = test.create_window("Dictionary");
+    let _ = test.create_window("Dictionary");
+    let _ = test.create_window("Dictionary");
+
+    let _ = test.get_app_stable_frames("Dictionary", 3);
 
     // Rapid focus changes
     let start = std::time::Instant::now();
     for _ in 0..10 {
-        fixture.stache_command(&["tiling", "window", "--focus", "next"]);
+        test.stache_command(&["tiling", "window", "--focus", "next"]);
         delay(50); // Short delay
     }
     let elapsed = start.elapsed();

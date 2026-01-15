@@ -83,6 +83,23 @@ impl Test {
     /// Gets all active screens.
     pub fn all_screens(&self) -> Vec<Screen> { Screen::all() }
 
+    /// Returns the number of connected screens.
+    pub fn screen_count(&self) -> usize { Screen::all().len() }
+
+    /// Returns true if there are multiple screens connected.
+    pub fn has_multiple_screens(&self) -> bool { self.screen_count() >= 2 }
+
+    /// Gets the secondary screen (non-main screen).
+    ///
+    /// Returns `None` if there's only one screen or no secondary screen can be found.
+    pub fn secondary_screen(&self) -> Option<Screen> {
+        let screens = Screen::all();
+        if screens.len() < 2 {
+            return None;
+        }
+        screens.into_iter().find(|s| !s.is_main())
+    }
+
     /// Finds the screen containing the given frame (based on center point).
     pub fn screen_containing(&self, frame: &Frame) -> Option<Screen> {
         Screen::containing_frame(frame)
@@ -136,8 +153,183 @@ impl Test {
         app.create_window()
     }
 
+    /// Gets frames for all windows of the named app (instant, no waiting).
+    pub fn get_app_frames(&self, app_name: &str) -> Vec<Frame> {
+        self.apps.get(app_name).map_or_else(Vec::new, App::get_frames)
+    }
+
+    /// Gets stable frames for the named app.
+    pub fn get_app_stable_frames(&self, app_name: &str, min_count: usize) -> Vec<Frame> {
+        self.apps
+            .get(app_name)
+            .map_or_else(Vec::new, |app| app.get_stable_frames(min_count))
+    }
+
+    /// Gets stable frames for the named app (stacked - for monocle layout).
+    pub fn get_app_stable_frames_stacked(&self, app_name: &str, min_count: usize) -> Vec<Frame> {
+        self.apps
+            .get(app_name)
+            .map_or_else(Vec::new, |app| app.get_stable_frames_stacked(min_count))
+    }
+
+    /// Gets all frames across all registered apps (instant, no waiting).
+    pub fn get_all_frames(&self) -> Vec<Frame> {
+        self.apps.values().flat_map(App::get_frames).collect()
+    }
+
+    /// Waits for all windows across all registered apps to stabilize.
+    ///
+    /// This is the recommended way to get frames in multi-app tests, as it
+    /// ensures ALL windows have stabilized together (same tiling state).
+    ///
+    /// Returns a HashMap of app_name -> Vec<Frame>.
+    pub fn get_all_stable_frames(
+        &self,
+        expected_counts: &[(&str, usize)],
+    ) -> HashMap<String, Vec<Frame>> {
+        self.get_all_stable_frames_internal(expected_counts, Duration::from_secs(10), true)
+    }
+
+    /// Gets all stable frames for stacked layouts (like monocle).
+    pub fn get_all_stable_frames_stacked(
+        &self,
+        expected_counts: &[(&str, usize)],
+    ) -> HashMap<String, Vec<Frame>> {
+        self.get_all_stable_frames_internal(expected_counts, Duration::from_secs(10), false)
+    }
+
+    /// Internal implementation for getting stable frames across all apps.
+    fn get_all_stable_frames_internal(
+        &self,
+        expected_counts: &[(&str, usize)],
+        timeout: Duration,
+        require_unique: bool,
+    ) -> HashMap<String, Vec<Frame>> {
+        use std::time::Instant;
+
+        const POLL_INTERVAL: Duration = Duration::from_millis(100);
+        // Longer stability duration for multi-app scenarios where the tiling manager
+        // may take longer to settle after rapid window creation/destruction
+        const STABILITY_DURATION: Duration = Duration::from_millis(1000);
+
+        // Initial delay to let the tiling manager process any pending events
+        // and clean up stale window references from app preparation
+        std::thread::sleep(Duration::from_millis(500));
+
+        let start = Instant::now();
+        let mut last_all_frames: Vec<Frame> = Vec::new();
+        let mut stable_since: Option<Instant> = None;
+
+        while start.elapsed() < timeout {
+            // Get frames for all registered apps
+            let mut current_by_app: HashMap<String, Vec<Frame>> = HashMap::new();
+            for (name, app) in &self.apps {
+                current_by_app.insert(name.clone(), app.get_frames());
+            }
+
+            // Check expected counts - at least the expected number
+            let mut counts_ok = true;
+            for (app_name, expected) in expected_counts {
+                let actual = current_by_app.get(*app_name).map_or(0, Vec::len);
+                if actual < *expected {
+                    counts_ok = false;
+                    break;
+                }
+            }
+
+            // Flatten all frames for comparison
+            let current_all_frames: Vec<Frame> =
+                current_by_app.values().flatten().cloned().collect();
+
+            // Check if frames match previous poll
+            let frames_match = current_all_frames.len() == last_all_frames.len()
+                && current_all_frames.iter().zip(last_all_frames.iter()).all(|(a, b)| a == b);
+
+            // Check uniqueness if required
+            let uniqueness_ok = if require_unique {
+                let mut seen = std::collections::HashSet::new();
+                current_all_frames.iter().all(|f| seen.insert((f.x, f.y, f.width, f.height)))
+            } else {
+                true
+            };
+
+            if counts_ok && frames_match && uniqueness_ok {
+                if let Some(since) = stable_since {
+                    if since.elapsed() >= STABILITY_DURATION {
+                        return current_by_app;
+                    }
+                } else {
+                    stable_since = Some(Instant::now());
+                }
+            } else {
+                last_all_frames = current_all_frames;
+                stable_since = None;
+            }
+
+            std::thread::sleep(POLL_INTERVAL);
+        }
+
+        // Timeout - return current state
+        eprintln!(
+            "Warning: get_all_stable_frames timed out (have {} total frames)",
+            last_all_frames.len()
+        );
+
+        let mut result: HashMap<String, Vec<Frame>> = HashMap::new();
+        for (name, app) in &self.apps {
+            result.insert(name.clone(), app.get_frames());
+        }
+        result
+    }
+
     /// Returns the fixture name used for this test.
     pub fn fixture_name(&self) -> &str { &self.fixture_name }
+
+    /// Runs a stache CLI command and returns the output.
+    ///
+    /// This is used for testing tiling operations like focus, swap, resize, etc.
+    /// The command is run against the currently running stache instance.
+    ///
+    /// # Arguments
+    ///
+    /// * `args` - Command arguments (without "stache" prefix)
+    ///
+    /// # Returns
+    ///
+    /// * `Some(String)` - stdout if command succeeded
+    /// * `None` - if command failed or timed out
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// test.stache_command(&["tiling", "window", "--focus", "next"]);
+    /// test.stache_command(&["tiling", "workspace", "--focus", "code"]);
+    /// test.stache_command(&["tiling", "window", "--swap", "left"]);
+    /// ```
+    pub fn stache_command(&self, args: &[&str]) -> Option<String> {
+        use std::process::Command;
+
+        let binary_path = StacheProcess::binary_path();
+
+        let output = Command::new(&binary_path).args(args).output().ok()?;
+
+        if output.status.success() {
+            Some(String::from_utf8_lossy(&output.stdout).to_string())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            eprintln!("stache command failed: {:?} {:?}", args, stderr);
+            None
+        }
+    }
+
+    /// Runs a stache CLI command with a delay after.
+    ///
+    /// Convenience method that adds a short delay to let the operation complete.
+    pub fn stache_command_with_delay(&self, args: &[&str], delay_ms: u64) -> Option<String> {
+        let result = self.stache_command(args);
+        std::thread::sleep(Duration::from_millis(delay_ms));
+        result
+    }
 
     /// Checks if stache is ready.
     pub fn is_stache_ready(&self) -> bool { self.stache.is_ready() }

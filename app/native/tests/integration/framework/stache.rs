@@ -148,7 +148,7 @@ pub struct StacheProcess {
 
 impl StacheProcess {
     /// Gets the path to the stache binary.
-    fn binary_path() -> PathBuf {
+    pub fn binary_path() -> PathBuf {
         // In tests, the binary is in target/debug or target/release
         let mut path = std::env::current_exe()
             .expect("Failed to get current exe path")

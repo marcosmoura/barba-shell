@@ -213,25 +213,67 @@ impl App {
 
     /// Creates a new window with a custom timeout.
     pub fn create_window_with_timeout(&mut self, timeout: Duration) -> Window {
-        // Get current window count
-        let initial_count = self.get_window_count_internal();
+        const MAX_RETRIES: usize = 3;
 
-        // Create the window based on app type
-        let created = match self.name.as_str() {
-            "Dictionary" => native::create_dictionary_window(),
-            "TextEdit" => native::create_textedit_window(),
-            _ => panic!("Unsupported app for window creation: {}", self.name),
-        };
+        for attempt in 0..MAX_RETRIES {
+            // Get current window count
+            let initial_count = self.get_window_count_internal();
 
-        if !created {
-            panic!("Failed to create {} window", self.name);
+            // Create the window based on app type
+            let created = match self.name.as_str() {
+                "Dictionary" => native::create_dictionary_window(),
+                "TextEdit" => native::create_textedit_window(),
+                _ => panic!("Unsupported app for window creation: {}", self.name),
+            };
+
+            if !created {
+                if attempt < MAX_RETRIES - 1 {
+                    eprintln!(
+                        "  Retry {}/{}: create {} window failed, retrying...",
+                        attempt + 1,
+                        MAX_RETRIES,
+                        self.name
+                    );
+                    thread::sleep(Duration::from_millis(500));
+                    continue;
+                }
+                panic!(
+                    "Failed to create {} window after {} retries",
+                    self.name, MAX_RETRIES
+                );
+            }
+
+            // Wait for a new window to appear (count increases) - shorter timeout for retries
+            let wait_timeout = if attempt == MAX_RETRIES - 1 {
+                timeout
+            } else {
+                Duration::from_secs(3)
+            };
+
+            match self.try_wait_for_new_window(initial_count, wait_timeout) {
+                Some(window) => {
+                    self.window_count += 1;
+                    return window;
+                }
+                None => {
+                    if attempt < MAX_RETRIES - 1 {
+                        eprintln!(
+                            "  Retry {}/{}: waiting for {} window timed out, retrying...",
+                            attempt + 1,
+                            MAX_RETRIES,
+                            self.name
+                        );
+                        thread::sleep(Duration::from_millis(500));
+                        continue;
+                    }
+                }
+            }
         }
 
-        // Wait for a new window to appear (count increases)
-        let window = self.wait_for_new_window(initial_count, timeout);
-        self.window_count += 1;
-
-        window
+        panic!(
+            "Timed out waiting for new {} window after {} retries",
+            self.name, MAX_RETRIES
+        );
     }
 
     /// Waits for a new window to appear and returns it.
@@ -281,6 +323,39 @@ impl App {
         );
     }
 
+    /// Tries to wait for a new window, returns None on timeout instead of panicking.
+    fn try_wait_for_new_window(&self, initial_count: usize, timeout: Duration) -> Option<Window> {
+        let start = Instant::now();
+        let target_count = initial_count + 1;
+
+        while start.elapsed() < timeout {
+            let windows = native::get_app_windows(&self.name);
+            let count = windows.len();
+
+            if count >= target_count {
+                for (i, w) in windows.iter().enumerate() {
+                    if i < count - 1 {
+                        native::release_window(*w);
+                    }
+                }
+
+                let new_ref = windows[count - 1];
+                let window = Window::new(new_ref, &self.name, self.window_count);
+                let _ = window.stable_frame();
+
+                return Some(window);
+            }
+
+            for w in windows {
+                native::release_window(w);
+            }
+
+            thread::sleep(POLL_INTERVAL);
+        }
+
+        None
+    }
+
     /// Gets all current windows for this application (fresh references).
     ///
     /// Returns newly created Window objects with fresh AX references.
@@ -327,6 +402,24 @@ impl App {
         min_count: usize,
         timeout: Duration,
     ) -> Vec<Frame> {
+        self.get_stable_frames_internal(min_count, timeout, true)
+    }
+
+    /// Gets stable frames for stacked layouts (like monocle) where windows overlap.
+    ///
+    /// Unlike `get_stable_frames`, this doesn't require frames to be unique,
+    /// which is necessary for layouts where all windows have the same position.
+    pub fn get_stable_frames_stacked(&self, min_count: usize) -> Vec<Frame> {
+        self.get_stable_frames_internal(min_count, DEFAULT_TIMEOUT, false)
+    }
+
+    /// Internal implementation for stable frame retrieval.
+    fn get_stable_frames_internal(
+        &self,
+        min_count: usize,
+        timeout: Duration,
+        require_unique: bool,
+    ) -> Vec<Frame> {
         let start = Instant::now();
 
         let mut last_frames: Vec<Frame> = Vec::new();
@@ -344,12 +437,15 @@ impl App {
 
             // Check that all frames are unique (no duplicates)
             // Duplicates indicate windows are still being repositioned
-            let all_unique = {
+            // Skip this check for stacked layouts like monocle
+            let uniqueness_ok = if require_unique {
                 let mut seen = std::collections::HashSet::new();
                 current_frames.iter().all(|f| seen.insert((f.x, f.y, f.width, f.height)))
+            } else {
+                true
             };
 
-            if has_enough && frames_match && all_unique {
+            if has_enough && frames_match && uniqueness_ok {
                 if let Some(since) = stable_since {
                     if since.elapsed() >= STABILITY_DURATION {
                         return current_frames;

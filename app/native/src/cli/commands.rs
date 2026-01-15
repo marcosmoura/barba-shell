@@ -28,6 +28,13 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 #[command(author, version = APP_VERSION, about, long_about = None)]
 #[command(propagate_version = true)]
 pub struct Cli {
+    /// Path to a custom configuration file.
+    ///
+    /// Overrides the default configuration file search paths.
+    /// Supports JSONC format (JSON with comments).
+    #[arg(long, short, global = true, value_name = "PATH")]
+    pub config: Option<String>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -537,12 +544,29 @@ pub struct TilingWorkspaceArgs {
 }
 
 impl Cli {
+    /// Returns the custom config path if specified via --config flag.
+    #[must_use]
+    pub fn config_path(&self) -> Option<std::path::PathBuf> {
+        self.config.as_ref().map(std::path::PathBuf::from)
+    }
+
     /// Execute the CLI command.
     ///
     /// # Errors
     ///
     /// Returns an error if the command execution fails.
     pub fn execute(&self) -> Result<(), StacheError> {
+        // Set custom config path if provided
+        if let Some(ref path) = self.config {
+            let path_buf = std::path::PathBuf::from(path);
+            if !path_buf.exists() {
+                return Err(StacheError::ConfigError(format!(
+                    "Configuration file not found: {path}"
+                )));
+            }
+            config::set_custom_config_path(path_buf);
+        }
+
         match &self.command {
             Commands::Event(event_cmd) => Self::execute_event(event_cmd)?,
             Commands::Wallpaper(wallpaper_cmd) => Self::execute_wallpaper(wallpaper_cmd)?,
@@ -1687,5 +1711,53 @@ mod tests {
         // Version should be in semver format (X.Y.Z)
         let parts: Vec<&str> = APP_VERSION.split('.').collect();
         assert!(parts.len() >= 2, "Version should have at least major.minor");
+    }
+
+    // ========================================================================
+    // --config flag tests
+    // ========================================================================
+
+    #[test]
+    fn test_cli_parses_config_flag() {
+        let cli =
+            Cli::try_parse_from(["stache", "--config", "/path/to/config.json", "schema"]).unwrap();
+        assert_eq!(cli.config, Some("/path/to/config.json".to_string()));
+        assert!(matches!(cli.command, Commands::Schema));
+    }
+
+    #[test]
+    fn test_cli_parses_config_short_flag() {
+        let cli = Cli::try_parse_from(["stache", "-c", "/path/to/config.json", "reload"]).unwrap();
+        assert_eq!(cli.config, Some("/path/to/config.json".to_string()));
+        assert!(matches!(cli.command, Commands::Reload));
+    }
+
+    #[test]
+    fn test_cli_parses_config_flag_after_subcommand() {
+        // The --config flag is global so can appear before or after subcommand
+        let cli =
+            Cli::try_parse_from(["stache", "schema", "--config", "/path/to/config.json"]).unwrap();
+        assert_eq!(cli.config, Some("/path/to/config.json".to_string()));
+    }
+
+    #[test]
+    fn test_cli_parses_no_config_flag() {
+        let cli = Cli::try_parse_from(["stache", "schema"]).unwrap();
+        assert!(cli.config.is_none());
+    }
+
+    #[test]
+    fn test_cli_config_path_returns_pathbuf() {
+        let cli =
+            Cli::try_parse_from(["stache", "--config", "/path/to/config.json", "schema"]).unwrap();
+        let path = cli.config_path();
+        assert!(path.is_some());
+        assert_eq!(path.unwrap().to_str().unwrap(), "/path/to/config.json");
+    }
+
+    #[test]
+    fn test_cli_config_path_returns_none_when_not_specified() {
+        let cli = Cli::try_parse_from(["stache", "schema"]).unwrap();
+        assert!(cli.config_path().is_none());
     }
 }

@@ -21,7 +21,8 @@ pub use types::{
     MenuAnywhereMouseButton, NoTunesConfig, ProxyAudioConfig, ProxyAudioInputConfig,
     ProxyAudioOutputConfig, Rgba, ShortcutCommands, StacheConfig, TargetMusicApp, TilingConfig,
     WallpaperConfig, WallpaperMode, WeatherConfig, WindowRule, WorkspaceConfig, config_paths,
-    load_config as load_config_with_path, parse_color, parse_hex_color, parse_rgba_color,
+    load_config as load_config_default, load_config_from_path, parse_color, parse_hex_color,
+    parse_rgba_color,
 };
 pub use watcher::watch_config_file;
 
@@ -31,11 +32,30 @@ static CONFIG: OnceLock<StacheConfig> = OnceLock::new();
 /// Path to the currently loaded configuration file.
 static CONFIG_PATH: OnceLock<PathBuf> = OnceLock::new();
 
+/// Custom config path override (set via CLI --config flag).
+static CUSTOM_CONFIG_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+/// Sets a custom configuration file path to use instead of the default search paths.
+///
+/// This must be called before `init()` or `get_config()` to take effect.
+///
+/// # Arguments
+///
+/// * `path` - The path to the custom configuration file
+///
+/// # Returns
+///
+/// `true` if the path was set successfully, `false` if a path was already set.
+pub fn set_custom_config_path(path: PathBuf) -> bool { CUSTOM_CONFIG_PATH.set(path).is_ok() }
+
 /// Loads the configuration from disk.
 ///
 /// Returns the loaded configuration, or a default configuration if loading fails.
 fn load_or_default() -> StacheConfig {
-    match load_config_with_path() {
+    // Check for custom config path first
+    let result = CUSTOM_CONFIG_PATH.get().map_or_else(load_config_default, load_config_from_path);
+
+    match result {
         Ok((config, path)) => {
             let _ = CONFIG_PATH.set(path);
             config

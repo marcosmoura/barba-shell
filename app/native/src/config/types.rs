@@ -1273,7 +1273,7 @@ impl BorderColor {
 /// lowercase versions of string fields. This avoids repeated `to_lowercase()` calls
 /// during window matching.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(default, rename_all = "kebab-case")]
+#[serde(default, rename_all = "camelCase")]
 pub struct WindowRule {
     /// Match by bundle identifier (e.g., "com.apple.finder").
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1637,6 +1637,40 @@ pub fn config_paths() -> Vec<PathBuf> {
     paths
 }
 
+/// Loads the configuration from a specific file path.
+///
+/// The configuration file supports JSONC format (JSON with comments).
+/// Both single-line (`//`) and multi-line (`/* */`) comments are stripped
+/// before parsing.
+///
+/// # Arguments
+///
+/// * `path` - The path to the configuration file
+///
+/// # Returns
+///
+/// Returns `Ok((StacheConfig, PathBuf))` if the configuration file was found and parsed successfully.
+/// Returns `Err` variants for file not found, I/O errors, or parsing errors.
+///
+/// # Errors
+///
+/// Returns `ConfigError::NotFound` if the configuration file does not exist.
+/// Returns `ConfigError::IoError` if the configuration file could not be read.
+/// Returns `ConfigError::ParseError` if the configuration file contains invalid JSON.
+pub fn load_config_from_path(path: &PathBuf) -> Result<(StacheConfig, PathBuf), ConfigError> {
+    if !path.exists() {
+        return Err(ConfigError::NotFound);
+    }
+
+    let file = fs::File::open(path)?;
+    // Strip comments from JSONC before parsing
+    let reader = json_comments::StripComments::new(file);
+    let mut config: StacheConfig = serde_json::from_reader(reader)?;
+    // Pre-compute cached values for faster runtime operations
+    config.prepare();
+    Ok((config, path.clone()))
+}
+
 /// Loads the configuration from the first available config file.
 ///
 /// The configuration file supports JSONC format (JSON with comments).
@@ -1657,13 +1691,7 @@ pub fn config_paths() -> Vec<PathBuf> {
 pub fn load_config() -> Result<(StacheConfig, PathBuf), ConfigError> {
     for path in config_paths() {
         if path.exists() {
-            let file = fs::File::open(&path)?;
-            // Strip comments from JSONC before parsing
-            let reader = json_comments::StripComments::new(file);
-            let mut config: StacheConfig = serde_json::from_reader(reader)?;
-            // Pre-compute cached values for faster runtime operations
-            config.prepare();
-            return Ok((config, path));
+            return load_config_from_path(&path);
         }
     }
 
@@ -2608,7 +2636,7 @@ mod tests {
         let json = r##"{
             "enabled": true,
             "focused": { "width": 4, "color": "#89b4fa" },
-            "unfocused": false,
+            "unfocused": false
         }"##;
         let config: BordersConfig = serde_json::from_str(json).unwrap();
         assert!(config.enabled);
@@ -2636,8 +2664,8 @@ mod tests {
         let json = r#"{
             "enabled": true,
             "ignore": [
-                {"app-id": "com.apple.finder"},
-                {"app-name": "Spotlight"}
+                {"appId": "com.apple.finder"},
+                {"appName": "Spotlight"}
             ]
         }"#;
         let config: BordersConfig = serde_json::from_str(json).unwrap();

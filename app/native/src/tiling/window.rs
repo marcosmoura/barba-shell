@@ -94,6 +94,8 @@ unsafe extern "C" {
     ) -> AXError;
     fn AXUIElementGetTypeID() -> u64;
     fn AXUIElementPerformAction(element: AXUIElementRef, action: *const c_void) -> AXError;
+    // Private API to get CGWindowID from AXUIElement
+    fn _AXUIElementGetWindow(element: AXUIElementRef, window_id: *mut u32) -> AXError;
 }
 
 #[link(name = "CoreFoundation", kind = "framework")]
@@ -778,6 +780,23 @@ unsafe fn set_ax_focused(element: AXUIElementRef) -> bool {
     result == K_AX_ERROR_SUCCESS
 }
 
+/// Gets the `CGWindowID` for an `AXUIElement` using private API.
+///
+/// Returns `None` if the element is null or the window ID cannot be retrieved.
+#[inline]
+unsafe fn get_ax_window_id(element: AXUIElementRef) -> Option<u32> {
+    if element.is_null() {
+        return None;
+    }
+    let mut window_id: u32 = 0;
+    let result = unsafe { _AXUIElementGetWindow(element, &raw mut window_id) };
+    if result == K_AX_ERROR_SUCCESS && window_id != 0 {
+        Some(window_id)
+    } else {
+        None
+    }
+}
+
 // AXValue FFI
 #[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {
@@ -1073,19 +1092,35 @@ fn get_all_windows_internal(include_hidden: bool) -> Vec<WindowInfo> {
             let is_main = unsafe { get_ax_bool(*ax, cf_main()) }.unwrap_or(false);
             let is_focused = unsafe { get_ax_bool(*ax, cf_focused()) }.unwrap_or(false);
 
-            // Find the best matching CG window for this AX window
-            // For apps with native tabs (multiple CG windows at same frame), pick lowest ID
-            let cg_match = find_best_cg_match(&frame, cg_wins, &matched_cg_ids);
+            // Try to get window ID directly from AX element (most reliable)
+            // This uses a private API but gives exact AX-to-CG mapping
+            let direct_window_id = unsafe { get_ax_window_id(*ax) };
 
-            let (window_id, is_hidden) = if let Some(cg_win) = cg_match {
-                matched_cg_ids.insert(cg_win.id);
-                (cg_win.id, *pid_to_hidden.get(&app.pid).unwrap_or(&false))
-            } else if include_hidden {
-                // No CG match - generate a synthetic ID for hidden window
-                let hidden_id = generate_hidden_window_id(app.pid, &title, &frame);
-                (hidden_id, true)
+            let (window_id, is_hidden) = if let Some(id) = direct_window_id {
+                // Direct match - verify it's in our CG window list
+                if cg_wins.iter().any(|w| w.id == id) {
+                    matched_cg_ids.insert(id);
+                    (id, *pid_to_hidden.get(&app.pid).unwrap_or(&false))
+                } else if include_hidden {
+                    // Window exists in AX but not in CG list - must be hidden
+                    (id, true)
+                } else {
+                    continue;
+                }
             } else {
-                continue; // Skip windows without CG match when not including hidden
+                // Fall back to frame-based matching
+                let cg_match = find_best_cg_match(&frame, cg_wins, &matched_cg_ids);
+
+                if let Some(cg_win) = cg_match {
+                    matched_cg_ids.insert(cg_win.id);
+                    (cg_win.id, *pid_to_hidden.get(&app.pid).unwrap_or(&false))
+                } else if include_hidden {
+                    // No CG match - generate a synthetic ID for hidden window
+                    let hidden_id = generate_hidden_window_id(app.pid, &title, &frame);
+                    (hidden_id, true)
+                } else {
+                    continue; // Skip windows without CG match when not including hidden
+                }
             };
 
             result.push(WindowInfo {
@@ -1881,85 +1916,28 @@ pub fn focus_window(window_id: u32) -> TilingResult<()> {
         .find(|w| w.id == window_id)
         .ok_or(TilingError::WindowNotFound(window_id))?;
 
-    let Some(ax_element) = window.ax_element else {
+    // Activate the app
+    if !activate_app(window.pid) {
         return Err(TilingError::window_op(format!(
-            "Window {window_id} has no AX element"
+            "Failed to activate app for window {window_id} (pid {})",
+            window.pid
         )));
-    };
+    }
 
-    // Make the app frontmost using AX API
-    unsafe { set_app_frontmost(window.pid) };
-
-    // Set as main window (this makes it the key window of the app)
-    let _ = unsafe { set_ax_main(ax_element) };
-
-    // Raise the window (brings to front in z-order)
-    let _ = unsafe { raise_ax_window(ax_element) };
-
-    // For same-app windows (like in monocle), also set AXFocusedWindow on the app
-    // This explicitly tells the app which window should be focused
-    unsafe { set_app_focused_window(window.pid, ax_element) };
+    // Set as main, focused, and raise the window
+    if let Some(ax_element) = window.ax_element {
+        let _ = unsafe { set_ax_main(ax_element) };
+        let _ = unsafe { set_ax_focused(ax_element) };
+        let _ = unsafe { raise_ax_window(ax_element) };
+    }
 
     Ok(())
 }
 
-/// Sets the focused window for an application using the Accessibility API.
-/// This is important for same-app windows where `AXRaise` alone may not work.
-unsafe fn set_app_focused_window(pid: i32, window_element: AXUIElementRef) {
-    let app_element = unsafe { AXUIElementCreateApplication(pid) };
-    if app_element.is_null() {
-        return;
-    }
-
-    // Set AXFocusedWindow to the target window
-    let _ = unsafe {
-        AXUIElementSetAttributeValue(app_element, cf_focused_window(), window_element.cast())
-    };
-
-    unsafe { CFRelease(app_element.cast()) };
-}
-
-/// Makes an application frontmost using the Accessibility API.
-/// This is faster than `NSRunningApplication` activateWithOptions:.
-unsafe fn set_app_frontmost(pid: i32) {
-    let app_element = unsafe { AXUIElementCreateApplication(pid) };
-    if app_element.is_null() {
-        return;
-    }
-
-    // Set AXFrontmost to true
-    let true_value = CFBoolean::true_value();
-    let _ = unsafe {
-        AXUIElementSetAttributeValue(
-            app_element,
-            cf_frontmost(),
-            true_value.as_concrete_TypeRef().cast(),
-        )
-    };
-
-    unsafe { CFRelease(app_element.cast()) };
-}
-
-/// Activates an application by PID using a faster, non-blocking approach.
-fn activate_app_fast(pid: i32) {
-    unsafe {
-        let Some(app_class) = Class::get("NSRunningApplication") else {
-            return;
-        };
-
-        let app: *mut Object = msg_send![app_class, runningApplicationWithProcessIdentifier: pid];
-        if app.is_null() {
-            return;
-        }
-
-        // Use just NSApplicationActivateIgnoringOtherApps (2) without AllWindows
-        // This is faster and sufficient for our use case
-        let _: BOOL = msg_send![app, activateWithOptions: 2u64];
-    }
-}
-
-/// Activates an application by PID (blocking, slow - use `activate_app_fast` instead).
-#[allow(dead_code)]
+/// Activates an application by PID.
+///
+/// Uses `NSApplicationActivateAllWindows | NSApplicationActivateIgnoringOtherApps` (3)
+/// which is important for cycling through same-app windows in monocle layout.
 fn activate_app(pid: i32) -> bool {
     unsafe {
         let Some(app_class) = Class::get("NSRunningApplication") else {
@@ -1971,7 +1949,7 @@ fn activate_app(pid: i32) -> bool {
             return false;
         }
 
-        let result: BOOL = msg_send![app, activateWithOptions: 3u64]; // NSApplicationActivateIgnoringOtherApps
+        let result: BOOL = msg_send![app, activateWithOptions: 3u64]; // AllWindows | IgnoringOtherApps
         result == YES
     }
 }

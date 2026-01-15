@@ -777,80 +777,32 @@ impl TilingManager {
         let pids_to_show: std::collections::HashSet<i32> =
             self.state.windows_for_workspace(name).iter().map(|w| w.pid).collect();
 
-        // Hide windows in current workspace (if different from target)
+        // Save focus state of current workspace before switching
         if let Some(ref current_name) = current_ws_name
             && current_name != name
+            && let Some(focused_id) = self.get_focused_window_in_workspace(current_name)
         {
-            // Save focus state before hiding
-            if let Some(focused_id) = self.get_focused_window_in_workspace(current_name) {
-                self.focus_history.record(current_name, focused_id);
-            }
-
-            // Hide apps that ONLY have windows in the source workspace.
-            // Apps with windows in both source and target workspaces are NOT hidden,
-            // because hiding at the app level would hide their windows in the target
-            // workspace too. Their source windows will simply remain visible in the
-            // background until the user switches back.
-            let all_source_windows = self.state.windows_for_workspace(current_name);
-
-            let windows_to_hide: Vec<_> = all_source_windows
-                .into_iter()
-                .filter(|w| !pids_to_show.contains(&w.pid))
-                .collect();
-
-            if !windows_to_hide.is_empty() {
-                let (hidden, _failures) = hide_workspace_windows(&windows_to_hide);
-                if hidden > 0 {
-                    // Give macOS time to process the hide operation before showing new windows.
-                    std::thread::sleep(std::time::Duration::from_millis(HIDE_SHOW_DELAY_MS));
-                }
-            }
-
-            // Hide borders for the current workspace
-            Self::hide_borders_for_workspace(current_name);
+            self.focus_history.record(current_name, focused_id);
         }
 
-        // Strategy for minimal flicker:
-        // 1. Pre-position windows while hidden (AX API works on hidden windows)
-        // 2. Show windows (they should appear in correct positions)
-        // 3. Re-apply layout immediately (in case macOS overrode positions during unhide)
+        // EXPERIMENT: Show new workspace windows FIRST, then hide old ones
+        // This prevents macOS from auto-focusing a random window during hide
 
-        // Step 1: Pre-position windows while hidden
+        // Step 1: Pre-position new windows (AX API works on hidden windows)
         self.apply_layout_forced(name);
 
-        // Step 2: Show windows
+        // Step 2: Show new windows
         let windows_to_show: Vec<&TrackedWindow> = self.state.windows_for_workspace(name);
         let _ = show_workspace_windows(&windows_to_show);
 
-        // Step 3: Immediately re-apply layout (no delay) to fix any position overrides
+        // Step 3: Re-apply layout (in case macOS overrode positions during unhide)
         self.apply_layout_forced(name);
 
         // Show borders for the target workspace
         Self::show_borders_for_workspace(name);
 
-        // Note: Border colors are NOT updated here - they are only updated
-        // when windows are focused (in update_focus_border_states)
-
-        // Update workspace visibility
-        for ws in &mut self.state.workspaces {
-            if ws.screen_id == screen_id {
-                ws.is_visible = ws.name.eq_ignore_ascii_case(name);
-                ws.is_focused = ws.name.eq_ignore_ascii_case(name);
-            } else {
-                // Clear focus from workspaces on other screens
-                ws.is_focused = false;
-            }
-        }
-
-        // Update focused workspace
-        self.state.focused_workspace = Some(name.to_string());
-        self.state.focused_screen_id = Some(screen_id);
-
-        // Record this workspace switch to debounce subsequent focus events
-        self.record_workspace_switch();
-
-        // Focus a window in the target workspace to ensure proper focus
-        // Try focus history first, then fall back to the first window
+        // Step 4: Focus window in the new workspace BEFORE hiding old windows
+        // This prevents macOS from auto-focusing a random window when we hide
         let window_to_focus = self.focus_history.get(name).or_else(|| {
             self.state.workspace_by_name(name).and_then(|ws| ws.window_ids.first().copied())
         });
@@ -871,6 +823,47 @@ impl TilingManager {
                 self.last_programmatic_focus = Some((window_id, Instant::now()));
             }
         }
+
+        // Step 5: NOW hide the old workspace windows (after focus is set)
+        if let Some(ref current_name) = current_ws_name
+            && current_name != name
+        {
+            // Hide apps that ONLY have windows in the source workspace.
+            // Apps with windows in both source and target workspaces are NOT hidden,
+            // because hiding at the app level would hide their windows in the target
+            // workspace too.
+            let all_source_windows = self.state.windows_for_workspace(current_name);
+
+            let windows_to_hide: Vec<_> = all_source_windows
+                .into_iter()
+                .filter(|w| !pids_to_show.contains(&w.pid))
+                .collect();
+
+            if !windows_to_hide.is_empty() {
+                let _ = hide_workspace_windows(&windows_to_hide);
+            }
+
+            // Hide borders for the old workspace
+            Self::hide_borders_for_workspace(current_name);
+        }
+
+        // Update workspace visibility
+        for ws in &mut self.state.workspaces {
+            if ws.screen_id == screen_id {
+                ws.is_visible = ws.name.eq_ignore_ascii_case(name);
+                ws.is_focused = ws.name.eq_ignore_ascii_case(name);
+            } else {
+                // Clear focus from workspaces on other screens
+                ws.is_focused = false;
+            }
+        }
+
+        // Update focused workspace
+        self.state.focused_workspace = Some(name.to_string());
+        self.state.focused_screen_id = Some(screen_id);
+
+        // Record this workspace switch to debounce subsequent focus events
+        self.record_workspace_switch();
 
         Some(WorkspaceSwitchInfo {
             workspace: name.to_string(),

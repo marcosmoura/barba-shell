@@ -1887,24 +1887,40 @@ pub fn focus_window(window_id: u32) -> TilingResult<()> {
         )));
     };
 
-    // First, make the app frontmost using AX API (faster than NSRunningApplication)
+    // Make the app frontmost using AX API
     unsafe { set_app_frontmost(window.pid) };
 
     // Set as main window (this makes it the key window of the app)
     let _ = unsafe { set_ax_main(ax_element) };
 
     // Raise the window (brings to front in z-order)
-    if !unsafe { raise_ax_window(ax_element) } {
-        return Err(TilingError::window_op(format!(
-            "Failed to raise window {window_id}"
-        )));
-    }
+    let _ = unsafe { raise_ax_window(ax_element) };
+
+    // For same-app windows (like in monocle), also set AXFocusedWindow on the app
+    // This explicitly tells the app which window should be focused
+    unsafe { set_app_focused_window(window.pid, ax_element) };
 
     Ok(())
 }
 
+/// Sets the focused window for an application using the Accessibility API.
+/// This is important for same-app windows where `AXRaise` alone may not work.
+unsafe fn set_app_focused_window(pid: i32, window_element: AXUIElementRef) {
+    let app_element = unsafe { AXUIElementCreateApplication(pid) };
+    if app_element.is_null() {
+        return;
+    }
+
+    // Set AXFocusedWindow to the target window
+    let _ = unsafe {
+        AXUIElementSetAttributeValue(app_element, cf_focused_window(), window_element.cast())
+    };
+
+    unsafe { CFRelease(app_element.cast()) };
+}
+
 /// Makes an application frontmost using the Accessibility API.
-/// This is faster than NSRunningApplication activateWithOptions:.
+/// This is faster than `NSRunningApplication` activateWithOptions:.
 unsafe fn set_app_frontmost(pid: i32) {
     let app_element = unsafe { AXUIElementCreateApplication(pid) };
     if app_element.is_null() {
@@ -1942,7 +1958,7 @@ fn activate_app_fast(pid: i32) {
     }
 }
 
-/// Activates an application by PID (blocking, slow - use activate_app_fast instead).
+/// Activates an application by PID (blocking, slow - use `activate_app_fast` instead).
 #[allow(dead_code)]
 fn activate_app(pid: i32) -> bool {
     unsafe {

@@ -1064,11 +1064,11 @@
       "description": "Window matching rule for workspace assignment.\n\nAll specified properties must match (AND logic).\nAt least one property must be specified.\n\n# Performance\n\nCall [`WindowRule::prepare()`] after loading rules from config to pre-compute\nlowercase versions of string fields. This avoids repeated `to_lowercase()` calls\nduring window matching.",
       "type": "object",
       "properties": {
-        "app-id": {
+        "appId": {
           "description": "Match by bundle identifier (e.g., \"com.apple.finder\").",
           "type": ["string", "null"]
         },
-        "app-name": {
+        "appName": {
           "description": "Match by application name.",
           "type": ["string", "null"]
         },

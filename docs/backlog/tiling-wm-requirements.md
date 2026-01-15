@@ -67,7 +67,7 @@ Workspaces rules and ignore list use the same matching system, where each rule i
         {
           // Properties here match using AND logic
           "title": "Code Editor",
-          "app-id": "com.visualstudio.code",
+          "appId": "com.visualstudio.code",
         },
         {
           // In this case, it should only match the title
@@ -75,7 +75,7 @@ Workspaces rules and ignore list use the same matching system, where each rule i
         },
         {
           // In this case, it should only match the app-id
-          "app-id": "com.visualstudio.code",
+          "appId": "com.visualstudio.code",
         },
       ],
     },
@@ -96,7 +96,7 @@ Workspaces rules and ignore list use the same matching system, where each rule i
 
 ```jsonc
 {
-  "ignore": [{ "app-id": "com.apple.Spotlight" }, { "title": "Loginwindow" }],
+  "ignore": [{ "appId": "com.apple.Spotlight" }, { "title": "Loginwindow" }],
 }
 ```
 
@@ -357,25 +357,22 @@ You can disable borders for specific states by setting their color to `null` or 
         "name": "coding",
         "layout": "monocle",
         "screen": "main",
-        "rules": [{ "app-id": "dev.zed.Zed-Preview" }, { "app-id": "com.microsoft.VSCode" }],
+        "rules": [{ "appId": "dev.zed.Zed-Preview" }, { "appId": "com.microsoft.VSCode" }],
       },
       {
         "name": "browser",
         "layout": "monocle",
         "screen": "main",
-        "rules": [
-          { "app-id": "com.microsoft.edgemac.Dev" },
-          { "app-id": "company.thebrowser.dia" },
-        ],
+        "rules": [{ "appId": "com.microsoft.edgemac.Dev" }, { "appId": "company.thebrowser.dia" }],
       },
       {
         "name": "communication",
         "layout": "dwindle",
         "screen": "main",
         "rules": [
-          { "app-id": "com.microsoft.teams2" },
-          { "app-id": "net.whatsapp.WhatsApp" },
-          { "app-id": "com.hnc.Discord" },
+          { "appId": "com.microsoft.teams2" },
+          { "appId": "net.whatsapp.WhatsApp" },
+          { "appId": "com.hnc.Discord" },
         ],
       },
 
@@ -384,31 +381,31 @@ You can disable borders for specific states by setting their color to `null` or 
         "name": "files",
         "layout": "split",
         "screen": "secondary",
-        "rules": [{ "app-id": "com.apple.finder" }],
+        "rules": [{ "appId": "com.apple.finder" }],
       },
       {
         "name": "tasks",
         "layout": "split",
         "screen": "secondary",
         "rules": [
-          { "app-id": "com.apple.reminders" },
-          { "app-id": "me.proton.pass.electron" },
-          { "app-id": "com.microsoft.AzureVpnMac" },
+          { "appId": "com.apple.reminders" },
+          { "appId": "me.proton.pass.electron" },
+          { "appId": "com.microsoft.AzureVpnMac" },
         ],
       },
     ],
     "ignore": [
       // Default macOS apps to ignore
-      { "app-id": "com.apple.Spotlight" },
-      { "app-id": "com.apple.dock" },
-      { "app-id": "com.apple.notificationcenterui" },
-      { "app-id": "com.apple.systempreferences" },
-      { "app-id": "com.apple.loginwindow" },
-      { "app-id": "com.apple.weather.menu" },
+      { "appId": "com.apple.Spotlight" },
+      { "appId": "com.apple.dock" },
+      { "appId": "com.apple.notificationcenterui" },
+      { "appId": "com.apple.systempreferences" },
+      { "appId": "com.apple.loginwindow" },
+      { "appId": "com.apple.weather.menu" },
 
       // Third-party apps
-      { "app-id": "cc.ffitch.shottr" },
-      { "app-id": "com.raycast.macos" },
+      { "appId": "cc.ffitch.shottr" },
+      { "appId": "com.raycast.macos" },
     ],
   },
 }

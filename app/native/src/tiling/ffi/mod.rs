@@ -7,6 +7,7 @@
 //! # Modules
 //!
 //! - [`accessibility`] - Safe wrappers for `AXUIElement` and related APIs
+//! - [`skylight`] - Safe wrappers for `SkyLight` private framework (screen update batching)
 //!
 //! # Macros
 //!
@@ -17,8 +18,14 @@
 //! in functions like `get_ax_string()`, `get_ax_position()`, etc.
 
 pub mod accessibility;
+pub mod skylight;
+pub mod transaction;
+pub mod window_query;
 
 pub use accessibility::AXElement;
+pub use skylight::{UpdateGuard, get_window_bounds_fast, get_window_id_from_ax};
+pub use transaction::Transaction;
+pub use window_query::{WindowInfo, WindowQuery};
 
 /// Returns early with an error if the given pointer is null.
 ///

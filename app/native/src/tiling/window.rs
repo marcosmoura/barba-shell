@@ -199,8 +199,69 @@ fn cf_frontmost() -> *const c_void { cached_cfstring!(CF_FRONTMOST, "AXFrontmost
 // ============================================================================
 
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 
-use super::constants::cache::AX_ELEMENT_TTL_SECS;
+use super::constants::cache::{AX_ELEMENT_ANIMATION_TTL_SECS, AX_ELEMENT_TTL_SECS};
+
+// ============================================================================
+// Animation State Flag
+// ============================================================================
+
+/// Global flag indicating whether an animation is currently active.
+///
+/// When set to `true`, cache TTLs are extended to reduce expensive
+/// lookups during animation frames.
+static ANIMATION_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// Sets the animation active state.
+///
+/// Call this at the start of an animation (`true`) and at the end (`false`).
+/// While active, cache TTLs are extended for better performance.
+pub fn set_animation_active(active: bool) { ANIMATION_ACTIVE.store(active, Ordering::Relaxed); }
+
+/// Returns whether an animation is currently active.
+pub fn is_animation_active() -> bool { ANIMATION_ACTIVE.load(Ordering::Relaxed) }
+
+// ============================================================================
+// Cache Metrics
+// ============================================================================
+
+/// Cache hit counter for AX element lookups.
+static AX_CACHE_HITS: AtomicU64 = AtomicU64::new(0);
+
+/// Cache miss counter for AX element lookups.
+static AX_CACHE_MISSES: AtomicU64 = AtomicU64::new(0);
+
+/// Increments the cache hit counter.
+#[inline]
+fn record_cache_hit() { AX_CACHE_HITS.fetch_add(1, Ordering::Relaxed); }
+
+/// Increments the cache miss counter.
+#[inline]
+fn record_cache_miss() { AX_CACHE_MISSES.fetch_add(1, Ordering::Relaxed); }
+
+/// Returns cache statistics as (hits, misses, `hit_rate`).
+///
+/// The hit rate is calculated as `hits / (hits + misses)`, or 0.0 if no lookups.
+#[must_use]
+#[allow(clippy::cast_precision_loss)] // Acceptable precision loss for statistics
+pub fn get_cache_stats() -> (u64, u64, f64) {
+    let hits = AX_CACHE_HITS.load(Ordering::Relaxed);
+    let misses = AX_CACHE_MISSES.load(Ordering::Relaxed);
+    let total = hits + misses;
+    let hit_rate = if total > 0 {
+        hits as f64 / total as f64
+    } else {
+        0.0
+    };
+    (hits, misses, hit_rate)
+}
+
+/// Resets cache statistics.
+pub fn reset_cache_stats() {
+    AX_CACHE_HITS.store(0, Ordering::Relaxed);
+    AX_CACHE_MISSES.store(0, Ordering::Relaxed);
+}
 
 /// Thread-safe wrapper for cached `AXUIElementRef`.
 ///
@@ -257,12 +318,15 @@ impl CachedAXEntry {
 /// # TTL
 ///
 /// Entries expire after `AX_ELEMENT_TTL_SECS` to ensure stale references
-/// (from destroyed windows) are eventually cleared.
+/// (from destroyed windows) are eventually cleared. During active animations,
+/// the TTL is extended to `AX_ELEMENT_ANIMATION_TTL_SECS` for better performance.
 struct AXElementCache {
     /// Map of `window_id` -> cached entry.
     entries: RwLock<HashMap<u32, CachedAXEntry>>,
-    /// Time-to-live for cache entries.
+    /// Normal time-to-live for cache entries.
     ttl: Duration,
+    /// Extended time-to-live during animations.
+    animation_ttl: Duration,
 }
 
 impl AXElementCache {
@@ -271,6 +335,17 @@ impl AXElementCache {
         Self {
             entries: RwLock::new(HashMap::new()),
             ttl: Duration::from_secs(ttl_secs),
+            animation_ttl: Duration::from_secs(AX_ELEMENT_ANIMATION_TTL_SECS),
+        }
+    }
+
+    /// Returns the current effective TTL based on animation state.
+    #[inline]
+    fn effective_ttl(&self) -> Duration {
+        if is_animation_active() {
+            self.animation_ttl
+        } else {
+            self.ttl
         }
     }
 
@@ -280,9 +355,11 @@ impl AXElementCache {
         let entries = self.entries.read().ok()?;
         let entry = entries.get(&window_id)?;
 
-        if entry.is_expired(self.ttl) {
+        if entry.is_expired(self.effective_ttl()) {
+            record_cache_miss();
             None
         } else {
+            record_cache_hit();
             Some(entry.ax_element())
         }
     }
@@ -297,16 +374,22 @@ impl AXElementCache {
 
         let Ok(entries) = self.entries.read() else {
             // Lock poisoned, treat all as misses
+            for _ in window_ids {
+                record_cache_miss();
+            }
             return (cached, window_ids.to_vec());
         };
 
+        let ttl = self.effective_ttl();
         for &id in window_ids {
             if let Some(entry) = entries.get(&id)
-                && !entry.is_expired(self.ttl)
+                && !entry.is_expired(ttl)
             {
+                record_cache_hit();
                 cached.insert(id, entry.ax_element());
                 continue;
             }
+            record_cache_miss();
             misses.push(id);
         }
 

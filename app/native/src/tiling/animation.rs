@@ -42,10 +42,11 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use super::constants::animation as anim_constants;
+use super::ffi::skylight::UpdateGuard;
 use super::state::Rect;
 use super::window::{
-    resolve_window_ax_elements, set_window_frames_by_id, set_window_frames_delta,
-    set_window_frames_direct, set_window_positions_only,
+    resolve_window_ax_elements, set_animation_active, set_window_frames_by_id,
+    set_window_frames_delta, set_window_frames_direct, set_window_positions_only,
 };
 use crate::config::{EasingType, get_config};
 
@@ -1023,6 +1024,8 @@ pub struct AnimationConfig {
     pub duration: Duration,
     /// Easing function type.
     pub easing: EasingType,
+    /// Whether to use SLS screen update batching for smoother animations.
+    pub use_sls_update_batching: bool,
 }
 
 impl Default for AnimationConfig {
@@ -1031,6 +1034,7 @@ impl Default for AnimationConfig {
             enabled: false,
             duration: Duration::from_millis(200),
             easing: EasingType::EaseOut,
+            use_sls_update_batching: true,
         }
     }
 }
@@ -1048,6 +1052,7 @@ impl AnimationConfig {
                 anim_config.duration.clamp(MIN_DURATION_MS, MAX_DURATION_MS),
             )),
             easing: anim_config.easing,
+            use_sls_update_batching: anim_config.use_sls_update_batching,
         }
     }
 
@@ -1133,6 +1138,10 @@ impl AnimationSystem {
     #[must_use]
     pub const fn easing(&self) -> EasingType { self.config.easing }
 
+    /// Returns whether SLS update batching is enabled.
+    #[must_use]
+    pub const fn use_sls_update_batching(&self) -> bool { self.config.use_sls_update_batching }
+
     /// Animates a list of window transitions.
     ///
     /// If animations are disabled, windows are moved instantly.
@@ -1195,6 +1204,7 @@ impl AnimationSystem {
     ///
     /// Optimizations:
     /// - `CVDisplayLink` vsync synchronization for tear-free rendering
+    /// - `SLSDisableUpdate` screen update batching (configurable)
     /// - `CATransaction` to disable implicit macOS animations
     /// - Parallel window updates using rayon
     /// - Dynamic duration based on travel distance
@@ -1204,6 +1214,11 @@ impl AnimationSystem {
     /// - High-priority thread for reduced latency
     /// - Pre-allocated buffers to avoid per-frame allocations
     fn run_eased_animation(&self, transitions: &[WindowTransition], duration: Duration) -> usize {
+        let use_sls_batching = self.config.use_sls_update_batching;
+
+        // Mark animation as active for cache TTL extension
+        set_animation_active(true);
+
         // Initialize display link for vsync synchronization
         init_display_link();
 
@@ -1231,6 +1246,7 @@ impl AnimationSystem {
             .collect();
 
         if animatable.is_empty() {
+            set_animation_active(false);
             return 0;
         }
 
@@ -1256,14 +1272,17 @@ impl AnimationSystem {
             if should_cancel() {
                 // Snap all windows to their final target positions immediately
                 // This ensures state consistency even under rapid command spam
+                let _update_guard = UpdateGuard::new_if(use_sls_batching);
                 ca_transaction_begin_disabled();
                 let final_frames: Vec<(_, Rect)> =
                     animatable.iter().map(|&(idx, ax)| (ax, transitions[idx].to)).collect();
                 set_window_frames_direct(&final_frames);
                 ca_transaction_commit();
+                // _update_guard drops here, re-enabling screen updates
 
                 // Clear interrupted positions since we've snapped to targets
                 clear_interrupted_positions(&window_ids);
+                set_animation_active(false);
                 return animatable.len();
             }
 
@@ -1271,7 +1290,10 @@ impl AnimationSystem {
             let progress = (elapsed.as_secs_f64() / duration.as_secs_f64()).min(1.0);
             let eased_progress = apply_easing(progress, easing);
 
-            // Disable implicit animations for this frame
+            // Batch screen updates: disable refresh, apply all window changes, then refresh once
+            let _update_guard = UpdateGuard::new_if(use_sls_batching);
+
+            // Disable implicit macOS animations for this frame
             ca_transaction_begin_disabled();
 
             let positioned = if position_only {
@@ -1294,11 +1316,13 @@ impl AnimationSystem {
             };
 
             ca_transaction_commit();
+            // _update_guard drops here, re-enabling screen updates (single refresh for all windows)
 
             // Check if animation is complete
             if progress >= 1.0 {
                 // Animation completed normally - clear interrupted positions
                 clear_interrupted_positions(&window_ids);
+                set_animation_active(false);
                 return positioned;
             }
 
@@ -1314,6 +1338,7 @@ impl AnimationSystem {
     ///
     /// Optimizations:
     /// - `CVDisplayLink` vsync synchronization for tear-free rendering
+    /// - `SLSDisableUpdate` screen update batching (configurable)
     /// - `CATransaction` to disable implicit macOS animations
     /// - Parallel window updates using rayon
     /// - Adaptive frame rate based on display refresh rate
@@ -1321,8 +1346,12 @@ impl AnimationSystem {
     /// - Delta optimization (skips unchanged properties)
     /// - High-priority thread for reduced latency
     /// - Pre-allocates frame buffer to avoid per-frame allocations
-    #[allow(clippy::unused_self)] // Keeps consistent API with run_eased_animation
     fn run_spring_animation(&self, transitions: &[WindowTransition], duration: Duration) -> usize {
+        let use_sls_batching = self.config.use_sls_update_batching;
+
+        // Mark animation as active for cache TTL extension
+        set_animation_active(true);
+
         // Initialize display link for vsync synchronization
         init_display_link();
 
@@ -1351,6 +1380,7 @@ impl AnimationSystem {
             .collect();
 
         if animatable.is_empty() {
+            set_animation_active(false);
             return 0;
         }
 
@@ -1379,14 +1409,17 @@ impl AnimationSystem {
             if should_cancel() {
                 // Snap all windows to their final target positions immediately
                 // This ensures state consistency even under rapid command spam
+                let _update_guard = UpdateGuard::new_if(use_sls_batching);
                 ca_transaction_begin_disabled();
                 let final_frames: Vec<(_, Rect)> =
                     animatable.iter().map(|&(idx, ax)| (ax, transitions[idx].to)).collect();
                 set_window_frames_direct(&final_frames);
                 ca_transaction_commit();
+                // _update_guard drops here, re-enabling screen updates
 
                 // Clear interrupted positions since we've snapped to targets
                 clear_interrupted_positions(&window_ids);
+                set_animation_active(false);
                 return animatable.len();
             }
 
@@ -1404,7 +1437,10 @@ impl AnimationSystem {
                 }
             }
 
-            // Disable implicit animations for this frame
+            // Batch screen updates: disable refresh, apply all window changes, then refresh once
+            let _update_guard = UpdateGuard::new_if(use_sls_batching);
+
+            // Disable implicit macOS animations for this frame
             ca_transaction_begin_disabled();
 
             let positioned = if position_only {
@@ -1431,17 +1467,21 @@ impl AnimationSystem {
             };
 
             ca_transaction_commit();
+            // _update_guard drops here, re-enabling screen updates (single refresh for all windows)
 
             // Check completion conditions
             if all_settled || start.elapsed() > max_duration {
                 // Ensure final positions are exact (use direct for final frame)
+                let _update_guard = UpdateGuard::new_if(use_sls_batching);
                 ca_transaction_begin_disabled();
                 let final_frames: Vec<(_, Rect)> =
                     animatable.iter().map(|&(idx, ax)| (ax, transitions[idx].to)).collect();
                 let final_count = set_window_frames_direct(&final_frames);
                 ca_transaction_commit();
+                // _update_guard drops here
                 // Animation completed normally - clear interrupted positions
                 clear_interrupted_positions(&window_ids);
+                set_animation_active(false);
                 return final_count.max(positioned);
             }
 

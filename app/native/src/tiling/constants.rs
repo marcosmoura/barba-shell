@@ -108,6 +108,14 @@ pub mod cache {
     /// from caching during rapid operations like animations.
     pub const AX_ELEMENT_TTL_SECS: u64 = 5;
 
+    /// Extended TTL for cached AX element references during animation (seconds).
+    ///
+    /// During active animations, we extend the cache TTL significantly since:
+    /// - Windows are being actively manipulated (unlikely to be destroyed)
+    /// - We want to minimize expensive AX lookups during animation frames
+    /// - The animation will complete quickly anyway
+    pub const AX_ELEMENT_ANIMATION_TTL_SECS: u64 = 30;
+
     /// TTL for cached screen information (milliseconds).
     ///
     /// Screen configuration changes infrequently (hotplug, resolution changes),
@@ -121,6 +129,12 @@ pub mod cache {
     /// use a short TTL. This still helps during rapid operations like animations
     /// where multiple queries might happen within a frame.
     pub const CG_WINDOW_LIST_TTL_MS: u64 = 50;
+
+    /// Extended TTL for cached CG window list during animation (milliseconds).
+    ///
+    /// During active animations, the window list is unlikely to change
+    /// significantly, so we can cache for longer.
+    pub const CG_WINDOW_LIST_ANIMATION_TTL_MS: u64 = 500;
 }
 
 /// Animation system constants.

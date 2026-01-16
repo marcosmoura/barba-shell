@@ -934,6 +934,75 @@ const fn handle_app_hidden(_pid: i32) {
     // Windows remain tracked but hidden
 }
 
+/// Handles an application being terminated (quit).
+///
+/// This is called by the app monitor when `NSWorkspaceDidTerminateApplicationNotification`
+/// is received. It:
+/// 1. Removes the `AXObserver` for the app
+/// 2. Untracks all windows from that app
+/// 3. Re-applies layout for affected workspaces
+///
+/// This is essential for cleaning up auto-tiled windows from apps that don't have
+/// workspace rules - without this handler, their windows would remain in the tracking
+/// state indefinitely after the app quits.
+#[allow(clippy::needless_pass_by_value)] // Signature required by callback type
+pub fn handle_app_terminate(pid: i32, _bundle_id: Option<String>, _app_name: Option<String>) {
+    // Remove the AXObserver for this app
+    observer::remove_observer(pid);
+
+    // Clean up coalescing state
+    event_coalescer::clear_app(pid);
+
+    let Some(manager) = get_manager() else {
+        return;
+    };
+
+    // Cancel any running animation before acquiring lock
+    cancel_animation();
+
+    let mut mgr = manager.write();
+    begin_animation();
+    if !mgr.is_enabled() {
+        return;
+    }
+
+    // Find all windows from this app
+    let windows_to_remove: Vec<(u32, String)> = mgr
+        .get_windows()
+        .iter()
+        .filter(|w| w.pid == pid)
+        .map(|w| (w.id, w.workspace_name.clone()))
+        .collect();
+
+    if windows_to_remove.is_empty() {
+        return;
+    }
+
+    // Collect affected workspaces
+    let mut workspaces_changed: HashSet<String> = HashSet::new();
+    for (window_id, workspace_name) in &windows_to_remove {
+        workspaces_changed.insert(workspace_name.clone());
+        mgr.untrack_window_no_layout(*window_id);
+    }
+
+    // Re-apply layout for affected workspaces
+    for workspace_name in &workspaces_changed {
+        mgr.apply_layout_forced(workspace_name);
+    }
+
+    // Update border colors after layout is applied
+    if !workspaces_changed.is_empty() {
+        let layout_info = get_focused_workspace_layout(&mgr);
+
+        // Drop manager before updating border colors to avoid holding lock
+        drop(mgr);
+
+        if let Some((is_monocle, is_floating)) = layout_info {
+            borders::janky::update_colors_for_state(is_monocle, is_floating);
+        }
+    }
+}
+
 /// Handles an application being shown (unhidden).
 fn handle_app_shown(pid: i32) {
     // Check for any new windows that might have appeared

@@ -218,9 +218,12 @@ pub fn init(app_handle: tauri::AppHandle) {
         eprintln!("stache: tiling: screen monitor initialized");
     }
 
-    // Initialize the app launch monitor for tracking new apps
-    if app_monitor::init(event_handlers::handle_app_launch) {
-        eprintln!("stache: tiling: app launch monitor initialized");
+    // Initialize the app lifecycle monitor for tracking app launches and terminations
+    if app_monitor::init(
+        event_handlers::handle_app_launch,
+        event_handlers::handle_app_terminate,
+    ) {
+        eprintln!("stache: tiling: app lifecycle monitor initialized");
     }
 
     // Apply startup behavior: switch to workspace containing focused window

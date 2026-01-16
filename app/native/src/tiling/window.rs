@@ -1374,45 +1374,52 @@ unsafe fn get_focused_window_unsafe() -> Option<WindowInfo> {
     // Check if app is hidden
     let is_hidden: BOOL = msg_send![frontmost_app, isHidden];
 
-    // Now match with CGWindowList to get the window ID
+    // First, try to get the window ID directly from the AX element using the private API.
+    // This is the most reliable method, especially for same-app windows in monocle mode
+    // where frame-based matching fails because all windows have identical frames.
+    let mut window_id = unsafe { get_ax_window_id(focused_window_ref) }.unwrap_or(0);
+
+    // If direct lookup failed, fall back to CGWindowList matching strategies.
     // Some apps (especially GPU-accelerated ones like Ghostty) may report slightly
     // different frames between AX and CG APIs, so we use multiple matching strategies.
-    let cg_list = get_cg_window_list();
-    let app_windows: Vec<&CGWindowInfo> = cg_list.iter().filter(|cg| cg.pid == pid).collect();
+    if window_id == 0 {
+        let cg_list = get_cg_window_list();
+        let app_windows: Vec<&CGWindowInfo> = cg_list.iter().filter(|cg| cg.pid == pid).collect();
 
-    // Strategy 1: Match by frame with tight tolerance (2px)
-    let mut cg_match: Option<&CGWindowInfo> = app_windows.iter().copied().find(|cg| {
-        (cg.frame.x - ax_frame.x).abs() < 2.0
-            && (cg.frame.y - ax_frame.y).abs() < 2.0
-            && (cg.frame.width - ax_frame.width).abs() < 2.0
-            && (cg.frame.height - ax_frame.height).abs() < 2.0
-    });
-
-    // Strategy 2: Match by frame with looser tolerance (10px) - helps with GPU-rendered apps
-    if cg_match.is_none() {
-        cg_match = app_windows.iter().copied().find(|cg| {
-            (cg.frame.x - ax_frame.x).abs() < 10.0
-                && (cg.frame.y - ax_frame.y).abs() < 10.0
-                && (cg.frame.width - ax_frame.width).abs() < 10.0
-                && (cg.frame.height - ax_frame.height).abs() < 10.0
+        // Strategy 1: Match by frame with tight tolerance (2px)
+        let mut cg_match: Option<&CGWindowInfo> = app_windows.iter().copied().find(|cg| {
+            (cg.frame.x - ax_frame.x).abs() < 2.0
+                && (cg.frame.y - ax_frame.y).abs() < 2.0
+                && (cg.frame.width - ax_frame.width).abs() < 2.0
+                && (cg.frame.height - ax_frame.height).abs() < 2.0
         });
-    }
 
-    // Strategy 3: Match by title if there's exactly one window with that title
-    if cg_match.is_none() && !title.is_empty() {
-        let title_matches: Vec<_> =
-            app_windows.iter().copied().filter(|cg| cg.title == title).collect();
-        if title_matches.len() == 1 {
-            cg_match = Some(title_matches[0]);
+        // Strategy 2: Match by frame with looser tolerance (10px) - helps with GPU-rendered apps
+        if cg_match.is_none() {
+            cg_match = app_windows.iter().copied().find(|cg| {
+                (cg.frame.x - ax_frame.x).abs() < 10.0
+                    && (cg.frame.y - ax_frame.y).abs() < 10.0
+                    && (cg.frame.width - ax_frame.width).abs() < 10.0
+                    && (cg.frame.height - ax_frame.height).abs() < 10.0
+            });
         }
-    }
 
-    // Strategy 4: If there's only one window from this app, use it
-    if cg_match.is_none() && app_windows.len() == 1 {
-        cg_match = Some(app_windows[0]);
-    }
+        // Strategy 3: Match by title if there's exactly one window with that title
+        if cg_match.is_none() && !title.is_empty() {
+            let title_matches: Vec<_> =
+                app_windows.iter().copied().filter(|cg| cg.title == title).collect();
+            if title_matches.len() == 1 {
+                cg_match = Some(title_matches[0]);
+            }
+        }
 
-    let window_id = cg_match.map_or(0, |cg| cg.id);
+        // Strategy 4: If there's only one window from this app, use it
+        if cg_match.is_none() && app_windows.len() == 1 {
+            cg_match = Some(app_windows[0]);
+        }
+
+        window_id = cg_match.map_or(0, |cg| cg.id);
+    }
 
     unsafe { CFRelease(focused_window_ref) };
 
@@ -2570,6 +2577,17 @@ mod tests {
         unsafe {
             let result = raise_ax_window(ptr::null_mut());
             assert!(!result);
+        }
+    }
+
+    #[test]
+    fn test_get_ax_window_id_null_element() {
+        // get_ax_window_id should return None for null elements.
+        // This is important for the monocle same-app focus fix where we use
+        // this function to get direct window IDs from AX elements.
+        unsafe {
+            let result = get_ax_window_id(ptr::null_mut());
+            assert!(result.is_none());
         }
     }
 

@@ -9,6 +9,12 @@ use tauri::{App, Manager};
 use crate::utils::window::{set_window_below_menu, set_window_sticky};
 
 pub fn init(app: &App) {
+    let config = crate::config::get_config();
+
+    if !config.bar.is_enabled() {
+        return;
+    }
+
     let app_handle = app.app_handle().clone();
 
     let Some(webview_window) = app_handle.get_webview_window("bar") else {

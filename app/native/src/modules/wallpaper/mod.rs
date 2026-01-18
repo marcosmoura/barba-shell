@@ -14,5 +14,5 @@ mod processing;
 
 pub use manager::{
     WallpaperAction, WallpaperManagerError, generate_all_streaming, get_manager, init,
-    list_wallpapers, perform_action, start,
+    list_wallpapers, perform_action, setup,
 };

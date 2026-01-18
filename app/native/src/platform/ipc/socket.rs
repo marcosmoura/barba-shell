@@ -144,7 +144,7 @@ fn remove_socket() {
 /// # Arguments
 ///
 /// * `handler` - A function that processes queries and returns responses.
-pub fn init<F>(handler: F)
+pub fn start_server<F>(handler: F)
 where F: Fn(IpcQuery) -> IpcResponse + Send + Sync + 'static {
     if SERVER_RUNNING.swap(true, Ordering::SeqCst) {
         eprintln!("stache: ipc: server already running");

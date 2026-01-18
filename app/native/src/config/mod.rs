@@ -135,20 +135,26 @@ mod tests {
     }
 
     #[test]
-    fn test_wallpaper_config_with_path_is_enabled() {
+    fn test_wallpaper_config_with_path_has_wallpapers() {
         let config = WallpaperConfig {
             path: "/path/to/wallpapers".to_string(),
             ..Default::default()
         };
-        assert!(config.is_enabled());
+        assert!(config.has_wallpapers());
     }
 
     #[test]
-    fn test_wallpaper_config_with_list_is_enabled() {
+    fn test_wallpaper_config_with_list_has_wallpapers() {
         let config = WallpaperConfig {
             list: vec!["image.jpg".to_string()],
             ..Default::default()
         };
-        assert!(config.is_enabled());
+        assert!(config.has_wallpapers());
+    }
+
+    #[test]
+    fn test_bar_config_default_is_disabled() {
+        let config = BarConfig::default();
+        assert!(!config.is_enabled());
     }
 }

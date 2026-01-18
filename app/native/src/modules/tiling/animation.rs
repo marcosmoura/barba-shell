@@ -45,8 +45,9 @@ use super::constants::animation as anim_constants;
 use super::ffi::skylight::UpdateGuard;
 use super::state::Rect;
 use super::window::{
-    resolve_window_ax_elements, set_animation_active, set_window_frames_by_id,
-    set_window_frames_delta, set_window_frames_direct, set_window_positions_only,
+    create_enhanced_ui_guards_for_windows, resolve_window_ax_elements, set_animation_active,
+    set_window_frames_by_id, set_window_frames_delta, set_window_frames_direct,
+    set_window_positions_only,
 };
 use crate::config::{EasingType, get_config};
 
@@ -1205,6 +1206,7 @@ impl AnimationSystem {
     /// - Delta optimization (skips unchanged properties)
     /// - High-priority thread for reduced latency
     /// - Pre-allocated buffers to avoid per-frame allocations
+    /// - Enhanced UI disabled during animation (yabai optimization)
     fn run_eased_animation(&self, transitions: &[WindowTransition], duration: Duration) -> usize {
         // Always use SLS update batching for smoother animations
         let use_sls_batching = true;
@@ -1230,6 +1232,11 @@ impl AnimationSystem {
         // Resolve AX elements once at the start (expensive operation)
         let window_ids: Vec<u32> = transitions.iter().map(|t| t.window_id).collect();
         let ax_elements = resolve_window_ax_elements(&window_ids);
+
+        // Temporarily disable enhanced UI for all affected apps (yabai optimization).
+        // This can significantly speed up AX operations for apps that have it enabled.
+        // The guards will restore the original state when the animation completes.
+        let _enhanced_ui_guards = create_enhanced_ui_guards_for_windows(&window_ids);
 
         // Build a vec of (index, ax_element) for windows we can animate
         let animatable: Vec<(usize, _)> = transitions
@@ -1339,6 +1346,7 @@ impl AnimationSystem {
     /// - Delta optimization (skips unchanged properties)
     /// - High-priority thread for reduced latency
     /// - Pre-allocates frame buffer to avoid per-frame allocations
+    /// - Enhanced UI disabled during animation (yabai optimization)
     #[allow(clippy::unused_self)] // Method is called via self for consistency with run_eased_animation
     fn run_spring_animation(&self, transitions: &[WindowTransition], duration: Duration) -> usize {
         // Always use SLS update batching for smoother animations
@@ -1366,6 +1374,11 @@ impl AnimationSystem {
         // Resolve AX elements once at the start (expensive operation)
         let window_ids: Vec<u32> = transitions.iter().map(|t| t.window_id).collect();
         let ax_elements = resolve_window_ax_elements(&window_ids);
+
+        // Temporarily disable enhanced UI for all affected apps (yabai optimization).
+        // This can significantly speed up AX operations for apps that have it enabled.
+        // The guards will restore the original state when the animation completes.
+        let _enhanced_ui_guards = create_enhanced_ui_guards_for_windows(&window_ids);
 
         // Build a vec of (index, ax_element) for windows we can animate
         let animatable: Vec<(usize, _)> = transitions

@@ -347,13 +347,13 @@ impl WallpaperManager {
 /// the manager instance. This only loads wallpapers but does NOT set the
 /// initial wallpaper or start the timer.
 ///
-/// Call `start()` after this to set the initial wallpaper and start cycling.
+/// Call `init()` after this to set the initial wallpaper and start cycling.
 ///
 /// If wallpapers are disabled or initialization fails, logs a warning and returns.
-pub fn init() {
+pub fn setup() {
     let config = &crate::config::get_config().wallpapers;
 
-    if !config.is_enabled() {
+    if !config.is_enabled() || !config.has_wallpapers() {
         return;
     }
 
@@ -377,7 +377,7 @@ pub fn init() {
 /// Should be called once after `init()` when launching the UI.
 ///
 /// Does nothing if the manager is not initialized.
-pub fn start() {
+pub fn init() {
     let Some(manager) = get_manager() else {
         return;
     };

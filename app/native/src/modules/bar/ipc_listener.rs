@@ -170,9 +170,8 @@ fn handle_notification<R: Runtime>(app_handle: &AppHandle<R>, notification: Stac
                         ) {
                             eprintln!("stache: tiling: failed to emit window-focus-changed: {e}");
                         }
-                    } else {
-                        eprintln!("stache: tiling: failed to focus window: {target}");
                     }
+                    // None means no focus change needed (e.g., already focused or no valid target)
                 } else {
                     eprintln!("stache: tiling: manager not initialized");
                 }

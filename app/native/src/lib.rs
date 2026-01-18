@@ -4,8 +4,7 @@
 //! The desktop app uses Tauri to render a status bar with workspace information,
 //! media controls, system status, and more.
 
-// Core modules
-pub mod audio;
+// Infrastructure modules
 pub mod cache;
 pub mod cli;
 pub mod config;
@@ -13,19 +12,21 @@ pub mod constants;
 pub mod error;
 pub mod events;
 pub mod schema;
-
-// Desktop app modules
-mod bar;
-mod cmd_q;
-mod hotkey;
-mod menu_anywhere;
-mod notunes;
-pub mod tiling;
 mod utils;
-mod wallpaper;
-mod widgets;
 
+// New infrastructure (being phased in)
+pub mod core;
+pub mod platform;
+pub mod services;
+
+// Feature modules
+pub mod modules;
+
+// Re-exports for backward compatibility and convenience
 use std::sync::OnceLock;
+
+pub use modules::{audio, tiling};
+use modules::{bar, cmd_q, hotkey, menu_anywhere, notunes, wallpaper, widgets};
 
 /// Cached accessibility permission status.
 static ACCESSIBILITY_GRANTED: OnceLock<bool> = OnceLock::new();
@@ -58,7 +59,7 @@ pub fn run() {
     }
 
     // Initialize wallpaper manager early so CLI commands can use it
-    wallpaper::init();
+    wallpaper::setup();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|_app, _args, _| {
@@ -98,7 +99,7 @@ pub fn run() {
             config::watch_config_file(app.handle().clone());
 
             // Start IPC socket server for CLI queries
-            utils::ipc_socket::start_server(tiling::handle_ipc_query);
+            utils::ipc_socket::init(tiling::handle_ipc_query);
 
             // Initialize Bar components
             bar::init(app);
@@ -106,19 +107,19 @@ pub fn run() {
             // Initialize Widgets components
             widgets::init(app);
 
-            // Start wallpaper manager (set initial wallpaper and start timer)
-            wallpaper::start();
+            // Start wallpaper manager
+            wallpaper::init();
 
             // Initialize audio device manager
             audio::init();
 
-            // Initialize noTunes (prevent Apple Music from auto-launching)
+            // Initialize noTunes
             notunes::init();
 
             // Initialize hold-to-quit (⌘Q) handler
             cmd_q::init(app.handle().clone());
 
-            // Initialize MenuAnywhere (summon menu bar at cursor)
+            // Initialize MenuAnywhere
             menu_anywhere::init(app.handle().clone());
 
             // Initialize tiling window manager

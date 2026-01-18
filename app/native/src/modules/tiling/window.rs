@@ -146,6 +146,8 @@ thread_local! {
     static CF_MAIN: OnceCell<CFString> = const { OnceCell::new() };
     static CF_RAISE: OnceCell<CFString> = const { OnceCell::new() };
     static CF_FRONTMOST: OnceCell<CFString> = const { OnceCell::new() };
+    /// Enhanced user interface attribute - disabling this speeds up AX operations.
+    static CF_ENHANCED_USER_INTERFACE: OnceCell<CFString> = const { OnceCell::new() };
 }
 
 /// Gets or creates a cached `CFString`.
@@ -193,6 +195,11 @@ fn cf_raise() -> *const c_void { cached_cfstring!(CF_RAISE, "AXRaise") }
 
 #[inline]
 fn cf_frontmost() -> *const c_void { cached_cfstring!(CF_FRONTMOST, "AXFrontmost") }
+
+#[inline]
+fn cf_enhanced_user_interface() -> *const c_void {
+    cached_cfstring!(CF_ENHANCED_USER_INTERFACE, "AXEnhancedUserInterface")
+}
 
 // ============================================================================
 // AXUIElement Resolution Cache
@@ -861,6 +868,186 @@ unsafe fn set_ax_focused(element: AXUIElementRef) -> bool {
         AXUIElementSetAttributeValue(element, cf_focused(), true_value.as_concrete_TypeRef().cast())
     };
     result == K_AX_ERROR_SUCCESS
+}
+
+// ============================================================================
+// Enhanced User Interface Optimization
+// ============================================================================
+
+/// Gets the `AXEnhancedUserInterface` attribute from an application element.
+///
+/// This attribute is enabled by some apps for VoiceOver support. When enabled,
+/// it can significantly slow down accessibility operations. Temporarily disabling
+/// it during batch window operations improves performance.
+///
+/// # Arguments
+///
+/// * `app_element` - The application's `AXUIElement` (created via `AXUIElementCreateApplication`)
+///
+/// # Returns
+///
+/// `true` if enhanced UI is enabled, `false` otherwise or on error.
+#[inline]
+unsafe fn get_ax_enhanced_ui(app_element: AXUIElementRef) -> bool {
+    if app_element.is_null() {
+        return false;
+    }
+    unsafe { get_ax_bool(app_element, cf_enhanced_user_interface()).unwrap_or(false) }
+}
+
+/// Sets the `AXEnhancedUserInterface` attribute on an application element.
+///
+/// # Arguments
+///
+/// * `app_element` - The application's `AXUIElement`
+/// * `enabled` - Whether to enable enhanced UI
+///
+/// # Returns
+///
+/// `true` if the attribute was successfully set, `false` otherwise.
+#[inline]
+unsafe fn set_ax_enhanced_ui(app_element: AXUIElementRef, enabled: bool) -> bool {
+    if app_element.is_null() {
+        return false;
+    }
+    let value = if enabled {
+        CFBoolean::true_value()
+    } else {
+        CFBoolean::false_value()
+    };
+    let result = unsafe {
+        AXUIElementSetAttributeValue(
+            app_element,
+            cf_enhanced_user_interface(),
+            value.as_concrete_TypeRef().cast(),
+        )
+    };
+    result == K_AX_ERROR_SUCCESS
+}
+
+/// RAII guard that temporarily disables enhanced UI for an application.
+///
+/// When apps have `AXEnhancedUserInterface` enabled (common for VoiceOver-compatible
+/// apps), accessibility operations can be significantly slower. This guard:
+///
+/// 1. Checks if enhanced UI is enabled on construction
+/// 2. If enabled, disables it temporarily
+/// 3. Restores the original state on drop
+///
+/// This optimization is inspired by yabai's `AX_ENHANCED_UI_WORKAROUND` macro and
+/// can improve window manipulation performance by 2-10x for affected apps.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let _guard = EnhancedUIGuard::new(app_element);
+/// // Perform AX operations with enhanced UI disabled
+/// // Enhanced UI is restored when guard drops
+/// ```
+pub struct EnhancedUIGuard {
+    /// The application element to restore enhanced UI on.
+    app_element: AXUIElementRef,
+    /// Whether enhanced UI was originally enabled.
+    was_enabled: bool,
+}
+
+impl EnhancedUIGuard {
+    /// Creates a new guard, disabling enhanced UI if it was enabled.
+    ///
+    /// Returns `None` if the app element is null or enhanced UI was not enabled
+    /// (in which case no restoration is needed).
+    #[must_use]
+    pub fn new(app_element: AXUIElementRef) -> Option<Self> {
+        if app_element.is_null() {
+            return None;
+        }
+
+        let was_enabled = unsafe { get_ax_enhanced_ui(app_element) };
+        if was_enabled {
+            // Disable enhanced UI for faster operations
+            unsafe { set_ax_enhanced_ui(app_element, false) };
+            Some(Self { app_element, was_enabled })
+        } else {
+            // No need to restore if it wasn't enabled
+            None
+        }
+    }
+
+    /// Creates guards for multiple applications, returning those that were disabled.
+    ///
+    /// This is more efficient than creating individual guards because it can
+    /// process multiple apps without repeated allocations.
+    #[must_use]
+    pub fn new_for_pids(pids: &[i32]) -> Vec<Self> {
+        pids.iter()
+            .filter_map(|&pid| {
+                let app_element = unsafe { AXUIElementCreateApplication(pid) };
+                if app_element.is_null() {
+                    return None;
+                }
+                // Try to create guard; if enhanced UI wasn't enabled, we need to release the element
+                if let Some(guard) = Self::new(app_element) {
+                    Some(guard)
+                } else {
+                    // Release the unused app element
+                    unsafe { CFRelease(app_element.cast()) };
+                    None
+                }
+            })
+            .collect()
+    }
+}
+
+impl Drop for EnhancedUIGuard {
+    fn drop(&mut self) {
+        if self.was_enabled {
+            // Restore enhanced UI
+            unsafe { set_ax_enhanced_ui(self.app_element, true) };
+        }
+        // Release the app element
+        unsafe { CFRelease(self.app_element.cast()) };
+    }
+}
+
+// SAFETY: AXUIElementRef is thread-safe for operations on different applications.
+// The guard only operates on a single app element that it owns.
+unsafe impl Send for EnhancedUIGuard {}
+
+/// Creates enhanced UI guards for all apps owning the specified windows.
+///
+/// This function looks up the PIDs for the given window IDs and creates
+/// guards for unique PIDs. Use this when you have window IDs but not PIDs.
+///
+/// # Arguments
+///
+/// * `window_ids` - List of window IDs to create guards for
+///
+/// # Returns
+///
+/// A vector of guards for apps that had enhanced UI enabled. These guards
+/// will restore the enhanced UI state when dropped.
+#[must_use]
+pub fn create_enhanced_ui_guards_for_windows(window_ids: &[u32]) -> Vec<EnhancedUIGuard> {
+    if window_ids.is_empty() {
+        return Vec::new();
+    }
+
+    // Get all windows to find PIDs
+    let windows = get_all_windows();
+
+    // Create a set for O(1) lookup
+    let window_id_set: std::collections::HashSet<u32> = window_ids.iter().copied().collect();
+
+    // Collect unique PIDs for the specified windows
+    let unique_pids: Vec<i32> = windows
+        .iter()
+        .filter(|w| window_id_set.contains(&w.id))
+        .map(|w| w.pid)
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    EnhancedUIGuard::new_for_pids(&unique_pids)
 }
 
 /// Gets the `CGWindowID` for an `AXUIElement` using private API.
@@ -1705,6 +1892,13 @@ pub fn set_window_frame_with_retry(
 /// This is more reliable than frame-based matching as it uses window IDs directly.
 /// Gets the window list once and positions all windows from it.
 ///
+/// # Performance Optimization
+///
+/// This function temporarily disables `AXEnhancedUserInterface` for affected apps
+/// during the batch operation. Apps with enhanced UI enabled (common for VoiceOver
+/// support) can be 2-10x slower for accessibility operations. The enhanced UI state
+/// is automatically restored when the function returns.
+///
 /// # Arguments
 ///
 /// * `window_frames` - Pairs of (`window_id`, `new_frame`)
@@ -1721,15 +1915,34 @@ pub fn set_window_frames_by_id(window_frames: &[(u32, Rect)]) -> usize {
     // Get all windows once
     let windows = get_all_windows();
 
-    // Build a map of window_id -> ax_element
-    let window_map: std::collections::HashMap<u32, _> =
-        windows.iter().filter_map(|w| w.ax_element.map(|ax| (w.id, ax))).collect();
+    // Build maps of window_id -> (ax_element, pid)
+    let window_map: std::collections::HashMap<u32, (AXUIElementRef, i32)> = windows
+        .iter()
+        .filter_map(|w| w.ax_element.map(|ax| (w.id, (ax, w.pid))))
+        .collect();
 
+    #[cfg(debug_assertions)]
     eprintln!(
         "stache: tiling: set_window_frames_by_id: {} targets, {} available windows with AX",
         window_frames.len(),
         window_map.len()
     );
+
+    // Collect unique PIDs from windows we're about to manipulate
+    let target_window_ids: std::collections::HashSet<u32> =
+        window_frames.iter().map(|(id, _)| *id).collect();
+    let unique_pids: Vec<i32> = window_map
+        .iter()
+        .filter(|(id, _)| target_window_ids.contains(id))
+        .map(|(_, (_, pid))| *pid)
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    // Temporarily disable enhanced UI for all affected apps (yabai's optimization)
+    // This can significantly speed up AX operations for apps that have it enabled.
+    // The guards will restore the original state when they're dropped.
+    let _enhanced_ui_guards = EnhancedUIGuard::new_for_pids(&unique_pids);
 
     // Check for duplicate window IDs in the input (should never happen)
     let mut seen_ids: std::collections::HashSet<u32> = std::collections::HashSet::new();
@@ -1740,10 +1953,12 @@ pub fn set_window_frames_by_id(window_frames: &[(u32, Rect)]) -> usize {
     }
 
     let mut success_count = 0;
-    let mut missing_ids = Vec::new();
+    #[cfg(debug_assertions)]
+    let mut missing_ids: Vec<u32> = Vec::new();
 
     for (window_id, new_frame) in window_frames {
-        if let Some(&ax_element) = window_map.get(window_id) {
+        if let Some(&(ax_element, _)) = window_map.get(window_id) {
+            #[cfg(debug_assertions)]
             eprintln!(
                 "stache: tiling: positioning window {} to ({:.0}, {:.0}, {:.0}x{:.0})",
                 window_id, new_frame.x, new_frame.y, new_frame.width, new_frame.height
@@ -1752,10 +1967,14 @@ pub fn set_window_frames_by_id(window_frames: &[(u32, Rect)]) -> usize {
                 success_count += 1;
             }
         } else {
+            #[cfg(debug_assertions)]
             missing_ids.push(*window_id);
         }
     }
 
+    // Enhanced UI guards are automatically restored here when they drop
+
+    #[cfg(debug_assertions)]
     if !missing_ids.is_empty() {
         eprintln!(
             "stache: tiling: set_window_frames_by_id: {} window IDs not found: {:?}",

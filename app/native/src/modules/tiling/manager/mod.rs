@@ -230,7 +230,11 @@ impl TilingManager {
     /// avoiding repeated calculations during layout application.
     fn rebuild_gaps_cache(&mut self) {
         let config = get_config();
-        let bar_offset = f64::from(config.bar.height) + f64::from(config.bar.padding);
+        let bar_offset = if config.bar.is_enabled() {
+            f64::from(config.bar.height) + f64::from(config.bar.padding)
+        } else {
+            0.0
+        };
 
         self.gaps_cache.clear();
 
@@ -251,7 +255,11 @@ impl TilingManager {
 
         // Cache miss - compute on demand (shouldn't happen normally)
         let config = get_config();
-        let bar_offset = f64::from(config.bar.height) + f64::from(config.bar.padding);
+        let bar_offset = if config.bar.is_enabled() {
+            f64::from(config.bar.height) + f64::from(config.bar.padding)
+        } else {
+            0.0
+        };
         Gaps::from_config(&config.tiling.gaps, &screen.name, screen.is_main, bar_offset)
     }
 
@@ -2124,7 +2132,6 @@ impl TilingManager {
         let tiled_window_ids = self.get_tiled_window_ids(&workspace_name);
 
         if tiled_window_ids.is_empty() {
-            eprintln!("stache: tiling: focus_next: no tiled windows in workspace");
             return None;
         }
 
@@ -2143,9 +2150,10 @@ impl TilingManager {
         let next_tiled_idx = (current_tiled_idx + 1) % tiled_window_ids.len();
         let next_window_id = tiled_window_ids[next_tiled_idx];
 
-        eprintln!(
-            "stache: tiling: focus_next: current_tiled_idx={current_tiled_idx}, next_tiled_idx={next_tiled_idx}, window_id={next_window_id}, tiled_window_ids={tiled_window_ids:?}"
-        );
+        // Skip if target window is already focused (e.g., only one window in workspace)
+        if current_focused_id == Some(next_window_id) {
+            return None;
+        }
 
         if self.focus_window_by_id(next_window_id) {
             // Update the focused index in the original window_ids list
@@ -2155,10 +2163,8 @@ impl TilingManager {
             {
                 ws.focused_window_index = Some(original_idx);
             }
-            eprintln!("stache: tiling: focus_next: success");
             Some(next_window_id)
         } else {
-            eprintln!("stache: tiling: focus_next: focus_window_by_id failed");
             None
         }
     }
@@ -2197,6 +2203,11 @@ impl TilingManager {
             current_tiled_idx - 1
         };
         let prev_window_id = tiled_window_ids[prev_tiled_idx];
+
+        // Skip if target window is already focused (e.g., only one window in workspace)
+        if current_focused_id == Some(prev_window_id) {
+            return None;
+        }
 
         if self.focus_window_by_id(prev_window_id) {
             // Update the focused index in the original window_ids list
@@ -3161,10 +3172,14 @@ mod tests {
             let gaps = manager.get_gaps_for_screen(&main_screen);
 
             // Main screen gaps should have bar offset included
-            // The exact value depends on config, but outer_top should be non-zero
-            // if bar is configured (which it is by default)
+            // The exact value depends on config, but outer_top should include bar offset
+            // if bar is enabled
             let config = get_config();
-            let bar_offset = f64::from(config.bar.height) + f64::from(config.bar.padding);
+            let bar_offset = if config.bar.is_enabled() {
+                f64::from(config.bar.height) + f64::from(config.bar.padding)
+            } else {
+                0.0
+            };
 
             if bar_offset > 0.0 {
                 // outer_top should include bar_offset

@@ -9,8 +9,9 @@
       "description": "Bar configuration for status bar UI components.\n\nContains settings for weather.",
       "$ref": "#/$defs/BarConfig",
       "default": {
-        "height": 28,
-        "padding": 12,
+        "enabled": false,
+        "height": 0,
+        "padding": 0,
         "weather": {
           "apiKeys": "",
           "defaultLocation": ""
@@ -38,8 +39,8 @@
       "description": "noTunes configuration.\n\nPrevents Apple Music/iTunes from auto-launching and optionally\nlaunches a preferred music player instead.",
       "$ref": "#/$defs/NoTunesConfig",
       "default": {
-        "enabled": true,
-        "targetApp": "tidal"
+        "enabled": false,
+        "targetApp": "spotify"
       }
     },
     "proxyAudio": {
@@ -109,6 +110,7 @@
       "$ref": "#/$defs/WallpaperConfig",
       "default": {
         "blur": 0,
+        "enabled": false,
         "interval": 0,
         "list": [],
         "mode": "random",
@@ -188,11 +190,16 @@
       "description": "Bar configuration for the status bar UI components.\n\nContains settings for bar-specific features like weather and dimensions.\nThe bar dimensions are used by the tiling window manager to account for\nthe status bar when calculating window layouts on the main screen.",
       "type": "object",
       "properties": {
+        "enabled": {
+          "description": "Whether the status bar is enabled.\nDefault: false",
+          "type": "boolean",
+          "default": false
+        },
         "height": {
           "description": "Height of the status bar in pixels.\nDefault: 28",
           "type": "integer",
           "format": "uint16",
-          "default": 28,
+          "default": 0,
           "maximum": 65535,
           "minimum": 0
         },
@@ -200,7 +207,7 @@
           "description": "Padding around the status bar in pixels.\nThis is added to the height when calculating the top gap for tiling.\nDefault: 12",
           "type": "integer",
           "format": "uint16",
-          "default": 12,
+          "default": 0,
           "maximum": 65535,
           "minimum": 0
         },
@@ -759,14 +766,14 @@
       "type": "object",
       "properties": {
         "enabled": {
-          "description": "Whether noTunes functionality is enabled.\nDefault: true",
+          "description": "Whether noTunes functionality is enabled.\nDefault: false",
           "type": "boolean",
-          "default": true
+          "default": false
         },
         "targetApp": {
-          "description": "The music app to launch when Apple Music/iTunes is blocked.\nOptions: \"tidal\", \"spotify\", \"none\"\nDefault: \"tidal\"",
+          "description": "The music app to launch when Apple Music/iTunes is blocked.\nOptions: \"tidal\", \"spotify\", \"none\"\nDefault: \"spotify\"",
           "$ref": "#/$defs/TargetMusicApp",
-          "default": "tidal"
+          "default": "spotify"
         }
       }
     },
@@ -994,6 +1001,11 @@
           "format": "uint32",
           "default": 0,
           "minimum": 0
+        },
+        "enabled": {
+          "description": "Whether wallpaper management is enabled.\nDefault: false",
+          "type": "boolean",
+          "default": false
         },
         "interval": {
           "description": "Time in seconds between wallpaper changes.\nIf set to 0, the wallpaper will not change after the initial setting.",

@@ -510,15 +510,6 @@ pub struct AnimationConfig {
     /// Easing function for animations.
     /// Default: "ease-out"
     pub easing: EasingType,
-
-    /// Whether to use SLS screen update batching for smoother animations.
-    ///
-    /// When enabled, uses private `SLSDisableUpdate`/`SLSReenableUpdate` APIs
-    /// to prevent intermediate screen refreshes during window batch operations.
-    /// This reduces visual tearing and improves frame timing consistency.
-    ///
-    /// Default: true
-    pub use_sls_update_batching: bool,
 }
 
 impl Default for AnimationConfig {
@@ -527,7 +518,6 @@ impl Default for AnimationConfig {
             enabled: false,
             duration: 200,
             easing: EasingType::EaseOut,
-            use_sls_update_batching: true,
         }
     }
 }

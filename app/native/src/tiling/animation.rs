@@ -1024,8 +1024,6 @@ pub struct AnimationConfig {
     pub duration: Duration,
     /// Easing function type.
     pub easing: EasingType,
-    /// Whether to use SLS screen update batching for smoother animations.
-    pub use_sls_update_batching: bool,
 }
 
 impl Default for AnimationConfig {
@@ -1034,7 +1032,6 @@ impl Default for AnimationConfig {
             enabled: false,
             duration: Duration::from_millis(200),
             easing: EasingType::EaseOut,
-            use_sls_update_batching: true,
         }
     }
 }
@@ -1052,7 +1049,6 @@ impl AnimationConfig {
                 anim_config.duration.clamp(MIN_DURATION_MS, MAX_DURATION_MS),
             )),
             easing: anim_config.easing,
-            use_sls_update_batching: anim_config.use_sls_update_batching,
         }
     }
 
@@ -1138,10 +1134,6 @@ impl AnimationSystem {
     #[must_use]
     pub const fn easing(&self) -> EasingType { self.config.easing }
 
-    /// Returns whether SLS update batching is enabled.
-    #[must_use]
-    pub const fn use_sls_update_batching(&self) -> bool { self.config.use_sls_update_batching }
-
     /// Animates a list of window transitions.
     ///
     /// If animations are disabled, windows are moved instantly.
@@ -1214,7 +1206,8 @@ impl AnimationSystem {
     /// - High-priority thread for reduced latency
     /// - Pre-allocated buffers to avoid per-frame allocations
     fn run_eased_animation(&self, transitions: &[WindowTransition], duration: Duration) -> usize {
-        let use_sls_batching = self.config.use_sls_update_batching;
+        // Always use SLS update batching for smoother animations
+        let use_sls_batching = true;
 
         // Mark animation as active for cache TTL extension
         set_animation_active(true);
@@ -1338,7 +1331,7 @@ impl AnimationSystem {
     ///
     /// Optimizations:
     /// - `CVDisplayLink` vsync synchronization for tear-free rendering
-    /// - `SLSDisableUpdate` screen update batching (configurable)
+    /// - `SLSDisableUpdate` screen update batching for smoother animations
     /// - `CATransaction` to disable implicit macOS animations
     /// - Parallel window updates using rayon
     /// - Adaptive frame rate based on display refresh rate
@@ -1346,8 +1339,10 @@ impl AnimationSystem {
     /// - Delta optimization (skips unchanged properties)
     /// - High-priority thread for reduced latency
     /// - Pre-allocates frame buffer to avoid per-frame allocations
+    #[allow(clippy::unused_self)] // Method is called via self for consistency with run_eased_animation
     fn run_spring_animation(&self, transitions: &[WindowTransition], duration: Duration) -> usize {
-        let use_sls_batching = self.config.use_sls_update_batching;
+        // Always use SLS update batching for smoother animations
+        let use_sls_batching = true;
 
         // Mark animation as active for cache TTL extension
         set_animation_active(true);

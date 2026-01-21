@@ -137,10 +137,14 @@ export const useWeatherStore = () => {
     enabled: !!config?.visualCrossingApiKey && !!location,
   });
 
+  // Weather is considered configured only if an API key is provided
+  const isConfigured = !!config?.visualCrossingApiKey;
+
   return {
     config,
     location,
     weather,
     isLoading,
+    isConfigured,
   };
 };

@@ -7,7 +7,11 @@ import { useWeather } from './Weather.state';
 import * as styles from './Weather.styles';
 
 export const Weather = () => {
-  const { label, icon, ref, onClick } = useWeather();
+  const { label, icon, ref, onClick, isConfigured } = useWeather();
+
+  if (!isConfigured) {
+    return null;
+  }
 
   return (
     <Surface as={Button} onClick={onClick} ref={ref}>

@@ -7,7 +7,7 @@ import { LAPTOP_MEDIA_QUERY } from '@/utils/media-query';
 export const useWeather = () => {
   const { ref, onClick } = useWidgetToggle('weather');
   const isLaptopScreen = useMediaQuery(LAPTOP_MEDIA_QUERY);
-  const { weather, isLoading } = useWeatherStore();
+  const { weather, isLoading, isConfigured } = useWeatherStore();
 
   const currentConditions = weather?.currentConditions;
 
@@ -34,5 +34,5 @@ export const useWeather = () => {
     return `${feelsLike}°C (${condition})`;
   }, [currentConditions, isLaptopScreen, isLoading]);
 
-  return { label, icon, ref, onClick };
+  return { label, icon, ref, onClick, isConfigured };
 };

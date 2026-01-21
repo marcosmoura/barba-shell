@@ -231,8 +231,8 @@
   //
   "notunes": {
     // Enable or disable noTunes functionality
-    // Default: true
-    "enabled": true,
+    // Default: false
+    "enabled": false,
 
     // Music app to launch when Apple Music/iTunes is blocked
     // Options: "tidal" | "spotify" | "none"

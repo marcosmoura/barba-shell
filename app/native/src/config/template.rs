@@ -49,7 +49,7 @@ pub fn generate_config_template() -> String {
   // Prevents accidental app quits by requiring you to hold ⌘Q
   // "commandQuit": {
   //   // Enable or disable the hold-to-quit feature
-  //   "enabled": true,
+  //   "enabled": false,
   //
   //   // Duration in milliseconds to hold ⌘Q before quitting (default: 1500)
   //   "holdDuration": 1500

@@ -1,32 +1,18 @@
-import { useCallback, useLayoutEffect, useState } from 'react';
+import { useCallback } from 'react';
 
-import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 
 import { useTauriEvent } from '@/hooks';
-import { AppEvents, TilingEvents } from '@/types';
+import { AppEvents } from '@/types';
 
 const windowName = getCurrentWindow().label;
 
 console.log('App mounted for window:', windowName);
 
 export const useRenderer = () => {
-  const [isReady, setIsReady] = useState(false);
-
   const onAppReload = useCallback(() => window.location.reload(), []);
-  const onTilingInitialized = useCallback(() => setIsReady(true), []);
-
-  // Check if tiling is already initialized on mount
-  useLayoutEffect(() => {
-    invoke<boolean>('is_tiling_enabled').then((enabled) => {
-      if (enabled) {
-        setIsReady(true);
-      }
-    });
-  }, []);
 
   useTauriEvent(AppEvents.RELOAD, onAppReload);
-  useTauriEvent(TilingEvents.INITIALIZED, onTilingInitialized);
 
-  return { windowName, isReady };
+  return { windowName };
 };

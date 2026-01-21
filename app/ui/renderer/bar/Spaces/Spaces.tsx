@@ -10,10 +10,11 @@ import { useSpaces } from './Spaces.state';
 import * as styles from './Spaces.styles';
 
 const SpacesContent = () => {
-  const { workspaces, focusedApp, focusedWorkspace, apps, onSpaceClick, onAppClick } = useSpaces();
+  const { isEnabled, workspaces, focusedApp, focusedWorkspace, apps, onSpaceClick, onAppClick } =
+    useSpaces();
 
-  if (!workspaces.length) {
-    return null;
+  if (!isEnabled || !workspaces.length) {
+    return <div />;
   }
 
   return (

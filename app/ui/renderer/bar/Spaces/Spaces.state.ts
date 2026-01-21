@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { useQueryClient, useSuspenseQuery } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
@@ -93,6 +93,8 @@ const truncateText = (text: string, maxLength: number = MAX_DISPLAY_LENGTH): str
 };
 
 export const useSpaces = () => {
+  const [isEnabled, setIsEnabled] = useState(false);
+
   const queryClient = useQueryClient();
   const isLaptopScreen = useMediaQuery(LAPTOP_MEDIA_QUERY);
   const lastFocusChangedRefreshRef = useRef<Date | null>(null);
@@ -189,6 +191,15 @@ export const useSpaces = () => {
   useTauriEvent(TilingEvents.WINDOW_FOCUS_CHANGED, onWindowFocusChanged);
   useTauriEvent(TilingEvents.WORKSPACE_CHANGED, onWorkspaceChanged);
 
+  // Check if tiling is already initialized on mount
+  useLayoutEffect(() => {
+    invoke<boolean>('is_tiling_enabled').then((enabled) => {
+      if (enabled) {
+        setIsEnabled(true);
+      }
+    });
+  }, []);
+
   return {
     apps,
     workspaces,
@@ -196,5 +207,6 @@ export const useSpaces = () => {
     focusedApp,
     onSpaceClick,
     onAppClick,
+    isEnabled,
   };
 };

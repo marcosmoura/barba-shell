@@ -8,11 +8,7 @@ const Bar = lazy(() => import('./bar').then(resolveModule('Bar')));
 const Widgets = lazy(() => import('./widgets').then(resolveModule('Widgets')));
 
 export const Renderer = () => {
-  const { windowName, isReady } = useRenderer();
-
-  if (!isReady) {
-    return null;
-  }
+  const { windowName } = useRenderer();
 
   return (
     <Suspense fallback={null}>

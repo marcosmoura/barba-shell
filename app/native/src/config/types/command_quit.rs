@@ -17,7 +17,7 @@ const DEFAULT_HOLD_DURATION_MS: u64 = 1500;
 #[serde(default, rename_all = "camelCase")]
 pub struct CommandQuitConfig {
     /// Whether the command quit feature is enabled.
-    /// Default: true
+    /// Default: false
     pub enabled: bool,
 
     /// Duration in milliseconds to hold ⌘Q before quitting.
@@ -28,7 +28,7 @@ pub struct CommandQuitConfig {
 impl Default for CommandQuitConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             hold_duration: DEFAULT_HOLD_DURATION_MS,
         }
     }

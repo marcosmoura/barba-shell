@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use super::audio::ProxyAudioConfig;
 use super::bar::BarConfig;
+use super::command_quit::CommandQuitConfig;
 use super::menu_anywhere::MenuAnywhereConfig;
 use super::notunes::NoTunesConfig;
 use super::tiling::TilingConfig;
@@ -74,6 +75,13 @@ pub struct StacheConfig {
     ///
     /// Contains settings for weather.
     pub bar: BarConfig,
+
+    /// Command Quit (hold ⌘Q to quit) configuration.
+    ///
+    /// Prevents accidental application quits by requiring users to hold
+    /// ⌘Q for a configurable duration before quitting. Enabled by default.
+    #[serde(rename = "commandQuit")]
+    pub command_quit: CommandQuitConfig,
 
     /// Desktop wallpaper configuration.
     ///

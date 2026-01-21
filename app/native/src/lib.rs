@@ -120,6 +120,7 @@ pub fn run() {
             // Spawn parallel initialization for background modules
             let handle = app.handle().clone();
             let tiling_config = config::get_config().tiling.clone();
+            let cmd_q_config = config::get_config().command_quit.clone();
 
             tauri::async_runtime::spawn(async move {
                 tracing::debug!("starting parallel background initialization");
@@ -142,7 +143,7 @@ pub fn run() {
                         let h = handle.clone();
                         move || {
                             tracing::debug!("initializing cmd-q handler");
-                            cmd_q::init(h);
+                            cmd_q::init(h, &cmd_q_config);
                         }
                     }),
                     tokio::task::spawn_blocking({

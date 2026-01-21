@@ -1,14 +1,14 @@
 //! Hold-to-Quit Module for Stache.
 //!
 //! This module provides a "hold ⌘Q to quit" feature that requires users to hold
-//! the ⌘Q key combination for 1.5 seconds before quitting the frontmost application.
-//! If the user only taps ⌘Q, an alert message is displayed instead.
+//! the ⌘Q key combination for a configurable duration before quitting the frontmost
+//! application. If the user only taps ⌘Q, an alert message is displayed instead.
 //!
 //! This is a Rust implementation inspired by the Hammerspoon `HoldToQuit` Spoon.
 
 use std::ffi::c_void;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use core_foundation::base::TCFType;
@@ -18,10 +18,14 @@ use objc::runtime::{BOOL, Class, Object, YES};
 use objc::{msg_send, sel, sel_impl};
 use tauri::Emitter;
 
+use crate::config::CommandQuitConfig;
 use crate::events;
 
-/// Duration (in seconds) required to hold ⌘Q before quitting.
-const HOLD_DURATION_SECS: f64 = 1.5;
+/// Default hold duration in milliseconds (used as fallback).
+const DEFAULT_HOLD_DURATION_MS: u64 = 1500;
+
+/// Configured hold duration in milliseconds (set at init time).
+static HOLD_DURATION_MS: AtomicU64 = AtomicU64::new(DEFAULT_HOLD_DURATION_MS);
 
 /// Polling interval when idle (not tracking a key press).
 const IDLE_POLL_MS: u64 = 100;
@@ -109,7 +113,21 @@ static APP_HANDLE: Mutex<Option<tauri::AppHandle>> = Mutex::new(None);
 ///
 /// # Arguments
 /// * `app_handle` - The Tauri app handle for emitting events.
-pub fn init(app_handle: tauri::AppHandle) {
+/// * `config` - The command quit configuration.
+pub fn init(app_handle: tauri::AppHandle, config: &CommandQuitConfig) {
+    // Check if the module is enabled
+    if !config.is_enabled() {
+        tracing::info!("cmd_q: disabled by configuration");
+        return;
+    }
+
+    // Store the configured hold duration
+    HOLD_DURATION_MS.store(config.hold_duration, Ordering::SeqCst);
+    tracing::debug!(
+        hold_duration_ms = config.hold_duration,
+        "cmd_q: configured hold duration"
+    );
+
     // Store the app handle for later use
     if let Ok(mut handle) = APP_HANDLE.lock() {
         *handle = Some(app_handle);
@@ -127,6 +145,10 @@ pub fn init(app_handle: tauri::AppHandle) {
 
     IS_RUNNING.store(true, Ordering::SeqCst);
 }
+
+/// Returns the configured hold duration in seconds.
+#[allow(clippy::cast_precision_loss)] // Precision loss is negligible for millisecond values
+fn hold_duration_secs() -> f64 { HOLD_DURATION_MS.load(Ordering::SeqCst) as f64 / 1000.0 }
 
 /// Main timer loop that checks if the ⌘Q key has been held long enough.
 ///
@@ -153,7 +175,7 @@ fn timer_loop() {
 
             state.press_start.is_some_and(|start| {
                 let elapsed = start.elapsed().as_secs_f64();
-                if elapsed >= HOLD_DURATION_SECS && !state.quit_triggered {
+                if elapsed >= hold_duration_secs() && !state.quit_triggered {
                     state.quit_triggered = true;
                     true
                 } else {

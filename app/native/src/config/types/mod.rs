@@ -9,6 +9,7 @@ pub mod audio;
 pub mod bar;
 pub mod borders;
 pub mod color;
+pub mod command_quit;
 pub mod gaps;
 pub mod menu_anywhere;
 pub mod notunes;
@@ -30,6 +31,8 @@ pub use bar::{BarConfig, WeatherConfig};
 pub use borders::{BorderColor, BorderStateConfig, BordersConfig, GradientConfig};
 // Color types
 pub use color::{Rgba, parse_color, parse_hex_color, parse_rgba_color};
+// Command Quit types
+pub use command_quit::CommandQuitConfig;
 // Gap types
 pub use gaps::{DimensionValue, GapValue, GapsConfig, GapsConfigValue};
 // Menu Anywhere types

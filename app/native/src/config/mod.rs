@@ -15,14 +15,14 @@ use std::sync::OnceLock;
 
 pub use types::{
     AnimationConfig, AudioDeviceDependency, AudioDevicePriority, BarConfig, BorderColor,
-    BorderStateConfig, BordersConfig, ConfigError, DimensionValue, EasingType, FloatingConfig,
-    FloatingPreset, GapValue, GapsConfig, GapsConfigValue, GradientConfig, LayoutType,
-    MasterConfig, MasterPosition, MatchStrategy, MenuAnywhereConfig, MenuAnywhereModifier,
-    MenuAnywhereMouseButton, NoTunesConfig, ProxyAudioConfig, ProxyAudioInputConfig,
-    ProxyAudioOutputConfig, Rgba, ShortcutCommands, StacheConfig, TargetMusicApp, TilingConfig,
-    WallpaperConfig, WallpaperMode, WeatherConfig, WindowRule, WorkspaceConfig, config_paths,
-    load_config as load_config_default, load_config_from_path, parse_color, parse_hex_color,
-    parse_rgba_color,
+    BorderStateConfig, BordersConfig, CommandQuitConfig, ConfigError, DimensionValue, EasingType,
+    FloatingConfig, FloatingPreset, GapValue, GapsConfig, GapsConfigValue, GradientConfig,
+    LayoutType, MasterConfig, MasterPosition, MatchStrategy, MenuAnywhereConfig,
+    MenuAnywhereModifier, MenuAnywhereMouseButton, NoTunesConfig, ProxyAudioConfig,
+    ProxyAudioInputConfig, ProxyAudioOutputConfig, Rgba, ShortcutCommands, StacheConfig,
+    TargetMusicApp, TilingConfig, WallpaperConfig, WallpaperMode, WeatherConfig, WindowRule,
+    WorkspaceConfig, config_paths, load_config as load_config_default, load_config_from_path,
+    parse_color, parse_hex_color, parse_rgba_color,
 };
 pub use watcher::watch_config_file;
 

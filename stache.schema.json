@@ -379,6 +379,11 @@
           "const": "ease-in-out"
         },
         {
+          "description": "Exponential ease out (very fast start, slow end) - snappiest feel.",
+          "type": "string",
+          "const": "ease-out-expo"
+        },
+        {
           "description": "Spring physics animation.",
           "type": "string",
           "const": "spring"

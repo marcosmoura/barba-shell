@@ -199,7 +199,8 @@ impl EventProcessor {
     /// Get the screen ID for a window.
     fn get_window_screen(&self, window_id: u32) -> u32 {
         self.window_screen_map
-            .get(&window_id).map_or_else(|| self.default_screen_id.load(Ordering::SeqCst), |entry| *entry)
+            .get(&window_id)
+            .map_or_else(|| self.default_screen_id.load(Ordering::SeqCst), |entry| *entry)
     }
 
     /// Start the batch flush timers for all registered screens.

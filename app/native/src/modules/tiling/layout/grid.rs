@@ -210,7 +210,13 @@ fn layout_grid_equal(
     result
 }
 
-/// Grid layout with custom ratios (requires position vector allocations).
+/// Maximum columns/rows in grid (used for `SmallVec` inline capacity).
+const MAX_GRID_DIMENSION: usize = 4;
+
+/// Grid layout with custom ratios.
+///
+/// Uses `SmallVec` for position arrays to avoid heap allocation
+/// (max 4 cols/rows fits inline).
 #[allow(clippy::cast_precision_loss)]
 fn layout_grid_with_custom_ratios(
     window_ids: &[u32],
@@ -232,8 +238,8 @@ fn layout_grid_with_custom_ratios(
     let col_ratio_count = cols.saturating_sub(1);
     let row_ratio_count = rows.saturating_sub(1);
 
-    // Build column positions (cumulative)
-    let col_positions: Vec<f64> = (0..cols)
+    // Build column positions (cumulative) - uses stack allocation for <= 4 cols
+    let col_positions: SmallVec<[f64; MAX_GRID_DIMENSION]> = (0..cols)
         .map(|c| {
             if c == 0 {
                 0.0
@@ -246,8 +252,8 @@ fn layout_grid_with_custom_ratios(
         })
         .collect();
 
-    // Build row positions (cumulative)
-    let row_positions: Vec<f64> = (0..rows)
+    // Build row positions (cumulative) - uses stack allocation for <= 4 rows
+    let row_positions: SmallVec<[f64; MAX_GRID_DIMENSION]> = (0..rows)
         .map(|r| {
             if r == 0 {
                 0.0

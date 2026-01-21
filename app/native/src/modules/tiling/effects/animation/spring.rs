@@ -21,15 +21,23 @@ use std::time::Duration;
 /// Spring convergence threshold (position delta).
 const SPRING_POSITION_THRESHOLD: f64 = 0.01;
 
-/// Spring damping ratio (ζ). 1.0 = critically damped (no overshoot).
-const SPRING_DAMPING_RATIO: f64 = 1.0;
+/// Spring damping ratio (ζ).
+///
+/// - 1.0 = critically damped (no overshoot, but can feel sluggish)
+/// - 0.85 = slightly underdamped (snappier feel, minimal overshoot ~2%)
+///
+/// We use 0.85 for a more responsive feel while keeping overshoot imperceptible.
+const SPRING_DAMPING_RATIO: f64 = 0.85;
 
 /// Spring mass (fixed at 1.0).
 #[allow(dead_code)] // Kept for documentation/reference
 const SPRING_MASS: f64 = 1.0;
 
-/// Settling time multiplier for critically damped springs.
-const CRITICALLY_DAMPED_SETTLE_FACTOR: f64 = 6.6;
+/// Settling time multiplier.
+///
+/// For critically damped: ~6.6 (99% settled)
+/// For underdamped (ζ=0.85): ~5.5 is sufficient due to faster initial response
+const SPRING_SETTLE_FACTOR: f64 = 5.5;
 
 // ============================================================================
 // Spring Physics
@@ -47,7 +55,7 @@ impl SpringParams {
     #[must_use]
     pub fn from_duration(duration: Duration) -> Self {
         let target_secs = duration.as_secs_f64().max(0.01);
-        let omega_0 = CRITICALLY_DAMPED_SETTLE_FACTOR / target_secs;
+        let omega_0 = SPRING_SETTLE_FACTOR / target_secs;
 
         Self {
             omega_0,
@@ -149,7 +157,8 @@ mod tests {
         let params = SpringParams::from_duration(Duration::from_millis(200));
         assert!(params.omega_0 > 0.0);
         // omega_0 determines spring stiffness (stiffness = omega_0^2 * mass)
-        assert!((params.damping_ratio - 1.0).abs() < f64::EPSILON);
+        // Using slightly underdamped (0.85) for snappier feel
+        assert!((params.damping_ratio - SPRING_DAMPING_RATIO).abs() < f64::EPSILON);
     }
 
     #[test]

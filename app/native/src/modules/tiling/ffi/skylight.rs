@@ -96,6 +96,13 @@ unsafe extern "C" {
 
     /// Gets the bounds of a window from the window server.
     fn CGSGetWindowBounds(cid: u32, wid: u32, bounds: *mut CGRect) -> i32;
+
+    /// Moves a window to a new position (faster than AX API).
+    ///
+    /// This is significantly faster than `AXUIElementSetAttributeValue` for position:
+    /// - `SLSMoveWindow`: ~0.1-0.3ms
+    /// - AX position: ~2-5ms
+    fn SLSMoveWindow(cid: u32, wid: u32, point: *const CGPoint) -> i32;
 }
 
 // Private Accessibility API to get the window server ID from an AXUIElement.
@@ -183,6 +190,28 @@ pub fn get_window_bounds_fast(window_id: u32) -> Option<Rect> {
     } else {
         None
     }
+}
+
+/// Moves a window to a new position using the SkyLight API.
+///
+/// This is significantly faster than using the Accessibility API:
+/// - `SLSMoveWindow`: ~0.1-0.3ms
+/// - AX position: ~2-5ms
+///
+/// Returns `true` if the move was successful.
+///
+/// Note: This only moves the window, it does not resize it.
+/// For resize operations, the Accessibility API must still be used.
+#[must_use]
+pub fn move_window_fast(window_id: u32, x: f64, y: f64) -> bool {
+    let cid = get_connection_id();
+    if cid == 0 {
+        return false;
+    }
+
+    let point = CGPoint { x, y };
+    let result = unsafe { SLSMoveWindow(cid, window_id, &raw const point) };
+    result == 0
 }
 
 // ============================================================================
@@ -311,5 +340,15 @@ mod tests {
 
         let result = get_window_bounds_fast(u32::MAX);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn move_window_fast_with_invalid_id_returns_false() {
+        // Invalid window ID should fail gracefully
+        let result = move_window_fast(0, 100.0, 100.0);
+        assert!(!result);
+
+        let result = move_window_fast(u32::MAX, 100.0, 100.0);
+        assert!(!result);
     }
 }

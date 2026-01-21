@@ -46,6 +46,8 @@ pub enum EasingType {
     EaseOut,
     /// Ease in and out (slow start and end).
     EaseInOut,
+    /// Exponential ease out (very fast start, slow end) - snappiest feel.
+    EaseOutExpo,
     /// Spring physics animation.
     Spring,
 }

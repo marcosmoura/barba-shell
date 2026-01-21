@@ -39,6 +39,19 @@ pub fn ease_in_out(t: f64) -> f64 {
     }
 }
 
+/// Exponential ease-out (very fast start, slow end).
+///
+/// This provides the snappiest feel among standard easing curves.
+/// Uses the formula: 1 - 2^(-10t) for t > 0, 0 for t = 0.
+#[inline]
+pub fn ease_out_expo(t: f64) -> f64 {
+    if t >= 1.0 {
+        1.0
+    } else {
+        1.0 - (-10.0 * t).exp2()
+    }
+}
+
 /// Applies an easing function based on the easing type.
 #[inline]
 #[must_use]
@@ -48,6 +61,7 @@ pub fn apply_easing(t: f64, easing: EasingType) -> f64 {
         EasingType::EaseIn => ease_in(t),
         EasingType::EaseOut => ease_out(t),
         EasingType::EaseInOut => ease_in_out(t),
+        EasingType::EaseOutExpo => ease_out_expo(t),
         EasingType::Spring => t, // Spring uses physics simulation
     }
 }
@@ -99,11 +113,26 @@ mod tests {
     }
 
     #[test]
+    fn test_ease_out_expo() {
+        // At t=0, should be 0
+        assert!((ease_out_expo(0.0) - 0.0).abs() < 0.01);
+        // At t=0.5, should be past midpoint (fast start)
+        assert!(ease_out_expo(0.5) > 0.9);
+        // At t=1, should be 1
+        assert!((ease_out_expo(1.0) - 1.0).abs() < f64::EPSILON);
+        // Should be faster than cubic ease_out at t=0.2
+        assert!(ease_out_expo(0.2) > ease_out(0.2));
+    }
+
+    #[test]
     fn test_apply_easing() {
         assert!((apply_easing(0.5, EasingType::Linear) - ease_linear(0.5)).abs() < f64::EPSILON);
         assert!((apply_easing(0.5, EasingType::EaseIn) - ease_in(0.5)).abs() < f64::EPSILON);
         assert!((apply_easing(0.5, EasingType::EaseOut) - ease_out(0.5)).abs() < f64::EPSILON);
         assert!((apply_easing(0.5, EasingType::EaseInOut) - ease_in_out(0.5)).abs() < f64::EPSILON);
+        assert!(
+            (apply_easing(0.5, EasingType::EaseOutExpo) - ease_out_expo(0.5)).abs() < f64::EPSILON
+        );
         assert!((apply_easing(0.5, EasingType::Spring) - 0.5).abs() < f64::EPSILON);
     }
 }

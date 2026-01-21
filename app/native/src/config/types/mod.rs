@@ -21,10 +21,7 @@ pub mod workspaces;
 // Re-export all types for backward compatibility and convenience
 
 // Audio types
-pub use audio::{
-    AudioDeviceDependency, AudioDevicePriority, MatchStrategy, ProxyAudioConfig,
-    ProxyAudioInputConfig, ProxyAudioOutputConfig,
-};
+pub use audio::{AudioDeviceDependency, AudioDevicePriority, MatchStrategy, ProxyAudioConfig};
 // Bar types
 pub use bar::{BarConfig, WeatherConfig};
 // Border types

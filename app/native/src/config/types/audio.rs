@@ -71,62 +71,6 @@ pub struct AudioDevicePriority {
     pub depends_on: Option<AudioDeviceDependency>,
 }
 
-/// Input device configuration for proxy audio.
-///
-/// Defines the virtual input device name and priority list for device selection.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(default, rename_all = "camelCase")]
-pub struct ProxyAudioInputConfig {
-    /// Name of the virtual input device (used if a virtual device is installed).
-    /// Default: "Stache Virtual Input"
-    pub name: String,
-
-    /// Priority list for input device selection.
-    /// Devices are checked in order; the first available device is selected.
-    /// `AirPlay` devices are always given highest priority automatically.
-    pub priority: Vec<AudioDevicePriority>,
-}
-
-impl Default for ProxyAudioInputConfig {
-    fn default() -> Self {
-        Self {
-            name: "Stache Virtual Input".to_string(),
-            priority: Vec::new(),
-        }
-    }
-}
-
-/// Output device configuration for proxy audio.
-///
-/// Defines the virtual output device name, buffer size, and priority list.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(default, rename_all = "camelCase")]
-pub struct ProxyAudioOutputConfig {
-    /// Name of the virtual output device (used if a virtual device is installed).
-    /// Default: "Stache Virtual Output"
-    pub name: String,
-
-    /// Audio buffer size in frames. Smaller values reduce latency but may cause artifacts.
-    /// Recommended values: 128 (low latency), 256 (balanced), 512 (stable).
-    /// Default: 256
-    pub buffer_size: u32,
-
-    /// Priority list for output device selection.
-    /// Devices are checked in order; the first available device is selected.
-    /// `AirPlay` devices are always given highest priority automatically.
-    pub priority: Vec<AudioDevicePriority>,
-}
-
-impl Default for ProxyAudioOutputConfig {
-    fn default() -> Self {
-        Self {
-            name: "Stache Virtual Output".to_string(),
-            buffer_size: 256,
-            priority: Vec::new(),
-        }
-    }
-}
-
 /// Proxy audio configuration for automatic device routing.
 ///
 /// This configuration enables intelligent audio device switching based on
@@ -136,9 +80,8 @@ impl Default for ProxyAudioOutputConfig {
 ///
 /// `AirPlay` devices are always given the highest priority, even if not
 /// explicitly listed in the priority configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default, rename_all = "camelCase")]
-#[derive(Default)]
 pub struct ProxyAudioConfig {
     /// Whether proxy audio functionality is enabled.
     /// When enabled, the app will automatically switch audio devices
@@ -146,11 +89,17 @@ pub struct ProxyAudioConfig {
     /// Default: false
     pub enabled: bool,
 
-    /// Input device configuration.
-    pub input: ProxyAudioInputConfig,
+    /// Priority list for input device selection.
+    /// Devices are checked in order; the first available device is selected.
+    /// `AirPlay` devices are always given highest priority automatically.
+    #[serde(default)]
+    pub input: Vec<AudioDevicePriority>,
 
-    /// Output device configuration.
-    pub output: ProxyAudioOutputConfig,
+    /// Priority list for output device selection.
+    /// Devices are checked in order; the first available device is selected.
+    /// `AirPlay` devices are always given highest priority automatically.
+    #[serde(default)]
+    pub output: Vec<AudioDevicePriority>,
 }
 
 impl ProxyAudioConfig {

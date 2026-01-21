@@ -119,27 +119,22 @@ pub fn generate_config_template() -> String {
   //   // Enable automatic audio device switching
   //   "enabled": false,
   //
-  //   // Output device configuration
-  //   "output": {
-  //     // Virtual device name (if using a virtual audio driver)
-  //     "name": "Stache Virtual Output",
+  //   // Input device priority list (first available device is used)
+  //   // AirPlay devices are always given highest priority automatically
+  //   "input": [
+  //     // { "name": "AirPods Pro 3", "strategy": "contains" },
+  //     // { "name": "AT2020USB", "strategy": "startsWith" },
+  //     // { "name": "MacBook Pro", "strategy": "startsWith" }
+  //   ],
   //
-  //     // Audio buffer size (lower = less latency, higher = more stable)
-  //     "bufferSize": 256,
-  //
-  //     // Device priority list (first available device is used)
-  //     // AirPlay devices are always given highest priority automatically
-  //     "priority": [
-  //       // { "name": "External Speakers", "strategy": "exact" },
-  //       // { "name": "MacBook Pro Speakers", "strategy": "contains" }
-  //     ]
-  //   },
-  //
-  //   // Input device configuration
-  //   "input": {
-  //     "name": "Stache Virtual Input",
-  //     "priority": []
-  //   }
+  //   // Output device priority list (first available device is used)
+  //   // AirPlay devices are always given highest priority automatically
+  //   "output": [
+  //     // { "name": "AirPods Pro 3", "strategy": "contains" },
+  //     // Devices can depend on another device being present:
+  //     // { "name": "External Speakers", "dependsOn": { "name": "MiniFuse", "strategy": "startsWith" } },
+  //     // { "name": "MacBook Pro", "strategy": "startsWith" }
+  //   ]
   // },
 
   // ============================================================================

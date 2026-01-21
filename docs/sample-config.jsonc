@@ -156,70 +156,51 @@
     // Default: false
     "enabled": true,
 
-    // Input device (microphone) configuration
-    "input": {
-      // Name of the virtual input device (if using a virtual audio driver)
-      // Default: "Stache Virtual Input"
-      "name": "Stache Virtual Input",
+    // Input device (microphone) priority list
+    // Devices are checked in order; the first available device is selected
+    "input": [
+      // Simple device matching (exact name, case-insensitive)
+      { "name": "AirPods Pro" },
 
-      // Priority list for input device selection
-      // Devices are checked in order; the first available device is selected
-      "priority": [
-        // Simple device matching (exact name, case-insensitive)
-        { "name": "AirPods Pro" },
+      // Match devices containing a string
+      { "name": "AT2020", "strategy": "contains" },
 
-        // Match devices containing a string
-        { "name": "AT2020", "strategy": "contains" },
+      // Match devices starting with a string
+      { "name": "Blue Yeti", "strategy": "startsWith" },
 
-        // Match devices starting with a string
-        { "name": "Blue Yeti", "strategy": "startsWith" },
+      // Match using regex pattern
+      { "name": "^USB.*Microphone$", "strategy": "regex" },
 
-        // Match using regex pattern
-        { "name": "^USB.*Microphone$", "strategy": "regex" },
+      // Fallback to built-in microphone
+      { "name": "MacBook Pro Microphone", "strategy": "contains" },
+    ],
 
-        // Fallback to built-in microphone
-        { "name": "MacBook Pro Microphone", "strategy": "contains" },
-      ],
-    },
+    // Output device (speakers/headphones) priority list
+    // Devices are checked in order; the first available device is selected
+    "output": [
+      // AirPods (will match "AirPods Pro", "AirPods Max", etc.)
+      { "name": "AirPods", "strategy": "startsWith" },
 
-    // Output device (speakers/headphones) configuration
-    "output": {
-      // Name of the virtual output device (if using a virtual audio driver)
-      // Default: "Stache Virtual Output"
-      "name": "Stache Virtual Output",
-
-      // Audio buffer size in frames
-      // Smaller values = lower latency but may cause audio artifacts
-      // Recommended: 128 (low latency), 256 (balanced), 512 (stable)
-      // Default: 256
-      "bufferSize": 256,
-
-      // Priority list for output device selection
-      "priority": [
-        // AirPods (will match "AirPods Pro", "AirPods Max", etc.)
-        { "name": "AirPods", "strategy": "startsWith" },
-
-        // External speakers that depend on an audio interface being connected
-        // The speakers will only be selected if the MiniFuse interface is present
-        {
-          "name": "External Speakers",
-          "strategy": "exact",
-          "dependsOn": {
-            "name": "MiniFuse",
-            "strategy": "startsWith",
-          },
+      // External speakers that depend on an audio interface being connected
+      // The speakers will only be selected if the MiniFuse interface is present
+      {
+        "name": "External Speakers",
+        "strategy": "exact",
+        "dependsOn": {
+          "name": "MiniFuse",
+          "strategy": "startsWith",
         },
+      },
 
-        // USB headphones
-        { "name": "USB", "strategy": "contains" },
+      // USB headphones
+      { "name": "USB", "strategy": "contains" },
 
-        // Bluetooth headphones (regex matching)
-        { "name": "^(Sony|Bose|Sennheiser).*", "strategy": "regex" },
+      // Bluetooth headphones (regex matching)
+      { "name": "^(Sony|Bose|Sennheiser).*", "strategy": "regex" },
 
-        // Fallback to built-in speakers
-        { "name": "MacBook Pro Speakers", "strategy": "contains" },
-      ],
-    },
+      // Fallback to built-in speakers
+      { "name": "MacBook Pro Speakers", "strategy": "contains" },
+    ],
   },
 
   // ---------------------------------------------------------------------------

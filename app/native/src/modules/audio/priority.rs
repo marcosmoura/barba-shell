@@ -38,7 +38,7 @@ pub fn get_target_output_device<'a>(
     }
 
     // 2. Check devices in config priority order
-    for priority_device in &config.output.priority {
+    for priority_device in &config.output {
         if let Some(device) = find_device_by_priority(devices, priority_device) {
             return Some(device);
         }
@@ -80,7 +80,7 @@ pub fn get_target_input_device<'a>(
     }
 
     // 2. Check devices in config priority order
-    for priority_device in &config.input.priority {
+    for priority_device in &config.input {
         if let Some(device) = find_device_by_priority(devices, priority_device) {
             return Some(device);
         }
@@ -98,54 +98,45 @@ pub fn get_target_input_device<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{
-        AudioDevicePriority, MatchStrategy, ProxyAudioInputConfig, ProxyAudioOutputConfig,
-    };
+    use crate::config::{AudioDevicePriority, MatchStrategy};
 
     fn create_test_config() -> ProxyAudioConfig {
         ProxyAudioConfig {
             enabled: true,
-            input: ProxyAudioInputConfig {
-                name: "Virtual Input".to_string(),
-                priority: vec![
-                    AudioDevicePriority {
-                        name: "AirPods Pro".to_string(),
-                        strategy: MatchStrategy::Contains,
-                        depends_on: None,
-                    },
-                    AudioDevicePriority {
-                        name: "AT2020USB".to_string(),
-                        strategy: MatchStrategy::Contains,
-                        depends_on: None,
-                    },
-                    AudioDevicePriority {
-                        name: "MacBook Pro".to_string(),
-                        strategy: MatchStrategy::Contains,
-                        depends_on: None,
-                    },
-                ],
-            },
-            output: ProxyAudioOutputConfig {
-                name: "Virtual Output".to_string(),
-                buffer_size: 128,
-                priority: vec![
-                    AudioDevicePriority {
-                        name: "AirPods Pro".to_string(),
-                        strategy: MatchStrategy::Contains,
-                        depends_on: None,
-                    },
-                    AudioDevicePriority {
-                        name: "External Speakers".to_string(),
-                        strategy: MatchStrategy::Contains,
-                        depends_on: None,
-                    },
-                    AudioDevicePriority {
-                        name: "MacBook Pro".to_string(),
-                        strategy: MatchStrategy::Contains,
-                        depends_on: None,
-                    },
-                ],
-            },
+            input: vec![
+                AudioDevicePriority {
+                    name: "AirPods Pro".to_string(),
+                    strategy: MatchStrategy::Contains,
+                    depends_on: None,
+                },
+                AudioDevicePriority {
+                    name: "AT2020USB".to_string(),
+                    strategy: MatchStrategy::Contains,
+                    depends_on: None,
+                },
+                AudioDevicePriority {
+                    name: "MacBook Pro".to_string(),
+                    strategy: MatchStrategy::Contains,
+                    depends_on: None,
+                },
+            ],
+            output: vec![
+                AudioDevicePriority {
+                    name: "AirPods Pro".to_string(),
+                    strategy: MatchStrategy::Contains,
+                    depends_on: None,
+                },
+                AudioDevicePriority {
+                    name: "External Speakers".to_string(),
+                    strategy: MatchStrategy::Contains,
+                    depends_on: None,
+                },
+                AudioDevicePriority {
+                    name: "MacBook Pro".to_string(),
+                    strategy: MatchStrategy::Contains,
+                    depends_on: None,
+                },
+            ],
         }
     }
 
@@ -268,26 +259,22 @@ mod tests {
 
         let config = ProxyAudioConfig {
             enabled: true,
-            input: ProxyAudioInputConfig::default(),
-            output: ProxyAudioOutputConfig {
-                name: "Virtual Output".to_string(),
-                buffer_size: 128,
-                priority: vec![
-                    AudioDevicePriority {
-                        name: "External Speakers".to_string(),
-                        strategy: MatchStrategy::Contains,
-                        depends_on: Some(AudioDeviceDependency {
-                            name: "MiniFuse".to_string(),
-                            strategy: MatchStrategy::StartsWith,
-                        }),
-                    },
-                    AudioDevicePriority {
-                        name: "MacBook Pro".to_string(),
-                        strategy: MatchStrategy::Contains,
-                        depends_on: None,
-                    },
-                ],
-            },
+            input: Vec::new(),
+            output: vec![
+                AudioDevicePriority {
+                    name: "External Speakers".to_string(),
+                    strategy: MatchStrategy::Contains,
+                    depends_on: Some(AudioDeviceDependency {
+                        name: "MiniFuse".to_string(),
+                        strategy: MatchStrategy::StartsWith,
+                    }),
+                },
+                AudioDevicePriority {
+                    name: "MacBook Pro".to_string(),
+                    strategy: MatchStrategy::Contains,
+                    depends_on: None,
+                },
+            ],
         };
 
         let current = AudioDevice {
@@ -322,26 +309,22 @@ mod tests {
 
         let config = ProxyAudioConfig {
             enabled: true,
-            input: ProxyAudioInputConfig::default(),
-            output: ProxyAudioOutputConfig {
-                name: "Virtual Output".to_string(),
-                buffer_size: 128,
-                priority: vec![
-                    AudioDevicePriority {
-                        name: "External Speakers".to_string(),
-                        strategy: MatchStrategy::Contains,
-                        depends_on: Some(AudioDeviceDependency {
-                            name: "MiniFuse".to_string(),
-                            strategy: MatchStrategy::StartsWith,
-                        }),
-                    },
-                    AudioDevicePriority {
-                        name: "MacBook Pro".to_string(),
-                        strategy: MatchStrategy::Contains,
-                        depends_on: None,
-                    },
-                ],
-            },
+            input: Vec::new(),
+            output: vec![
+                AudioDevicePriority {
+                    name: "External Speakers".to_string(),
+                    strategy: MatchStrategy::Contains,
+                    depends_on: Some(AudioDeviceDependency {
+                        name: "MiniFuse".to_string(),
+                        strategy: MatchStrategy::StartsWith,
+                    }),
+                },
+                AudioDevicePriority {
+                    name: "MacBook Pro".to_string(),
+                    strategy: MatchStrategy::Contains,
+                    depends_on: None,
+                },
+            ],
         };
 
         let current = AudioDevice {
@@ -376,19 +359,15 @@ mod tests {
         // selected as the target - it's only a condition
         let config = ProxyAudioConfig {
             enabled: true,
-            input: ProxyAudioInputConfig::default(),
-            output: ProxyAudioOutputConfig {
-                name: "Virtual Output".to_string(),
-                buffer_size: 128,
-                priority: vec![AudioDevicePriority {
-                    name: "External Speakers".to_string(),
-                    strategy: MatchStrategy::Contains,
-                    depends_on: Some(AudioDeviceDependency {
-                        name: "MiniFuse".to_string(),
-                        strategy: MatchStrategy::StartsWith,
-                    }),
-                }],
-            },
+            input: Vec::new(),
+            output: vec![AudioDevicePriority {
+                name: "External Speakers".to_string(),
+                strategy: MatchStrategy::Contains,
+                depends_on: Some(AudioDeviceDependency {
+                    name: "MiniFuse".to_string(),
+                    strategy: MatchStrategy::StartsWith,
+                }),
+            }],
         };
 
         let current = AudioDevice {

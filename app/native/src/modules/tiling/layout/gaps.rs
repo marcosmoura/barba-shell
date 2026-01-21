@@ -178,7 +178,7 @@ impl Gaps {
         gaps
     }
 
-    /// Converts a `GapsConfig` to `Gaps`.
+    /// Converts a [`GapsConfig`] to [`Gaps`].
     fn from_gaps_config(config: &GapsConfig) -> Self {
         let (inner_h, inner_v) = config.inner.as_inner();
         let (outer_top, outer_right, outer_bottom, outer_left) = config.outer.as_outer();
@@ -199,6 +199,7 @@ impl Gaps {
 // ============================================================================
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
 

@@ -200,7 +200,7 @@ pub const SKIP_TILING_APP_NAMES: &[&str] = &[
 
 /// AX subrole for Picture-in-Picture windows.
 ///
-/// PiP windows should not be tiled as they are meant to float above other content.
+/// Picture-in-Picture windows should not be tiled as they are meant to float above other content.
 pub const PIP_SUBROLE: &str = "AXFloatingWindow";
 
 /// Determines whether a window should be tiled.
@@ -240,7 +240,7 @@ pub fn should_skip_app_by_name(name: &str) -> bool {
 
 /// Checks if a window subrole indicates a Picture-in-Picture window.
 ///
-/// PiP windows have the subrole `"AXFloatingWindow"` and should not be tiled.
+/// Picture-in-Picture windows have the subrole `AXFloatingWindow` and should not be tiled.
 #[must_use]
 pub fn is_pip_window(subrole: Option<&str>) -> bool { subrole.is_some_and(|sr| sr == PIP_SUBROLE) }
 

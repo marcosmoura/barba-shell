@@ -219,7 +219,8 @@ fn create_default_workspaces(state: &mut TilingState) {
         state.screens.iter().enumerate().map(|(i, s)| (i, s.id)).collect();
 
     for (i, screen_id) in screen_info {
-        let name = format!("workspace-{}", i + 1);
+        let idx = i + 1;
+        let name = format!("workspace-{idx}");
         let workspace = Workspace {
             id: uuid::Uuid::now_v7(),
             name: name.clone(),
@@ -435,7 +436,8 @@ fn restore_workspaces_to_configured_screens(state: &mut TilingState) -> Vec<uuid
 /// Do not call this from async tasks or background threads.
 ///
 /// The returned frames are converted from macOS's bottom-left origin coordinate system
-/// to the top-left origin system used by CGWindowList and the Accessibility API.
+/// to the top-left origin system used by `CGWindowList` and the Accessibility API.
+#[must_use]
 pub fn get_screens_from_macos() -> Vec<Screen> {
     // First, get the main screen height for coordinate transformation
     let main_screen_height = get_main_screen_height();
@@ -464,7 +466,7 @@ fn get_main_screen_height() -> f64 {
     }
 }
 
-/// Gets all active display IDs from CoreGraphics.
+/// Gets all active display IDs from `CoreGraphics`.
 fn get_active_display_ids() -> Vec<u32> {
     let mut display_count: u32 = 0;
 
@@ -599,16 +601,16 @@ fn get_screen_info(display_id: u32, main_screen_height: f64) -> Option<Screen> {
     }
 }
 
-/// Converts an NSRect from macOS's bottom-left coordinate system to top-left.
+/// Converts an `NSRect` from macOS's bottom-left coordinate system to top-left.
 ///
 /// # Arguments
 ///
-/// * `rect` - The rectangle in NSScreen coordinates (bottom-left origin)
+/// * `rect` - The rectangle in `NSScreen` coordinates (bottom-left origin)
 /// * `main_screen_height` - Height of the main screen for coordinate transformation
 ///
 /// # Returns
 ///
-/// A `Rect` in top-left coordinate system (used by CGWindowList and AX API)
+/// A `Rect` in top-left coordinate system (used by `CGWindowList` and AX API)
 fn convert_to_top_left_origin(rect: NSRect, main_screen_height: f64) -> Rect {
     // In NSScreen coordinates (bottom-left origin):
     // - rect.origin.y is the distance from the bottom of the main screen to the bottom of the rect

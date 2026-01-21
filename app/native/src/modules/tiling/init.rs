@@ -257,10 +257,10 @@ fn init_internal() -> Result<(), String> {
     ax_adapter.activate();
 
     // Initialize the standalone v2 AXObserver system
-    if !super::events::observer::init() {
-        log::warn!("tiling: AXObserver initialization failed");
-    } else {
+    if super::events::observer::init() {
         log::debug!("tiling: AXObserver initialized");
+    } else {
+        log::warn!("tiling: AXObserver initialization failed");
     }
 
     // Initialize the mouse monitor for drag/resize detection
@@ -721,11 +721,12 @@ pub fn handle_ipc_query(query: &IpcQuery) -> Option<IpcResponse> {
                 let workspace_infos: Vec<_> = workspaces
                     .iter()
                     .map(|ws| {
+                        let layout = ws.layout;
                         serde_json::json!({
                             "id": ws.id.to_string(),
                             "name": ws.name,
                             "screenId": ws.screen_id,
-                            "layout": format!("{:?}", ws.layout).to_lowercase(),
+                            "layout": format!("{layout:?}").to_lowercase(),
                             "isVisible": ws.is_visible,
                             "isFocused": ws.is_focused,
                             "windowCount": ws.window_ids.len(),
@@ -925,17 +926,18 @@ fn handle_workspaces_query(screen: Option<&str>, focused_screen: bool) -> Option
                 true
             })
             .map(|ws| {
+                let screen_id = ws.screen_id;
                 let screen_name = screens
                     .iter()
                     .find(|s| s.id == ws.screen_id)
-                    .map(|s| s.name.clone())
-                    .unwrap_or_else(|| format!("screen-{}", ws.screen_id));
+                    .map_or_else(|| format!("screen-{screen_id}"), |s| s.name.clone());
 
+                let layout = ws.layout;
                 serde_json::json!({
                     "id": ws.id.to_string(),
                     "name": ws.name,
                     "screenName": screen_name,
-                    "layout": format!("{:?}", ws.layout).to_lowercase(),
+                    "layout": format!("{layout:?}").to_lowercase(),
                     "isVisible": ws.is_visible,
                     "isFocused": ws.is_focused,
                     "windowCount": ws.window_ids.len(),

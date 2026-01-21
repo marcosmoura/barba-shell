@@ -49,7 +49,8 @@ pub fn execute(cmd: &CacheCommands) -> Result<(), StacheError> {
         }
         CacheCommands::Path => {
             let cache_dir = cache::get_cache_dir();
-            println!("{}", cache_dir.display());
+            let cache_dir_display = cache_dir.display();
+            println!("{cache_dir_display}");
         }
     }
     Ok(())

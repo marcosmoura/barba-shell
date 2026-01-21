@@ -103,6 +103,7 @@ impl SpringState {
 
     /// Calculates position for an underdamped spring (ζ < 1).
     #[inline]
+    #[must_use]
     pub fn underdamped_position(t: f64, omega_0: f64, zeta: f64) -> f64 {
         let zeta_sq_complement = zeta.mul_add(-zeta, 1.0);
         let omega_d = omega_0 * zeta_sq_complement.sqrt();
@@ -115,6 +116,7 @@ impl SpringState {
 
     /// Calculates position for a critically damped spring (ζ = 1).
     #[inline]
+    #[must_use]
     pub fn critically_damped_position(t: f64, omega_0: f64) -> f64 {
         let decay = (-omega_0 * t).exp();
         decay.mul_add(-omega_0.mul_add(t, 1.0), 1.0)
@@ -122,6 +124,7 @@ impl SpringState {
 
     /// Calculates position for an overdamped spring (ζ > 1).
     #[inline]
+    #[must_use]
     pub fn overdamped_position(t: f64, omega_0: f64, zeta: f64) -> f64 {
         let zeta_sq_minus_one = zeta.mul_add(zeta, -1.0);
         let gamma = omega_0 * zeta_sq_minus_one.sqrt();

@@ -37,20 +37,15 @@ pub fn on_switch_workspace(state: &mut TilingState, name: &str) {
     // Capture previous workspace for event emission and focus history
     let previous_focus = eyeball::Observable::get(&state.focus).clone();
     let previous_workspace_id = previous_focus.focused_workspace_id;
-    let previous_workspace_name = previous_workspace_id
-        .and_then(|id| state.get_workspace(id))
-        .map(|ws| ws.name.clone());
+    let previous_workspace_name =
+        previous_workspace_id.and_then(|id| state.get_workspace(id)).map(|ws| ws.name);
 
     // Record focus history for the workspace we're leaving
     if let (Some(prev_ws_id), Some(prev_window_id)) =
         (previous_workspace_id, previous_focus.focused_window_id)
     {
         state.record_focus_history(prev_ws_id, prev_window_id);
-        log::debug!(
-            "Recorded focus history: workspace {} -> window {}",
-            prev_ws_id,
-            prev_window_id
-        );
+        log::debug!("Recorded focus history: workspace {prev_ws_id} -> window {prev_window_id}");
     }
 
     // Track workspaces becoming visible/hidden
@@ -146,7 +141,7 @@ pub fn on_switch_workspace(state: &mut TilingState, name: &str) {
     // Emit workspace changed event to frontend
     let screen_name = state
         .get_screen(screen_id)
-        .map_or_else(|| format!("screen-{screen_id}"), |s| s.name.clone());
+        .map_or_else(|| format!("screen-{screen_id}"), |s| s.name);
 
     crate::modules::tiling::init::emit_workspace_changed(
         name,
@@ -177,16 +172,13 @@ pub fn on_cycle_workspace(state: &mut TilingState, direction: CycleDirection) {
     };
 
     // Capture previous workspace name for event emission
-    let previous_workspace_name =
-        state.get_workspace(current_workspace_id).map(|ws| ws.name.clone());
+    let previous_workspace_name = state.get_workspace(current_workspace_id).map(|ws| ws.name);
 
     // Record focus history for the workspace we're leaving
     if let Some(current_window_id) = focus.focused_window_id {
         state.record_focus_history(current_workspace_id, current_window_id);
         log::debug!(
-            "Recorded focus history: workspace {} -> window {}",
-            current_workspace_id,
-            current_window_id
+            "Recorded focus history: workspace {current_workspace_id} -> window {current_window_id}"
         );
     }
 
@@ -287,7 +279,7 @@ pub fn on_cycle_workspace(state: &mut TilingState, direction: CycleDirection) {
     if let Some(next_ws) = state.get_workspace(next_workspace_id) {
         let screen_name = state
             .get_screen(screen_id)
-            .map_or_else(|| format!("screen-{screen_id}"), |s| s.name.clone());
+            .map_or_else(|| format!("screen-{screen_id}"), |s| s.name);
 
         crate::modules::tiling::init::emit_workspace_changed(
             &next_ws.name,
@@ -307,10 +299,8 @@ pub fn on_cycle_workspace(state: &mut TilingState, direction: CycleDirection) {
 /// sizes so the layout is calculated fresh, as if the app had just started.
 pub fn on_balance_workspace(state: &mut TilingState, workspace_id: Uuid) {
     // Get window IDs in this workspace before clearing ratios
-    let window_ids: Vec<u32> = state
-        .get_workspace(workspace_id)
-        .map(|ws| ws.window_ids.clone())
-        .unwrap_or_default();
+    let window_ids: Vec<u32> =
+        state.get_workspace(workspace_id).map(|ws| ws.window_ids).unwrap_or_default();
 
     // Clear split ratios
     state.update_workspace(workspace_id, |ws| {
@@ -354,7 +344,7 @@ pub fn on_send_workspace_to_screen(state: &mut TilingState, target_screen: &str)
         return;
     };
 
-    let workspace_name = workspace.name.clone();
+    let workspace_name = workspace.name;
     let source_screen_id = workspace.screen_id;
     let was_visible = workspace.is_visible;
 
@@ -423,10 +413,7 @@ pub fn on_send_workspace_to_screen(state: &mut TilingState, target_screen: &str)
     });
 
     log::debug!(
-        "Sent workspace '{}' from screen {} to '{}'",
-        workspace_name,
-        source_screen_id,
-        target_screen
+        "Sent workspace '{workspace_name}' from screen {source_screen_id} to '{target_screen}'"
     );
 
     // Sync window visibility
@@ -453,6 +440,7 @@ pub fn on_send_workspace_to_screen(state: &mut TilingState, target_screen: &str)
 /// Resolve a screen name to a screen ID.
 ///
 /// Supports "main"/"primary", "secondary", or display name.
+#[must_use]
 pub fn resolve_screen(state: &TilingState, target: &str) -> Option<u32> {
     match target.to_lowercase().as_str() {
         "main" | "primary" => state.screens.iter().find(|s| s.is_main).map(|s| s.id),

@@ -372,8 +372,10 @@ mod tests {
     #[test]
     fn test_app_version_format() {
         // Version should be in semver format (X.Y.Z)
-        let parts: Vec<&str> = APP_VERSION.split('.').collect();
-        assert!(parts.len() >= 2, "Version should have at least major.minor");
+        assert!(
+            APP_VERSION.split('.').count() >= 2,
+            "Version should have at least major.minor"
+        );
     }
 
     // ========================================================================

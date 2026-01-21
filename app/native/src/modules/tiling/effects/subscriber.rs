@@ -313,7 +313,7 @@ impl EffectSubscriber {
 
     /// Handles a single notification.
     async fn handle_notification(&mut self, notification: SubscriberNotification) {
-        log::debug!("tiling: subscriber received notification: {:?}", notification);
+        log::debug!("tiling: subscriber received notification: {notification:?}");
 
         // For layout changes that may trigger animations, signal cancellation
         // of any ongoing animation so the new one can take priority, then
@@ -385,7 +385,7 @@ impl EffectSubscriber {
             new_positions.len()
         );
         for (win_id, frame) in &new_positions {
-            log::trace!("tiling:   window {} -> frame {:?}", win_id, frame);
+            log::trace!("tiling:   window {win_id} -> frame {frame:?}");
         }
 
         // Store expected frames for minimum size detection before applying layout
@@ -577,9 +577,9 @@ impl EffectSubscriber {
 
     /// Applies initial border colors based on the focused workspace's layout.
     ///
-    /// This should be called after `initialize()` to set up JankyBorders
+    /// This should be called after `initialize()` to set up `JankyBorders`
     /// with the correct active color for the current state.
-    async fn apply_initial_border_colors(&mut self) {
+    async fn apply_initial_border_colors(&self) {
         let mut layout = LayoutType::Floating;
         let mut is_window_floating = false;
 

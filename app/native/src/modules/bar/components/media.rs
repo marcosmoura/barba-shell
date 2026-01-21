@@ -331,7 +331,9 @@ fn start_streaming(app: AppHandle, window: WebviewWindow) {
                     process_stream_output(trimmed, &mut state, &window);
                 }
                 CommandEvent::Stderr(line) => {
-                    eprintln!("media-control stderr: {}", String::from_utf8_lossy(&line).trim());
+                    let stderr = String::from_utf8_lossy(&line);
+                    let stderr = stderr.trim();
+                    eprintln!("media-control stderr: {stderr}");
                 }
                 CommandEvent::Error(err) => {
                     eprintln!("media-control stream error: {err}");
@@ -768,7 +770,11 @@ mod tests {
 
         let path = get_cache_path(&state, "txt");
         assert!(path.contains("a_very_long_artist_name"));
-        assert!(path.ends_with(".txt"));
+        assert!(
+            std::path::Path::new(&path)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("txt"))
+        );
     }
 
     #[test]
@@ -779,9 +785,21 @@ mod tests {
         let png_path = get_cache_path(&state, "png");
         let jpg_path = get_cache_path(&state, "jpg");
 
-        assert!(txt_path.ends_with(".txt"));
-        assert!(png_path.ends_with(".png"));
-        assert!(jpg_path.ends_with(".jpg"));
+        assert!(
+            std::path::Path::new(&txt_path)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("txt"))
+        );
+        assert!(
+            std::path::Path::new(&png_path)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("png"))
+        );
+        assert!(
+            std::path::Path::new(&jpg_path)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("jpg"))
+        );
     }
 
     #[test]
@@ -820,7 +838,7 @@ mod tests {
             "artwork": "base64data"
         });
 
-        set_last_media_payload(Some(payload.clone()));
+        set_last_media_payload(Some(payload));
 
         let result = get_current_media_info().unwrap();
         assert_eq!(result["artist"], "Complex Artist");

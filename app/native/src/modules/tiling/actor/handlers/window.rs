@@ -78,10 +78,8 @@ fn on_window_created_internal(state: &mut TilingState, info: WindowCreatedInfo) 
     let workspace_id = find_workspace_for_window(state, &info);
 
     // Get workspace window IDs for tab detection
-    let workspace_window_ids: Vec<u32> = state
-        .get_workspace(workspace_id)
-        .map(|ws| ws.window_ids.clone())
-        .unwrap_or_default();
+    let workspace_window_ids: Vec<u32> =
+        state.get_workspace(workspace_id).map(|ws| ws.window_ids).unwrap_or_default();
 
     // Check if this new window is a tab being added to an existing window
     if tabs::is_new_window_a_tab(info.pid, info.window_id, &workspace_window_ids) {
@@ -129,8 +127,7 @@ fn on_window_created_internal(state: &mut TilingState, info: WindowCreatedInfo) 
         // Find where to insert: after the focused window, or at the end if no focus
         let insert_index = focused_window_id
             .and_then(|focused_id| ws.window_ids.iter().position(|&id| id == focused_id))
-            .map(|idx| idx + 1) // Insert after the focused window
-            .unwrap_or(ws.window_ids.len()); // Fallback: end of list
+            .map_or(ws.window_ids.len(), |idx| idx + 1); // Insert after focused window, or end of list
 
         ws.window_ids.insert(insert_index, info.window_id);
     });
@@ -169,7 +166,7 @@ pub fn on_window_destroyed(state: &mut TilingState, window_id: u32) -> Option<uu
         return None;
     };
 
-    log::debug!("tiling: window {window_id} workspace_id={:?}", workspace_id);
+    log::debug!("tiling: window {window_id} workspace_id={workspace_id:?}");
 
     // Remove the window from state
     state.remove_window(window_id);
@@ -181,10 +178,7 @@ pub fn on_window_destroyed(state: &mut TilingState, window_id: u32) -> Option<uu
         ws.window_ids.retain(|&id| id != window_id);
         let after_count = ws.window_ids.len();
         log::debug!(
-            "tiling: workspace {} window count: {} -> {}",
-            workspace_id,
-            before_count,
-            after_count
+            "tiling: workspace {workspace_id} window count: {before_count} -> {after_count}"
         );
 
         // Update focused window index if needed
@@ -208,10 +202,7 @@ pub fn on_window_destroyed(state: &mut TilingState, window_id: u32) -> Option<uu
     state.remove_window_from_focus_history(window_id);
     log::debug!("tiling: removed window {window_id} from focus history");
 
-    log::debug!(
-        "tiling: returning workspace_id={} for layout recalculation",
-        workspace_id
-    );
+    log::debug!("tiling: returning workspace_id={workspace_id} for layout recalculation");
     Some(workspace_id)
 }
 
@@ -299,9 +290,7 @@ pub fn on_window_focused(state: &mut TilingState, window_id: u32) {
     // Sync window visibility if any workspace visibility changed
     if !workspaces_becoming_visible.is_empty() || !workspaces_becoming_hidden.is_empty() {
         log::debug!(
-            "Visibility changed - showing: {:?}, hiding: {:?}",
-            workspaces_becoming_visible,
-            workspaces_becoming_hidden
+            "Visibility changed - showing: {workspaces_becoming_visible:?}, hiding: {workspaces_becoming_hidden:?}"
         );
 
         sync_window_visibility_for_workspaces(
@@ -328,13 +317,16 @@ pub fn on_window_focused(state: &mut TilingState, window_id: u32) {
     if workspace_changed {
         // Get workspace and screen names for the event
         if let Some(ws) = state.get_workspace(window.workspace_id) {
-            let screen_name = state
-                .get_screen(ws.screen_id)
-                .map_or_else(|| format!("screen-{}", ws.screen_id), |s| s.name.clone());
+            let screen_name = state.get_screen(ws.screen_id).map_or_else(
+                || {
+                    let screen_id = ws.screen_id;
+                    format!("screen-{screen_id}")
+                },
+                |s| s.name,
+            );
 
-            let previous_workspace_name = previous_workspace_id
-                .and_then(|id| state.get_workspace(id))
-                .map(|ws| ws.name.clone());
+            let previous_workspace_name =
+                previous_workspace_id.and_then(|id| state.get_workspace(id)).map(|ws| ws.name);
 
             crate::modules::tiling::init::emit_workspace_changed(
                 &ws.name,
@@ -364,9 +356,7 @@ pub fn sync_window_visibility_for_workspaces(
     }
 
     log::debug!(
-        "Syncing visibility - becoming_visible: {:?}, becoming_hidden: {:?}",
-        becoming_visible,
-        becoming_hidden
+        "Syncing visibility - becoming_visible: {becoming_visible:?}, becoming_hidden: {becoming_hidden:?}"
     );
 
     // Collect all currently visible workspace IDs
@@ -400,11 +390,7 @@ pub fn sync_window_visibility_for_workspaces(
     // PIDs to hide: in hidden workspaces but NOT in any visible workspace
     let pids_to_hide: Vec<i32> = pids_in_hidden.difference(&pids_in_visible).copied().collect();
 
-    log::trace!(
-        "PIDs to show: {:?}, PIDs to hide: {:?}",
-        pids_to_show,
-        pids_to_hide
-    );
+    log::trace!("PIDs to show: {pids_to_show:?}, PIDs to hide: {pids_to_hide:?}");
 
     // Show apps first (so they become visible before we hide others)
     for pid in &pids_to_show {
@@ -447,8 +433,7 @@ pub fn on_window_moved(state: &mut TilingState, window_id: u32, frame: Rect) {
     // trigger minimum size detection or update our tracked frame state.
     if should_ignore_geometry_events() {
         log::trace!(
-            "on_window_moved: ignoring geometry event for window {} during animation/settling",
-            window_id
+            "on_window_moved: ignoring geometry event for window {window_id} during animation/settling"
         );
         return;
     }
@@ -513,9 +498,12 @@ fn detect_and_update_inferred_minimum(
     window_id: u32,
     actual_frame: &Rect,
 ) -> Option<uuid::Uuid> {
+    // Tolerance for position/size comparison (pixels)
+    const TOLERANCE: f64 = 5.0;
+
     // Get the window's expected frame and workspace
     let Some(window) = state.get_window(window_id) else {
-        log::trace!("detect_minimum: window {} not found in state", window_id);
+        log::trace!("detect_minimum: window {window_id} not found in state");
         return None;
     };
 
@@ -529,9 +517,6 @@ fn detect_and_update_inferred_minimum(
     }
 
     let workspace_id = window.workspace_id;
-
-    // Tolerance for position/size comparison (pixels)
-    const TOLERANCE: f64 = 5.0;
 
     // Check if actual frame is significantly larger than expected
     // This indicates the window refused to shrink to the expected size
@@ -570,9 +555,7 @@ pub fn on_window_minimized(state: &mut TilingState, window_id: u32, minimized: b
 
     // Get workspace info before updating
     let workspace_info = state.get_window(window_id).and_then(|w| {
-        state
-            .get_workspace(w.workspace_id)
-            .map(|ws| (ws.id, ws.name.clone(), ws.window_ids.clone()))
+        state.get_workspace(w.workspace_id).map(|ws| (ws.id, ws.name, ws.window_ids))
     });
 
     state.update_window(window_id, |w| {
@@ -626,9 +609,9 @@ pub fn on_window_fullscreen_changed(state: &mut TilingState, window_id: u32, ful
 /// Also checks for minimum size mismatches and triggers layout recalculation if needed.
 ///
 /// When the mouse is down, this detects user-initiated resize/move operations and
-/// tracks them via the drag_state module. Layout changes are frozen during drag
+/// tracks them via the `drag_state` module. Layout changes are frozen during drag
 /// operations and ratios are calculated on mouse up.
-pub fn on_batched_geometry_updates(state: &mut TilingState, updates: Vec<GeometryUpdate>) {
+pub fn on_batched_geometry_updates(state: &mut TilingState, updates: &[GeometryUpdate]) {
     use crate::modules::tiling::events::{drag_state, mouse_monitor};
 
     let mouse_down = mouse_monitor::is_mouse_down();
@@ -683,7 +666,7 @@ pub fn on_batched_geometry_updates(state: &mut TilingState, updates: Vec<Geometr
     // If a drag operation is in progress, just update frames without triggering relayouts
     // The ratios will be calculated on mouse up
     if drag_state::is_operation_in_progress() {
-        for update in &updates {
+        for update in updates {
             state.update_window(update.window_id, |w| {
                 w.frame = update.frame;
             });
@@ -706,7 +689,7 @@ pub fn on_batched_geometry_updates(state: &mut TilingState, updates: Vec<Geometr
     // Normal processing: check for minimum size violations
     let mut workspaces_to_relayout = Vec::new();
 
-    for update in &updates {
+    for update in updates {
         // Check for minimum size mismatch
         if let Some(workspace_id) =
             detect_and_update_inferred_minimum(state, update.window_id, &update.frame)
@@ -736,7 +719,7 @@ pub fn on_batched_geometry_updates(state: &mut TilingState, updates: Vec<Geometr
 /// Finds an appropriate workspace for a new window.
 ///
 /// Priority:
-/// 1. Window rules from config (match by app_id)
+/// 1. Window rules from config (match by `app_id`)
 /// 2. Focused workspace
 /// 3. First visible workspace
 /// 4. Create a default workspace
@@ -783,7 +766,7 @@ fn find_workspace_for_window(state: &mut TilingState, info: &WindowCreatedInfo) 
 
 /// Finds a workspace for a window based on config rules.
 ///
-/// Checks each workspace's rules against the window's app_id/app_name/title.
+/// Checks each workspace's rules against the window's `app_id`/`app_name`/`title`.
 /// Returns the UUID of the first matching workspace, or None if no match.
 ///
 /// Rules use AND logic - all specified criteria must match.
@@ -875,6 +858,7 @@ fn create_default_workspace(state: &TilingState) -> Workspace {
 // ============================================================================
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
     use crate::modules::tiling::state::LayoutType;
@@ -1018,7 +1002,7 @@ mod tests {
             },
         ];
 
-        on_batched_geometry_updates(&mut state, updates);
+        on_batched_geometry_updates(&mut state, &updates);
 
         assert_eq!(state.get_window(100).unwrap().frame.x, 10.0);
         assert_eq!(state.get_window(200).unwrap().frame.x, 420.0);

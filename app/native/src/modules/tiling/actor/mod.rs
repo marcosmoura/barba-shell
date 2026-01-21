@@ -92,19 +92,13 @@ impl StateActor {
 
             if let Err(panic_info) = result {
                 // Extract panic message if possible
-                let panic_msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
-                    (*s).to_string()
-                } else if let Some(s) = panic_info.downcast_ref::<String>() {
-                    s.clone()
-                } else {
-                    "unknown panic".to_string()
-                };
+                let panic_msg = panic_info
+                    .downcast_ref::<&str>()
+                    .map(|s| (*s).to_string())
+                    .or_else(|| panic_info.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "unknown panic".to_string());
 
-                log::error!(
-                    "tiling: PANIC in actor while handling '{}': {}",
-                    msg_name,
-                    panic_msg
-                );
+                log::error!("tiling: PANIC in actor while handling '{msg_name}': {panic_msg}");
                 log::error!(
                     "tiling: Actor recovered from panic - state may be inconsistent. \
                      Consider restarting the application if issues persist."
@@ -116,6 +110,7 @@ impl StateActor {
     }
 
     /// Handle a single message.
+    #[allow(clippy::too_many_lines)]
     fn handle_message(&mut self, msg: StateMessage) {
         match msg {
             // Window events - delegated to handlers
@@ -246,7 +241,7 @@ impl StateActor {
 
             // Batched geometry - delegated to handlers
             StateMessage::BatchedGeometryUpdates(updates) => {
-                handlers::on_batched_geometry_updates(&mut self.state, updates);
+                handlers::on_batched_geometry_updates(&mut self.state, &updates);
             }
 
             // User-initiated resize completed
@@ -585,7 +580,7 @@ impl StateActor {
     ///
     /// Triggers layout calculation for all visible workspaces and hides
     /// windows from non-visible workspaces.
-    fn on_init_complete(&mut self) {
+    fn on_init_complete(&self) {
         log::debug!("Initialization complete, applying initial layouts");
 
         // Sync window visibility based on workspace visibility
@@ -698,6 +693,7 @@ fn enforce_minimum_sizes_for_split(
     } else {
         gaps.inner_v
     };
+    #[allow(clippy::cast_precision_loss)]
     let total_gaps = inner_gap * (window_ids.len() - 1) as f64;
     let available_space = total_dimension - total_gaps;
 
@@ -712,15 +708,14 @@ fn enforce_minimum_sizes_for_split(
             layoutable_windows
                 .iter()
                 .find(|w| w.id == id)
-                .and_then(|w| w.effective_minimum_size())
-                .map(|(min_w, min_h)| if is_horizontal { min_w } else { min_h })
-                .unwrap_or(0.0)
+                .and_then(super::state::Window::effective_minimum_size)
+                .map_or(0.0, |(min_w, min_h)| if is_horizontal { min_w } else { min_h })
         })
         .collect();
 
     // Check for violations in initial layout
     let mut has_violations = false;
-    for (window_id, frame) in initial_result.iter() {
+    for (window_id, frame) in initial_result {
         if let Some((min_w, min_h)) = layoutable_windows
             .iter()
             .find(|w| w.id == *window_id)
@@ -792,6 +787,7 @@ fn compute_adjusted_ratios(
     window_count: usize,
 ) -> Vec<f64> {
     // Convert cumulative ratios to per-window ratios
+    #[allow(clippy::cast_precision_loss)]
     let mut window_ratios: Vec<f64> = if cumulative_ratios.is_empty() {
         // Default: equal distribution
         vec![1.0 / window_count as f64; window_count]
@@ -861,6 +857,7 @@ fn compute_layout_with_ratios(
     } else {
         gaps.inner_v
     };
+    #[allow(clippy::cast_precision_loss)]
     let total_gaps = inner_gap * (window_ids.len() - 1) as f64;
 
     let total_dimension = if is_horizontal {
@@ -876,6 +873,7 @@ fn compute_layout_with_ratios(
     };
 
     for (i, &window_id) in window_ids.iter().enumerate() {
+        #[allow(clippy::cast_precision_loss)]
         let size = total_dimension
             * window_ratios.get(i).copied().unwrap_or(1.0 / window_ids.len() as f64);
 
@@ -904,6 +902,9 @@ fn enforce_minimum_sizes_for_dwindle(
     gaps: &Gaps,
     current_ratios: &[f64],
 ) -> Option<LayoutResult> {
+    const MAX_ITERATIONS: usize = 10;
+    const ADJUSTMENT_STEP: f64 = 0.05;
+
     if window_ids.len() < 2 {
         return None;
     }
@@ -930,9 +931,6 @@ fn enforce_minimum_sizes_for_dwindle(
     while ratios.len() < window_ids.len().saturating_sub(1) {
         ratios.push(0.5);
     }
-
-    const MAX_ITERATIONS: usize = 10;
-    const ADJUSTMENT_STEP: f64 = 0.05;
 
     for _iteration in 0..MAX_ITERATIONS {
         // For each violation, try to increase the space for that window
@@ -1013,7 +1011,7 @@ fn enforce_minimum_sizes_for_dwindle(
 }
 
 /// Determines if a Dwindle split at the given index is horizontal.
-fn is_dwindle_split_horizontal(split_index: usize, is_landscape: bool) -> bool {
+const fn is_dwindle_split_horizontal(split_index: usize, is_landscape: bool) -> bool {
     if is_landscape {
         !split_index.is_multiple_of(2)
     } else {
@@ -1030,6 +1028,9 @@ fn enforce_minimum_sizes_for_grid(
     gaps: &Gaps,
     current_ratios: &[f64],
 ) -> Option<LayoutResult> {
+    const MAX_ITERATIONS: usize = 10;
+    const ADJUSTMENT_STEP: f64 = 0.05;
+
     if window_ids.len() < 2 {
         return None;
     }
@@ -1052,9 +1053,6 @@ fn enforce_minimum_sizes_for_grid(
     } else {
         current_ratios.to_vec()
     };
-
-    const MAX_ITERATIONS: usize = 10;
-    const ADJUSTMENT_STEP: f64 = 0.05;
 
     let is_landscape = screen_frame.width >= screen_frame.height;
 
@@ -1130,8 +1128,8 @@ fn enforce_minimum_sizes_for_grid(
 
 /// Finds minimum size violations in a layout result.
 ///
-/// Returns a vector of (window_index, violation_axis) where:
-/// - violation_axis: 0 = width, 1 = height, 2 = both
+/// Returns a vector of `(window_index, violation_axis)` where:
+/// - `violation_axis`: `0` = width, `1` = height, `2` = both
 fn find_minimum_size_violations(
     result: &LayoutResult,
     layoutable_windows: &[Window],

@@ -175,7 +175,8 @@ where F: Fn(IpcQuery) -> IpcResponse + Send + Sync + 'static {
         }
     };
 
-    eprintln!("stache: ipc: server listening on {}", socket_path.display());
+    let socket_path_display = socket_path.display();
+    eprintln!("stache: ipc: server listening on {socket_path_display}");
 
     // Spawn server thread
     let handler = Arc::new(handler);

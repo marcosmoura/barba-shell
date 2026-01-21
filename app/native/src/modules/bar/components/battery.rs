@@ -150,6 +150,7 @@ pub fn get_battery_info(app_handle: tauri::AppHandle) -> Result<BatteryInfo, Sta
 const fn percentage_from_ratio(value: f32) -> u8 { value.round().clamp(0.0, 100.0) as u8 }
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use starship_battery::State;
 

@@ -1,8 +1,8 @@
 //! `AXObserver` adapter for the tiling v2 event pipeline.
 //!
 //! This module bridges the macOS Accessibility observer system to the new
-//! event processor architecture. It translates `WindowEvent`s from the
-//! existing observer into `StateMessage`s for the state actor.
+//! event processor architecture. It translates [`WindowEvent`]s from the
+//! existing observer into [`StateMessage`]s for the state actor.
 //!
 //! # Architecture
 //!
@@ -11,27 +11,27 @@
 //! │                    macOS Accessibility API                     │
 //! │                       (AXObserver)                             │
 //! └───────────────────────────┬───────────────────────────────────┘
-//!                             │ WindowEvent callback
+//!                             │ `WindowEvent` callback
 //!                             ▼
 //! ┌───────────────────────────────────────────────────────────────┐
-//! │                  AXObserverAdapter                             │
-//! │  - Translates WindowEvent → EventProcessor calls               │
+//! │                  `AXObserverAdapter`                           │
+//! │  - Translates `WindowEvent` → `EventProcessor` calls          │
 //! │  - Extracts window info from AX element                        │
 //! │  - Maps window IDs to screens                                  │
 //! └───────────────────────────┬───────────────────────────────────┘
-//!                             │ EventProcessor methods
+//!                             │ `EventProcessor` methods
 //!                             ▼
 //! ┌───────────────────────────────────────────────────────────────┐
-//! │                    EventProcessor                              │
+//! │                    `EventProcessor`                            │
 //! │  - Batches geometry events per display refresh                 │
-//! │  - Dispatches to StateActor                                    │
+//! │  - Dispatches to `StateActor`                                  │
 //! └───────────────────────────────────────────────────────────────┘
 //! ```
 //!
 //! # Thread Safety
 //!
 //! The adapter is designed to be called from the main thread (where `AXObserver`
-//! callbacks occur). The `EventProcessor` it references is thread-safe.
+//! callbacks occur). The [`EventProcessor`] it references is thread-safe.
 
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -73,7 +73,7 @@ unsafe extern "C" {
 // AXObserver Adapter
 // ============================================================================
 
-/// Adapter that receives window events and routes them to the `EventProcessor`.
+/// Adapter that receives window events and routes them to the [`EventProcessor`].
 pub struct AXObserverAdapter {
     /// Reference to the event processor.
     processor: Arc<EventProcessor>,
@@ -85,6 +85,7 @@ pub struct AXObserverAdapter {
 impl AXObserverAdapter {
     /// Creates a new adapter with the given event processor.
     #[must_use]
+    #[allow(clippy::missing_const_for_fn)] // AtomicBool::new() is not const in struct context
     pub fn new(processor: Arc<EventProcessor>) -> Self {
         Self {
             processor,
@@ -162,6 +163,15 @@ impl AXObserverAdapter {
     // ========================================================================
 
     fn handle_window_created(&self, pid: i32, ax_element: AXUIElementRef) {
+        // Minimum size thresholds
+        // Standard windows: 200x150 minimum
+        // Dialogs: 400x300 minimum (real dialogs like preferences are larger;
+        //          small dialogs are popups like date pickers, color pickers)
+        const MIN_STANDARD_WIDTH: f64 = 200.0;
+        const MIN_STANDARD_HEIGHT: f64 = 150.0;
+        const MIN_DIALOG_WIDTH: f64 = 400.0;
+        const MIN_DIALOG_HEIGHT: f64 = 300.0;
+
         // Extract window info from the AX element
         let Some(window_id) = get_window_id(ax_element) else {
             log::debug!("Window created event: could not get window ID");
@@ -175,8 +185,7 @@ impl AXObserverAdapter {
         // Skip PiP (Picture-in-Picture) windows - they have subrole AXFloatingWindow
         if is_pip_window(subrole.as_deref()) {
             log::debug!(
-                "Window created: id={window_id}, pid={pid} - skipping PiP window (subrole={:?})",
-                subrole
+                "Window created: id={window_id}, pid={pid} - skipping PiP window (subrole={subrole:?})"
             );
             return;
         }
@@ -185,30 +194,22 @@ impl AXObserverAdapter {
         let title = get_window_title(ax_element).unwrap_or_default();
         let frame = get_window_frame(ax_element).unwrap_or_default();
 
-        // Minimum size thresholds
-        // Standard windows: 200x150 minimum
-        // Dialogs: 400x300 minimum (real dialogs like preferences are larger;
-        //          small dialogs are popups like date pickers, color pickers)
-        const MIN_STANDARD_WIDTH: f64 = 200.0;
-        const MIN_STANDARD_HEIGHT: f64 = 150.0;
-        const MIN_DIALOG_WIDTH: f64 = 400.0;
-        const MIN_DIALOG_HEIGHT: f64 = 300.0;
-
         // Determine if window should be managed based on subrole and size
         // Use blacklist approach: only reject known popup/sheet subroles
         let should_manage = match subrole.as_deref() {
             // Explicitly reject popup-like subroles
-            Some("AXSheet") | Some("AXDrawer") => {
-                // Sheets and drawers are always attached to parent windows
-                false
-            }
+            // Sheets and drawers are always attached to parent windows
+            // AXUnknown subrole indicates popup/panel windows without standard controls
+            // Examples: browser extension popups, toolbar popups, dropdown panels
+            // These windows typically have no close/minimize/zoom buttons
+            Some("AXSheet" | "AXDrawer" | "AXUnknown") => false,
             Some("AXDialog") => {
                 // Dialogs - only accept large ones (preferences, settings)
                 // Small dialogs are popups (date pickers, color pickers, alerts)
                 frame.width >= MIN_DIALOG_WIDTH && frame.height >= MIN_DIALOG_HEIGHT
             }
             _ => {
-                // Standard windows, no subrole, or unknown subroles - accept if large enough
+                // Standard windows, no subrole, or custom subroles - accept if large enough
                 // Many apps (like Ghostty) don't set subrole or use custom values
                 frame.width >= MIN_STANDARD_WIDTH && frame.height >= MIN_STANDARD_HEIGHT
             }
@@ -247,10 +248,7 @@ impl AXObserverAdapter {
     }
 
     fn handle_window_destroyed(&self, pid: i32, ax_element: AXUIElementRef) {
-        log::debug!(
-            "tiling: handle_window_destroyed called for pid={pid}, element={:?}",
-            ax_element
-        );
+        log::debug!("tiling: handle_window_destroyed called for pid={pid}, element={ax_element:?}");
 
         // First try to get window ID directly (might work if element is still valid)
         if let Some(window_id) = get_window_id(ax_element) {
@@ -274,16 +272,14 @@ impl AXObserverAdapter {
         {
             // Definitely NOT a window (e.g., tab, button) - ignore
             log::trace!(
-                "tiling: AXUIElementDestroyed for non-window element (role={}, pid={pid}), ignoring",
-                r
+                "tiling: AXUIElementDestroyed for non-window element (role={r}, pid={pid}), ignoring"
             );
             return;
         }
 
         // Either it IS a window, or we couldn't determine (element invalid) - fall back to PID detection
         log::debug!(
-            "tiling: window destroyed - role={:?}, falling back to PID-based detection for pid={pid}",
-            role
+            "tiling: window destroyed - role={role:?}, falling back to PID-based detection for pid={pid}"
         );
         self.processor.on_window_destroyed_for_pid(pid);
     }
@@ -371,7 +367,7 @@ impl AXObserverAdapter {
 // AX Attribute Helpers
 // ============================================================================
 
-/// Gets the `CGWindowID` for an `AXUIElement`.
+/// Gets the [`CGWindowID`] for an [`AXUIElement`].
 fn get_window_id(element: AXUIElementRef) -> Option<u32> {
     if element.is_null() {
         return None;
@@ -387,17 +383,17 @@ fn get_window_id(element: AXUIElementRef) -> Option<u32> {
     }
 }
 
-/// Gets the window title from an `AXUIElement`.
+/// Gets the window title from an [`AXUIElement`].
 fn get_window_title(element: AXUIElementRef) -> Option<String> { get_ax_string(element, "AXTitle") }
 
-/// Gets the window subrole from an `AXUIElement`.
+/// Gets the window subrole from an [`AXUIElement`].
 ///
-/// PiP windows have subrole `"AXFloatingWindow"`.
+/// Picture-in-Picture windows have subrole `AXFloatingWindow`.
 fn get_window_subrole(element: AXUIElementRef) -> Option<String> {
     get_ax_string(element, "AXSubrole")
 }
 
-/// Gets the role of an `AXUIElement`.
+/// Gets the role of an [`AXUIElement`].
 ///
 /// Windows have role `"AXWindow"`. Tab elements have role `"AXTabGroup"` or similar.
 fn get_element_role(element: AXUIElementRef) -> Option<String> { get_ax_string(element, "AXRole") }
@@ -431,7 +427,7 @@ fn get_ax_string(element: AXUIElementRef, attr_name: &str) -> Option<String> {
     }
 }
 
-/// Gets the window frame from an `AXUIElement`.
+/// Gets the window frame from an [`AXUIElement`].
 fn get_window_frame(element: AXUIElementRef) -> Option<Rect> {
     if element.is_null() {
         return None;
@@ -753,7 +749,8 @@ pub fn adapter_callback(event: WindowEvent) {
     if let Some(adapter) = get_installed_adapter() {
         adapter.handle_event(event);
     } else {
-        log::warn!("No adapter installed, dropping event {:?}", event.event_type);
+        let event_type = &event.event_type;
+        log::warn!("No adapter installed, dropping event {event_type:?}");
     }
 }
 
@@ -787,7 +784,7 @@ mod tests {
         let processor = Arc::new(EventProcessor::new(handle.clone()));
         let adapter = Arc::new(AXObserverAdapter::new(processor));
 
-        install_adapter(adapter.clone());
+        install_adapter(Arc::clone(&adapter));
         assert!(get_installed_adapter().is_some());
 
         uninstall_adapter();

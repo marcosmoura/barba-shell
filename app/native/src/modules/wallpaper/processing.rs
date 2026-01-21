@@ -695,7 +695,7 @@ mod tests {
     #[test]
     fn test_processing_error_is_debug() {
         let err = ProcessingError::ImageRead("test.jpg".to_string());
-        let debug = format!("{:?}", err);
+        let debug = format!("{err:?}");
         assert!(debug.contains("ImageRead"));
     }
 
@@ -779,7 +779,11 @@ mod tests {
         let name = cache_filename(path, &config, screen);
         // Should use the stem (filename without extension) or full filename
         assert!(name.contains("imagefile"));
-        assert!(name.ends_with(".jpg"));
+        assert!(
+            std::path::Path::new(&name)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("jpg"))
+        );
     }
 
     // ========================================================================
@@ -896,6 +900,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cast_possible_truncation)]
     fn test_apply_fast_blur_zero_radius() {
         let img = DynamicImage::ImageRgb8(RgbImage::from_fn(50, 50, |x, y| {
             Rgb([(x as u8), (y as u8), 128])
@@ -962,7 +967,7 @@ mod tests {
     fn test_apply_effects_no_effects() {
         let img = DynamicImage::ImageRgb8(RgbImage::from_fn(50, 50, |_, _| Rgb([128u8, 128, 128])));
 
-        let result = apply_effects(img.clone(), 0, 0);
+        let result = apply_effects(img, 0, 0);
 
         // Should be essentially unchanged
         assert_eq!(result.dimensions(), (50, 50));
@@ -1044,12 +1049,7 @@ mod tests {
     #[test]
     fn test_supported_extensions_are_lowercase() {
         for ext in SUPPORTED_EXTENSIONS {
-            assert_eq!(
-                *ext,
-                ext.to_lowercase(),
-                "Extension should be lowercase: {}",
-                ext
-            );
+            assert_eq!(*ext, ext.to_lowercase(), "Extension should be lowercase: {ext}");
         }
     }
 

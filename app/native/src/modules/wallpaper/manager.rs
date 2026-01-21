@@ -783,8 +783,8 @@ mod tests {
     #[test]
     fn test_wallpaper_action_variants() {
         // Test that all variants can be created
-        let _random = WallpaperAction::Random;
-        let _random_screen = WallpaperAction::RandomForScreen(0);
+        let _ = WallpaperAction::Random;
+        let _ = WallpaperAction::RandomForScreen(0);
         let _file = WallpaperAction::File("test.jpg".to_string());
         let _file_screen = WallpaperAction::FileForScreen(0, "test.jpg".to_string());
     }
@@ -950,7 +950,7 @@ mod tests {
     #[test]
     fn test_wallpaper_action_debug() {
         let action = WallpaperAction::FileForScreen(1, "test.jpg".to_string());
-        let debug = format!("{:?}", action);
+        let debug = format!("{action:?}");
         assert!(debug.contains("FileForScreen"));
         assert!(debug.contains("test.jpg"));
     }

@@ -292,7 +292,7 @@ pub struct Window {
     /// Current frame (position and size).
     pub frame: Rect,
 
-    /// Minimum size constraints (width, height) reported by the window via AXMinimumSize.
+    /// Minimum size constraints (width, height) reported by the window via `AXMinimumSize`.
     /// `None` if the window doesn't report minimum size or it hasn't been queried.
     pub minimum_size: Option<(f64, f64)>,
 
@@ -375,7 +375,7 @@ impl Window {
     /// Uses `minimum_size` (from `AXMinimumSize`) if available, otherwise falls back
     /// to `inferred_minimum_size` (detected from position mismatch).
     #[must_use]
-    pub fn effective_minimum_size(&self) -> Option<(f64, f64)> {
+    pub const fn effective_minimum_size(&self) -> Option<(f64, f64)> {
         // Prefer reported minimum_size if available
         if let Some(reported) = self.minimum_size {
             return Some(reported);
@@ -452,6 +452,7 @@ impl FocusState {
 // ============================================================================
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
 

@@ -274,7 +274,8 @@ fn layout_grid_with_custom_ratios(
             1.0
         };
         let cell_height = (row_end - row_start) * available_height;
-        let y = screen_frame.y + row_start * available_height + (row as f64) * gaps.inner_v;
+        let y =
+            (row as f64).mul_add(gaps.inner_v, row_start.mul_add(available_height, screen_frame.y));
 
         for col in 0..cols {
             if idx >= count {
@@ -288,7 +289,8 @@ fn layout_grid_with_custom_ratios(
                 1.0
             };
             let cell_width = (col_end - col_start) * available_width;
-            let x = screen_frame.x + col_start * available_width + (col as f64) * gaps.inner_h;
+            let x = (col as f64)
+                .mul_add(gaps.inner_h, col_start.mul_add(available_width, screen_frame.x));
 
             result.push((window_ids[idx], Rect::new(x, y, cell_width, cell_height)));
             idx += 1;
@@ -302,7 +304,7 @@ fn layout_grid_with_custom_ratios(
 ///
 /// Used for: 3, 5, 7 windows
 ///
-/// First ratio controls master width ratio (default: 1/total_cols for equal columns).
+/// First ratio controls master width ratio (default: `1/total_cols` for equal columns).
 ///
 /// For landscape:
 /// - 3 windows: 2×2 grid, W1 spans left column
@@ -358,10 +360,10 @@ fn layout_master_stack(
                 if idx >= count {
                     break;
                 }
-                let x = screen_frame.x
-                    + master_width
-                    + gaps.inner_h
-                    + (col as f64) * (stack_width_per_col + gaps.inner_h);
+                let x = (col as f64).mul_add(
+                    stack_width_per_col + gaps.inner_h,
+                    screen_frame.x + master_width + gaps.inner_h,
+                );
                 result.push((
                     window_ids[idx],
                     Rect::new(x, y, stack_width_per_col, cell_height),
@@ -401,10 +403,10 @@ fn layout_master_stack(
         // Remaining windows fill the grid (rows 1+)
         let mut idx = 1;
         for row in 0..stack_rows_count {
-            let y = screen_frame.y
-                + master_height
-                + gaps.inner_v
-                + (row as f64) * (stack_height_per_row + gaps.inner_v);
+            let y = (row as f64).mul_add(
+                stack_height_per_row + gaps.inner_v,
+                screen_frame.y + master_height + gaps.inner_v,
+            );
 
             for col in 0..stack_cols {
                 if idx >= count {
@@ -491,10 +493,10 @@ fn layout_master_3x4(
             } else {
                 // Stack columns
                 let stack_col = col - 1;
-                let x = screen_frame.x
-                    + master_width
-                    + gaps.inner_h
-                    + (stack_col as f64) * (stack_width_per_col + gaps.inner_h);
+                let x = (stack_col as f64).mul_add(
+                    stack_width_per_col + gaps.inner_h,
+                    screen_frame.x + master_width + gaps.inner_h,
+                );
                 (x, stack_width_per_col)
             };
 
@@ -511,6 +513,7 @@ fn layout_master_3x4(
 // ============================================================================
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
 
@@ -941,8 +944,8 @@ mod tests {
         let (_, w1) = result[0];
         let (_, w2) = result[1];
 
-        assert!((w1.width - frame.width * 0.7).abs() < 1.0);
-        assert!((w2.width - frame.width * 0.3).abs() < 1.0);
+        assert!((w1.width - frame.width.mul_add(0.7, 0.0)).abs() < 1.0);
+        assert!((w2.width - frame.width.mul_add(0.3, 0.0)).abs() < 1.0);
     }
 
     #[test]
@@ -954,6 +957,6 @@ mod tests {
         let (_, w1) = result[0];
 
         // W1 should be 60% width
-        assert!((w1.width - frame.width * 0.6).abs() < 1.0);
+        assert!((w1.width - frame.width.mul_add(0.6, 0.0)).abs() < 1.0);
     }
 }

@@ -17,6 +17,7 @@ use crate::modules::tiling::state::{LayoutType, TilingState};
 ///
 /// * `state` - The tiling state
 /// * `preset_name` - Name of the preset to apply (case-insensitive)
+#[allow(clippy::cast_possible_truncation)]
 pub fn on_apply_preset(state: &mut TilingState, preset_name: &str) {
     use crate::config::get_config;
     use crate::modules::tiling::layout::{Gaps, calculate_preset_frame, find_preset};
@@ -107,6 +108,7 @@ pub fn on_apply_preset(state: &mut TilingState, preset_name: &str) {
 // ============================================================================
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
     use crate::modules::tiling::state::{Rect, Screen, Window, Workspace};

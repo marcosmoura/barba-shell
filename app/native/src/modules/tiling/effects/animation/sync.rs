@@ -128,6 +128,7 @@ fn get_display_refresh_rate() -> u32 {
 
 /// Returns the target FPS for animations.
 #[inline]
+#[must_use]
 pub fn target_fps() -> u32 { get_display_refresh_rate() }
 
 // ============================================================================

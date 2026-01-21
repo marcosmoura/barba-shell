@@ -190,6 +190,7 @@ pub fn calculate_layout_full(
 // ============================================================================
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
 
@@ -317,7 +318,7 @@ mod tests {
         let (_, w1) = result[0];
         let (_, w2) = result[1];
 
-        assert!((w1.width - frame.width * 0.7).abs() < 1.0);
-        assert!((w2.width - frame.width * 0.3).abs() < 1.0);
+        assert!((w1.width - frame.width.mul_add(0.7, 0.0)).abs() < 1.0);
+        assert!((w2.width - frame.width.mul_add(0.3, 0.0)).abs() < 1.0);
     }
 }

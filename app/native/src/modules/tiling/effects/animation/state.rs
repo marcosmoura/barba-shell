@@ -15,7 +15,7 @@ use crate::modules::tiling::state::Rect;
 // ============================================================================
 
 /// Grace period after animation ends during which geometry events are ignored.
-/// This accounts for the batch timer delay in EventProcessor (~16ms at 60Hz)
+/// This accounts for the batch timer delay in `EventProcessor` (~16ms at 60Hz)
 /// plus some margin for event propagation.
 pub const ANIMATION_SETTLE_DURATION_MS: u64 = 50;
 

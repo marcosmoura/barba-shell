@@ -246,7 +246,7 @@ impl EffectExecutor {
     ///
     /// Note: Borders are now handled directly in the subscriber via
     /// `borders::on_focus_changed()`. This just counts the effects.
-    fn execute_border_updates(&self, updates: &[(u32, BorderState)]) -> usize {
+    const fn execute_border_updates(&self, updates: &[(u32, BorderState)]) -> usize {
         if updates.is_empty() || !self.borders_enabled {
             return 0;
         }

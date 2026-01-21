@@ -1,6 +1,6 @@
-//! Standalone AXObserver system for tiling.
+//! Standalone `AXObserver` system for tiling.
 //!
-//! This module provides AXObserver functionality to receive notifications
+//! This module provides `AXObserver` functionality to receive notifications
 //! about window events from macOS Accessibility APIs.
 //!
 //! # Thread Safety
@@ -25,9 +25,9 @@ use super::types::{WindowEvent, WindowEventType};
 // Thread-Safe Wrapper
 // ============================================================================
 
-/// Wrapper for AXObserverRef that's Send + Sync.
+/// Wrapper for `AXObserverRef` that's `Send` + `Sync`.
 ///
-/// This is safe because AXObserver operations are only performed on the main thread,
+/// This is safe because `AXObserver` operations are only performed on the main thread,
 /// and we only store/retrieve references under a lock.
 #[derive(Clone, Copy)]
 struct ObserverRef(*mut c_void);
@@ -199,6 +199,11 @@ pub fn init() -> bool {
 /// Adds an observer for a new application by PID.
 ///
 /// Call this when a new application is launched.
+///
+/// # Errors
+/// Returns an error if the observer system is not initialized, or if creating
+/// the AX observer or application element fails.
+#[allow(clippy::significant_drop_tightening)]
 pub fn add_observer_for_pid(pid: i32) -> Result<(), String> {
     if !INITIALIZED.load(Ordering::SeqCst) {
         return Err("Observer system not initialized".to_string());
@@ -340,8 +345,7 @@ unsafe extern "C" fn observer_callback(
         // Log destroyed events specifically
         if notification_name == notifications::UI_ELEMENT_DESTROYED {
             log::debug!(
-                "tiling: observer received AXUIElementDestroyed for pid={pid}, element={:?}",
-                element
+                "tiling: observer received AXUIElementDestroyed for pid={pid}, element={element:?}"
             );
         }
 

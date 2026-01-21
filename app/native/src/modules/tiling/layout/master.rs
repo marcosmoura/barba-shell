@@ -230,6 +230,7 @@ fn layout_bottom(window_ids: &[u32], screen_frame: &Rect, ratio: f64, gaps: &Gap
 // ============================================================================
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
 
@@ -286,12 +287,12 @@ mod tests {
         assert_eq!(stack_id, 2);
 
         // Master on left, gets 60% width
-        assert!((master_frame.width - frame.width * ratio).abs() < 1.0);
+        assert!((master_frame.width - frame.width.mul_add(ratio, 0.0)).abs() < 1.0);
         assert_eq!(master_frame.height, frame.height);
         assert_eq!(master_frame.x, 0.0);
 
         // Stack on right, gets 40% width
-        assert!((stack_frame.width - frame.width * (1.0 - ratio)).abs() < 1.0);
+        assert!((stack_frame.width - frame.width.mul_add(1.0 - ratio, 0.0)).abs() < 1.0);
         assert_eq!(stack_frame.height, frame.height);
         assert!(stack_frame.x > master_frame.x);
     }
@@ -312,12 +313,12 @@ mod tests {
 
         // Master on top, gets 60% height
         assert_eq!(master_frame.width, frame.width);
-        assert!((master_frame.height - frame.height * ratio).abs() < 1.0);
+        assert!((master_frame.height - frame.height.mul_add(ratio, 0.0)).abs() < 1.0);
         assert_eq!(master_frame.y, 0.0);
 
         // Stack below, gets 40% height
         assert_eq!(stack_frame.width, frame.width);
-        assert!((stack_frame.height - frame.height * (1.0 - ratio)).abs() < 1.0);
+        assert!((stack_frame.height - frame.height.mul_add(1.0 - ratio, 0.0)).abs() < 1.0);
         assert!(stack_frame.y > master_frame.y);
     }
 
@@ -338,7 +339,7 @@ mod tests {
         let (_, stack2_frame) = result[2];
 
         // Master gets left side
-        assert!((master_frame.width - frame.width * ratio).abs() < 1.0);
+        assert!((master_frame.width - frame.width.mul_add(ratio, 0.0)).abs() < 1.0);
         assert_eq!(master_frame.height, frame.height);
         assert_eq!(master_frame.x, 0.0);
 
@@ -364,7 +365,7 @@ mod tests {
         let (_, stack2_frame) = result[2];
 
         // Master gets right side
-        assert!((master_frame.width - frame.width * ratio).abs() < 1.0);
+        assert!((master_frame.width - frame.width.mul_add(ratio, 0.0)).abs() < 1.0);
         assert_eq!(master_frame.height, frame.height);
         assert!(master_frame.x > stack1_frame.x);
 
@@ -391,7 +392,7 @@ mod tests {
 
         // Master gets top
         assert_eq!(master_frame.width, frame.width);
-        assert!((master_frame.height - frame.height * ratio).abs() < 1.0);
+        assert!((master_frame.height - frame.height.mul_add(ratio, 0.0)).abs() < 1.0);
         assert_eq!(master_frame.y, 0.0);
 
         // Stack windows share bottom, arranged horizontally
@@ -417,7 +418,7 @@ mod tests {
 
         // Master gets bottom
         assert_eq!(master_frame.width, frame.width);
-        assert!((master_frame.height - frame.height * ratio).abs() < 1.0);
+        assert!((master_frame.height - frame.height.mul_add(ratio, 0.0)).abs() < 1.0);
         assert!(master_frame.y > stack1_frame.y);
 
         // Stack windows share top, arranged horizontally
@@ -478,7 +479,7 @@ mod tests {
 
         let (_, master) = result[0];
         // Should be clamped to 10%
-        assert!(master.width >= frame.width * 0.1 - 1.0);
+        assert!(master.width >= frame.width.mul_add(0.1, -1.0));
     }
 
     #[test]
@@ -488,7 +489,7 @@ mod tests {
 
         let (_, master) = result[0];
         // Should be clamped to 90%
-        assert!(master.width <= frame.width * 0.9 + 1.0);
+        assert!(master.width <= frame.width.mul_add(0.9, 1.0));
     }
 
     // ========================================================================
@@ -503,7 +504,7 @@ mod tests {
         assert_eq!(result.len(), 5);
 
         let (_, master) = result[0];
-        assert!((master.width - frame.width * 0.5).abs() < 1.0);
+        assert!((master.width - frame.width.mul_add(0.5, 0.0)).abs() < 1.0);
 
         // Stack has 4 windows, stacked vertically
         for (_, stack_frame) in result.iter().skip(1) {
@@ -519,7 +520,7 @@ mod tests {
         assert_eq!(result.len(), 5);
 
         let (_, master) = result[0];
-        assert!((master.height - frame.height * 0.5).abs() < 1.0);
+        assert!((master.height - frame.height.mul_add(0.5, 0.0)).abs() < 1.0);
 
         // Stack has 4 windows, arranged horizontally
         for (_, stack_frame) in result.iter().skip(1) {
@@ -537,7 +538,7 @@ mod tests {
         let (_, stack) = result[1];
 
         // Master on left (has width based on ratio)
-        assert!((master.width - frame.width * 0.6).abs() < 1.0);
+        assert!((master.width - frame.width.mul_add(0.6, 0.0)).abs() < 1.0);
         assert_eq!(master.height, frame.height);
         assert!(stack.x > master.x);
     }

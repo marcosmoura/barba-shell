@@ -191,7 +191,7 @@ pub fn on_swap_window_in_direction(state: &mut TilingState, direction: FocusDire
         return;
     };
 
-    let all_window_ids = workspace.window_ids.clone();
+    let all_window_ids = workspace.window_ids;
 
     // Get layoutable windows for finding swap targets
     let layoutable: Vec<u32> = all_window_ids
@@ -271,6 +271,10 @@ pub fn on_swap_window_in_direction(state: &mut TilingState, direction: FocusDire
 /// Find the nearest window in a spatial direction.
 ///
 /// Uses weighted distance to prefer windows that are more aligned with the direction.
+///
+/// # Panics
+/// This function uses `unwrap()` internally after checking `is_none()`, which is safe.
+#[must_use]
 pub fn find_window_in_direction(
     state: &TilingState,
     from_frame: &Rect,

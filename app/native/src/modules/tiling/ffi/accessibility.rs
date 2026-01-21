@@ -51,7 +51,7 @@ unsafe extern "C" {
     fn AXUIElementPerformAction(element: AXUIElementRef, action: *const c_void) -> AXError;
     fn AXValueCreate(value_type: i32, value: *const c_void) -> *mut c_void;
     fn AXValueGetValue(value: *const c_void, value_type: i32, value_ptr: *mut c_void) -> bool;
-    /// Private API to get CGWindowID from an AXUIElement.
+    /// Private API to get `CGWindowID` from an `AXUIElement`.
     fn _AXUIElementGetWindow(element: AXUIElementRef, window_id: *mut u32) -> AXError;
 }
 
@@ -146,9 +146,6 @@ fn cf_fullscreen() -> *const c_void { cached_cfstring!(CF_FULLSCREEN, "AXFullScr
 
 #[inline]
 fn cf_tabs() -> *const c_void { cached_cfstring!(CF_TABS, "AXTabs") }
-
-#[inline]
-fn cf_tab_group_role() -> *const c_void { cached_cfstring!(CF_TAB_GROUP_ROLE, "AXTabGroup") }
 
 // ============================================================================
 // AXElement
@@ -472,7 +469,7 @@ impl AXElement {
     /// Gets the `CGWindowID` for this window element.
     ///
     /// This uses a private API (`_AXUIElementGetWindow`) to get the exact
-    /// mapping from AX element to window ID.
+    /// mapping from `AXElement` to window ID.
     #[must_use]
     pub fn window_id(&self) -> Option<u32> {
         let mut window_id: u32 = 0;
@@ -525,7 +522,7 @@ impl AXElement {
 
     /// Finds a tab group child element if one exists.
     ///
-    /// Tab groups are UI elements with role "AXTabGroup" that contain tabs.
+    /// Tab groups are UI elements with role `AXTabGroup` that contain tabs.
     /// This is used for detecting native macOS tabs in applications like Finder.
     #[must_use]
     pub fn find_tab_group(&self) -> Option<Self> {
@@ -544,7 +541,7 @@ impl AXElement {
         None
     }
 
-    /// Checks if this element has an AXTabs attribute.
+    /// Checks if this element has an `AXTabs` attribute.
     #[must_use]
     fn has_tabs_attribute(&self) -> bool {
         let mut value: *mut c_void = ptr::null_mut();
@@ -573,7 +570,7 @@ impl AXElement {
         let count = unsafe { CFArrayGetCount(value) };
         unsafe { CFRelease(value) };
 
-        #[allow(clippy::cast_sign_loss)]
+        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
         if count > 0 { count as usize } else { 0 }
     }
 

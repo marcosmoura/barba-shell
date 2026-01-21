@@ -100,10 +100,11 @@ fn handle_output_device_change(config: &ProxyAudioConfig) {
         return;
     }
 
+    let name = &target.name;
     if set_default_output_device(target.id) {
-        println!("Default output device set to {}", target.name);
+        println!("Default output device set to {name}");
     } else {
-        eprintln!("Failed to set default output device to {}", target.name);
+        eprintln!("Failed to set default output device to {name}");
     }
 }
 
@@ -124,10 +125,11 @@ fn handle_input_device_change(config: &ProxyAudioConfig) {
         return;
     }
 
+    let name = &target.name;
     if set_default_input_device(target.id) {
-        println!("Default input device set to {}", target.name);
+        println!("Default input device set to {name}");
     } else {
-        eprintln!("Failed to set default input device to {}", target.name);
+        eprintln!("Failed to set default input device to {name}");
     }
 }
 

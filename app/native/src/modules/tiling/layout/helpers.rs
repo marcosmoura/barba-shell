@@ -55,6 +55,7 @@ pub fn split_vertical(frame: &Rect, ratio: f64, gap: f64) -> (Rect, Rect) {
 // ============================================================================
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
 

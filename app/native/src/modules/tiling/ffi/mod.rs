@@ -8,8 +8,8 @@
 //!
 //! - [`accessibility`] - Safe wrappers for `AXUIElement` and related APIs
 //! - [`skylight`] - Safe wrappers for `SkyLight` private framework (screen update batching)
-//! - [`transaction`] - RAII wrapper for SkyLight transactions
-//! - [`window_query`] - Fast window enumeration using SkyLight APIs
+//! - [`transaction`] - RAII wrapper for `SkyLight` transactions
+//! - [`window_query`] - Fast window enumeration using `SkyLight` APIs
 //!
 //! # Macros
 //!
@@ -82,7 +82,7 @@ mod tests {
         }
 
         let value = 42;
-        let result = check_ptr(&value);
+        let result = check_ptr(&raw const value);
         assert_eq!(result, Some(42));
     }
 }

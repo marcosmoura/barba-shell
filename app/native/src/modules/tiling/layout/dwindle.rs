@@ -142,6 +142,7 @@ pub fn layout(
 // ============================================================================
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
 
@@ -476,8 +477,8 @@ mod tests {
         let (_, frame2) = result[1];
 
         // First window gets 70%
-        assert!((frame1.width - frame.width * 0.7).abs() < 1.0);
-        assert!((frame2.width - frame.width * 0.3).abs() < 1.0);
+        assert!((frame1.width - frame.width.mul_add(0.7, 0.0)).abs() < 1.0);
+        assert!((frame2.width - frame.width.mul_add(0.3, 0.0)).abs() < 1.0);
     }
 
     #[test]
@@ -491,12 +492,12 @@ mod tests {
         let (_, frame3) = result[2];
 
         // First window gets 60% of screen width
-        assert!((frame1.width - frame.width * 0.6).abs() < 1.0);
+        assert!((frame1.width - frame.width.mul_add(0.6, 0.0)).abs() < 1.0);
 
         // Windows 2 and 3 share the remaining 40% of width
         // Second split (vertical) gives 40% to window 2, 60% to window 3
-        assert!((frame2.height - frame.height * 0.4).abs() < 1.0);
-        assert!((frame3.height - frame.height * 0.6).abs() < 1.0);
+        assert!((frame2.height - frame.height.mul_add(0.4, 0.0)).abs() < 1.0);
+        assert!((frame3.height - frame.height.mul_add(0.6, 0.0)).abs() < 1.0);
     }
 
     #[test]
@@ -508,12 +509,12 @@ mod tests {
         let (_, frame1) = result[0];
 
         // First split uses custom ratio
-        assert!((frame1.width - frame.width * 0.6).abs() < 1.0);
+        assert!((frame1.width - frame.width.mul_add(0.6, 0.0)).abs() < 1.0);
 
         // Remaining splits use default 0.5
         let (_, frame2) = result[1];
         let (_, frame3) = result[2];
-        assert!((frame2.height - frame.height * 0.5).abs() < 1.0);
-        assert!((frame3.width - (frame.width * 0.4) * 0.5).abs() < 1.0);
+        assert!((frame2.height - frame.height.mul_add(0.5, 0.0)).abs() < 1.0);
+        assert!((frame3.width - (frame.width * 0.4).mul_add(0.5, 0.0)).abs() < 1.0);
     }
 }

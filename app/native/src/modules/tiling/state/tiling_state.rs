@@ -38,7 +38,7 @@ pub struct TilingState {
     pub enabled: Observable<bool>,
 
     /// Focus history: remembers the last focused window in each workspace.
-    /// Maps workspace_id -> window_id.
+    /// Maps `workspace_id` -> `window_id`.
     focus_history: HashMap<Uuid, u32>,
 }
 
@@ -388,6 +388,7 @@ impl TilingState {
 // ============================================================================
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
     use crate::modules::tiling::state::types::{LayoutType, Rect};
@@ -462,13 +463,13 @@ mod tests {
 
         assert_eq!(state.screens.len(), 2);
         assert_eq!(state.get_screen(1), Some(screen1.clone()));
-        assert_eq!(state.get_screen_by_name("External"), Some(screen2.clone()));
+        assert_eq!(state.get_screen_by_name("External"), Some(screen2));
         assert_eq!(state.get_main_screen(), Some(screen1.clone()));
 
         // Update existing
-        let mut updated = screen1.clone();
+        let mut updated = screen1;
         updated.refresh_rate = 120.0;
-        state.upsert_screen(updated.clone());
+        state.upsert_screen(updated);
         assert_eq!(state.screens.len(), 2);
         assert_eq!(state.get_screen(1).unwrap().refresh_rate, 120.0);
 

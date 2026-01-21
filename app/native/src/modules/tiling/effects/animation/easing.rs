@@ -10,6 +10,7 @@ use crate::config::EasingType;
 
 /// Linear interpolation between two values.
 #[inline]
+#[must_use]
 pub fn lerp(start: f64, end: f64, t: f64) -> f64 { (end - start).mul_add(t, start) }
 
 /// Linear easing (no acceleration).
@@ -40,6 +41,7 @@ pub fn ease_in_out(t: f64) -> f64 {
 
 /// Applies an easing function based on the easing type.
 #[inline]
+#[must_use]
 pub fn apply_easing(t: f64, easing: EasingType) -> f64 {
     match easing {
         EasingType::Linear => ease_linear(t),

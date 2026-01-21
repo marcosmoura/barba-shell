@@ -2,7 +2,7 @@
 //!
 //! macOS allows multiple windows to be "tabbed" together, appearing as a single
 //! window with tabs in the title bar. Each tab is technically a separate window
-//! with its own CGWindowID.
+//! with its own `CGWindowID`.
 //!
 //! # Detection Strategy
 //!
@@ -14,7 +14,7 @@
 //!
 //! # Registry
 //!
-//! The `TabRegistry` tracks which window IDs are tabs.
+//! The [`TabRegistry`] tracks which window IDs are tabs.
 //! This allows us to:
 //! - Skip layout recalculations when tabs are created/destroyed
 //! - Properly identify when a window operation is actually a tab operation
@@ -226,7 +226,7 @@ pub fn scan_and_register_tabs_for_app(pid: i32) {
     }
 }
 
-/// Gets tab window IDs from a window's AXTabGroup.
+/// Gets tab window IDs from a window's `AXTabGroup`.
 ///
 /// Returns window IDs extracted from the `AXTabs` attribute of the window's
 /// `AXTabGroup` child element.
@@ -310,7 +310,7 @@ fn get_tab_window_ids_from_window(window: AXUIElementRef) -> Vec<u32> {
     result
 }
 
-/// Gets window IDs from an AXTabGroup's AXTabs attribute.
+/// Gets window IDs from an `AXTabGroup`'s `AXTabs` attribute.
 fn get_tabs_from_tab_group(tab_group: AXUIElementRef) -> Vec<u32> {
     use core_foundation::base::TCFType;
     use core_foundation::string::CFString;

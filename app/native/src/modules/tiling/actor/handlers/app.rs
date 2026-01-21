@@ -170,9 +170,9 @@ mod tests {
         Window {
             id,
             pid,
-            app_id: format!("com.test.app{}", pid),
-            app_name: format!("App {}", pid),
-            title: format!("Window {}", id),
+            app_id: format!("com.test.app{pid}"),
+            app_name: format!("App {pid}"),
+            title: format!("Window {id}"),
             frame: Rect::new(0.0, 0.0, 800.0, 600.0),
             minimum_size: None,
             inferred_minimum_size: None,

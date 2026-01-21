@@ -195,7 +195,7 @@ mod tests {
         let err = WallpaperError::InvalidScreen(5);
         let msg = err.to_string();
         assert!(msg.contains("Invalid screen index"));
-        assert!(msg.contains("5"));
+        assert!(msg.contains('5'));
     }
 
     #[test]

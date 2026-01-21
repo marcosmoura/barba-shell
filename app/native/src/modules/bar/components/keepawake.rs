@@ -345,7 +345,7 @@ mod tests {
             locked: true,
             desired_awake: false,
         };
-        let debug_str = format!("{:?}", payload);
+        let debug_str = format!("{payload:?}");
         assert!(debug_str.contains("KeepAwakeChangedPayload"));
         assert!(debug_str.contains("locked"));
         assert!(debug_str.contains("desired_awake"));
@@ -399,6 +399,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::significant_drop_tightening)]
     fn test_keep_awake_controller_toggle_changes_desired_state() {
         let controller = KeepAwakeController::default();
 
@@ -420,6 +421,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::significant_drop_tightening)]
     fn test_keep_awake_controller_enable_awake() {
         let controller = KeepAwakeController::default();
 
@@ -433,6 +435,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::significant_drop_tightening)]
     fn test_keep_awake_controller_handle_system_locked() {
         let controller = KeepAwakeController::default();
 

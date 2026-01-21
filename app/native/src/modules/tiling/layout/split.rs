@@ -214,6 +214,7 @@ fn layout_vertical_with_ratios(
 // ============================================================================
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
 
@@ -283,8 +284,8 @@ mod tests {
         let (_, left) = result[0];
         let (_, right) = result[1];
 
-        assert!((left.width - frame.width * 0.7).abs() < 1.0);
-        assert!((right.width - frame.width * 0.3).abs() < 1.0);
+        assert!((left.width - frame.width.mul_add(0.7, 0.0)).abs() < 1.0);
+        assert!((right.width - frame.width.mul_add(0.3, 0.0)).abs() < 1.0);
     }
 
     #[test]
@@ -298,9 +299,9 @@ mod tests {
         let (_, w2) = result[1];
         let (_, w3) = result[2];
 
-        assert!((w1.width - frame.width * 0.5).abs() < 1.0);
-        assert!((w2.width - frame.width * 0.3).abs() < 1.0);
-        assert!((w3.width - frame.width * 0.2).abs() < 1.0);
+        assert!((w1.width - frame.width.mul_add(0.5, 0.0)).abs() < 1.0);
+        assert!((w2.width - frame.width.mul_add(0.3, 0.0)).abs() < 1.0);
+        assert!((w3.width - frame.width.mul_add(0.2, 0.0)).abs() < 1.0);
     }
 
     // ========================================================================
@@ -365,8 +366,8 @@ mod tests {
         let (_, top) = result[0];
         let (_, bottom) = result[1];
 
-        assert!((top.height - frame.height * 0.6).abs() < 1.0);
-        assert!((bottom.height - frame.height * 0.4).abs() < 1.0);
+        assert!((top.height - frame.height.mul_add(0.6, 0.0)).abs() < 1.0);
+        assert!((bottom.height - frame.height.mul_add(0.4, 0.0)).abs() < 1.0);
     }
 
     // ========================================================================

@@ -134,6 +134,7 @@ pub fn get_running_apps() -> Vec<AppInfo> {
 
 /// Extended window information for tracking.
 #[derive(Debug, Clone)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct WindowInfo {
     /// Window ID (`CGWindowID`).
     pub id: u32,
@@ -171,9 +172,18 @@ pub struct WindowInfo {
 ///
 /// # Returns
 ///
-/// A vector of `WindowInfo` structs for all trackable windows.
+/// A vector of [`WindowInfo`] structs for all trackable windows.
 #[must_use]
 pub fn get_all_windows_including_hidden() -> Vec<WindowInfo> {
+    // Minimum size thresholds
+    // Standard windows: 200x150 minimum
+    // Dialogs: 400x300 minimum (real dialogs like preferences are larger;
+    //          small dialogs are popups like date pickers, color pickers)
+    const MIN_STANDARD_WIDTH: f64 = 200.0;
+    const MIN_STANDARD_HEIGHT: f64 = 150.0;
+    const MIN_DIALOG_WIDTH: f64 = 400.0;
+    const MIN_DIALOG_HEIGHT: f64 = 300.0;
+
     let apps = get_running_apps();
 
     // Build a map of PID -> (bundle_id, app_name, is_hidden)
@@ -212,30 +222,22 @@ pub fn get_all_windows_including_hidden() -> Vec<WindowInfo> {
                 continue;
             }
 
-            // Minimum size thresholds
-            // Standard windows: 200x150 minimum
-            // Dialogs: 400x300 minimum (real dialogs like preferences are larger;
-            //          small dialogs are popups like date pickers, color pickers)
-            const MIN_STANDARD_WIDTH: f64 = 200.0;
-            const MIN_STANDARD_HEIGHT: f64 = 150.0;
-            const MIN_DIALOG_WIDTH: f64 = 400.0;
-            const MIN_DIALOG_HEIGHT: f64 = 300.0;
-
             // Determine if window should be managed based on subrole and size
             // Use blacklist approach: only reject known popup/sheet subroles
             let should_manage = match subrole.as_deref() {
                 // Explicitly reject popup-like subroles
-                Some("AXSheet") | Some("AXDrawer") => {
-                    // Sheets and drawers are always attached to parent windows
-                    false
-                }
+                // Sheets and drawers are always attached to parent windows
+                // AXUnknown subrole indicates popup/panel windows without standard controls
+                // Examples: browser extension popups, toolbar popups, dropdown panels
+                // These windows typically have no close/minimize/zoom buttons
+                Some("AXSheet" | "AXDrawer" | "AXUnknown") => false,
                 Some("AXDialog") => {
                     // Dialogs - only accept large ones (preferences, settings)
                     // Small dialogs are popups (date pickers, color pickers, alerts)
                     frame.width >= MIN_DIALOG_WIDTH && frame.height >= MIN_DIALOG_HEIGHT
                 }
                 _ => {
-                    // Standard windows, no subrole, or unknown subroles - accept if large enough
+                    // Standard windows, no subrole, or custom subroles - accept if large enough
                     // Many apps (like Ghostty) don't set subrole or use custom values
                     frame.width >= MIN_STANDARD_WIDTH && frame.height >= MIN_STANDARD_HEIGHT
                 }
@@ -298,7 +300,7 @@ pub fn get_visible_windows() -> Vec<WindowInfo> {
 #[must_use]
 pub fn get_focused_window_id() -> Option<u32> { unsafe { get_focused_window_id_unsafe() } }
 
-/// Internal implementation of `get_focused_window_id`.
+/// Internal implementation of [`get_focused_window_id`].
 ///
 /// # Safety
 ///

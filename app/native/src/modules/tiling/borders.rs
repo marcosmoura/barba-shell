@@ -1,9 +1,9 @@
-//! Simple border management via JankyBorders.
+//! Simple border management via `JankyBorders`.
 //!
-//! This module handles window borders by communicating with JankyBorders.
+//! This module handles window borders by communicating with `JankyBorders`.
 //! It's intentionally simple:
 //!
-//! 1. On init: Configure JankyBorders with style settings and blacklist
+//! 1. On init: Configure `JankyBorders` with style settings and blacklist
 //! 2. On focus change: Send a single batched command with all border colors
 //!
 //! # Architecture
@@ -26,14 +26,14 @@ use crate::modules::tiling::state::LayoutType;
 // Constants
 // ============================================================================
 
-/// Mach service name for JankyBorders.
+/// Mach service name for `JankyBorders`.
 const JANKY_BORDERS_SERVICE: &str = "git.felix.borders";
 
 // ============================================================================
 // State
 // ============================================================================
 
-/// Last command sent to JankyBorders (for deduplication).
+/// Last command sent to `JankyBorders` (for deduplication).
 static LAST_COMMAND: OnceLock<Mutex<String>> = OnceLock::new();
 
 /// Mach port for IPC communication.
@@ -100,15 +100,14 @@ struct MachMsgOolDescriptor {
     size: u32,
 }
 
-/// Connects to JankyBorders via Mach IPC.
+/// Connects to `JankyBorders` via Mach IPC.
 fn connect_mach() -> bool {
-    let service = match CString::new(JANKY_BORDERS_SERVICE) {
-        Ok(s) => s,
-        Err(_) => return false,
+    let Ok(service) = CString::new(JANKY_BORDERS_SERVICE) else {
+        return false;
     };
 
     let mut port: u32 = 0;
-    let result = unsafe { bootstrap_look_up(BOOTSTRAP_PORT, service.as_ptr(), &mut port) };
+    let result = unsafe { bootstrap_look_up(BOOTSTRAP_PORT, service.as_ptr(), &raw mut port) };
 
     if result == 0 && port != 0 {
         *get_mach_port().lock() = Some(port);
@@ -120,21 +119,21 @@ fn connect_mach() -> bool {
 
 /// Sends a command via Mach IPC.
 fn send_mach(command: &str) -> bool {
-    let port = match *get_mach_port().lock() {
-        Some(p) => p,
-        None => return false,
-    };
-
-    let data = command.as_bytes();
-
     const MACH_MSGH_BITS_COMPLEX: u32 = 0x8000_0000;
     const MACH_MSGH_BITS_COPY_SEND: u32 = 19;
     const MACH_MSG_OOL_DESCRIPTOR: u8 = 1;
     const MACH_MSG_VIRTUAL_COPY: u8 = 1;
 
+    let Some(port) = *get_mach_port().lock() else {
+        return false;
+    };
+
+    let data = command.as_bytes();
+
     let mut msg = MachMessage {
         header: MachMsgHeader {
             bits: MACH_MSGH_BITS_COMPLEX | MACH_MSGH_BITS_COPY_SEND,
+            #[allow(clippy::cast_possible_truncation)]
             size: std::mem::size_of::<MachMessage>() as u32,
             remote_port: port,
             local_port: 0,
@@ -148,13 +147,14 @@ fn send_mach(command: &str) -> bool {
             copy: MACH_MSG_VIRTUAL_COPY,
             pad1: 0,
             type_: MACH_MSG_OOL_DESCRIPTOR,
+            #[allow(clippy::cast_possible_truncation)]
             size: data.len() as u32,
         },
     };
 
     let result = unsafe {
         mach_msg(
-            &mut msg,
+            &raw mut msg,
             MACH_SEND_MSG,
             msg.header.size,
             0,
@@ -171,7 +171,7 @@ fn send_mach(command: &str) -> bool {
 // Color Conversion
 // ============================================================================
 
-/// Converts RGBA to JankyBorders hex format (0xAARRGGBB).
+/// Converts RGBA to `JankyBorders` hex format (`0xAARRGGBB`).
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn rgba_to_hex(rgba: &Rgba) -> String {
     let a = (rgba.a * 255.0).round() as u8;
@@ -181,13 +181,13 @@ fn rgba_to_hex(rgba: &Rgba) -> String {
     format!("0x{a:02X}{r:02X}{g:02X}{b:02X}")
 }
 
-/// Converts a hex color string to JankyBorders format.
+/// Converts a hex color string to `JankyBorders` format.
 fn hex_to_janky(hex: &str) -> Option<String> {
     let rgba = parse_hex_color(hex).ok()?;
     Some(rgba_to_hex(&rgba))
 }
 
-/// Converts a BorderColor to JankyBorders color string.
+/// Converts a `BorderColor` to `JankyBorders` color string.
 fn border_color_to_janky(color: &BorderColor) -> Option<String> {
     match color {
         BorderColor::Solid(hex) => hex_to_janky(hex),
@@ -210,7 +210,7 @@ fn border_color_to_janky(color: &BorderColor) -> Option<String> {
     }
 }
 
-/// Gets the JankyBorders color string for a border state config.
+/// Gets the `JankyBorders` color string for a border state config.
 /// Returns transparent (0x00000000) and width 0 if disabled.
 fn get_border_settings(config: &BorderStateConfig) -> (String, u32) {
     if !config.is_enabled() {
@@ -230,7 +230,7 @@ fn get_border_settings(config: &BorderStateConfig) -> (String, u32) {
 // JankyBorders Communication
 // ============================================================================
 
-/// Checks if JankyBorders is available.
+/// Checks if `JankyBorders` is available.
 fn is_available() -> bool {
     Command::new("which")
         .arg("borders")
@@ -238,7 +238,7 @@ fn is_available() -> bool {
         .is_ok_and(|output| output.status.success())
 }
 
-/// Sends a command to JankyBorders (with deduplication).
+/// Sends a command to `JankyBorders` (with deduplication).
 fn send_command(command: &str) -> bool {
     // Check if command is the same as last time
     {
@@ -262,7 +262,7 @@ fn send_command(command: &str) -> bool {
         .is_ok_and(|output| output.status.success())
 }
 
-/// Builds the blacklist string for JankyBorders.
+/// Builds the blacklist string for `JankyBorders`.
 fn build_blacklist() -> String {
     let config = get_config();
     let mut apps: Vec<String> = Vec::new();
@@ -300,10 +300,11 @@ fn build_blacklist() -> String {
 
 /// Initializes the border system.
 ///
-/// Sets up JankyBorders with:
+/// Sets up `JankyBorders` with:
 /// - Style settings (width, style, hidpi)
 /// - Blacklist of ignored apps
 /// - Initial colors (unfocused always, active based on initial layout)
+#[must_use]
 pub fn init() -> bool {
     let config = get_config();
 
@@ -368,8 +369,8 @@ pub fn init() -> bool {
 /// - Floating layout → floating config (if enabled)
 /// - Otherwise → focused config
 ///
-/// Always sends unfocused color as inactive_color.
-/// All settings are batched into a single JankyBorders call.
+/// Always sends unfocused color as `inactive_color`.
+/// All settings are batched into a single `JankyBorders` call.
 pub fn on_focus_changed(layout: LayoutType, is_window_floating: bool) {
     let config = get_config();
     let borders = &config.tiling.borders;
@@ -408,7 +409,7 @@ pub fn refresh() {
     *get_last_command().lock() = String::new();
 
     // Re-initialize
-    init();
+    let _ = init();
 }
 
 // ============================================================================

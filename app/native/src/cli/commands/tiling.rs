@@ -299,14 +299,21 @@ fn execute_query_screens(json: bool) {
 
                 let rows: Vec<ScreenRow> = screens
                     .iter()
-                    .map(|s| ScreenRow {
-                        id: s.id,
-                        name: s.name.clone(),
-                        resolution: format!("{}x{}", s.frame.width as u32, s.frame.height as u32),
-                        position: format!("{}, {}", s.frame.x as i32, s.frame.y as i32),
-                        scale: format!("{}x", s.scale_factor),
-                        main: output::format_bool(s.is_main),
-                        builtin: output::format_bool(s.is_builtin),
+                    .map(|s| {
+                        let width = s.frame.width as u32;
+                        let height = s.frame.height as u32;
+                        let x = s.frame.x as i32;
+                        let y = s.frame.y as i32;
+                        let scale = s.scale_factor;
+                        ScreenRow {
+                            id: s.id,
+                            name: s.name.clone(),
+                            resolution: format!("{width}x{height}"),
+                            position: format!("{x}, {y}"),
+                            scale: format!("{scale}x"),
+                            main: output::format_bool(s.is_main),
+                            builtin: output::format_bool(s.is_builtin),
+                        }
                     })
                     .collect();
 
@@ -317,7 +324,8 @@ fn execute_query_screens(json: bool) {
                     .with(Modify::new(Columns::new(5..7)).with(Alignment::center()))
                     .to_string();
 
-                println!("{}", format!("Screens ({})", screens.len()).bold());
+                let count = screens.len();
+                println!("{}", format!("Screens ({count})").bold());
                 println!("{table}");
             }
         }
@@ -408,7 +416,8 @@ fn execute_query_workspaces(json: bool, focused_screen: bool, screen: Option<&st
                     .with(Modify::new(Columns::new(4..6)).with(Alignment::center()))
                     .to_string();
 
-                println!("{}", format!("Workspaces ({})", workspaces.len()).bold());
+                let count = workspaces.len();
+                println!("{}", format!("Workspaces ({count})").bold());
                 println!("{table}");
             }
         }
@@ -523,7 +532,8 @@ fn execute_query_windows(
                     .with(Modify::new(Columns::last()).with(Alignment::center()))
                     .to_string();
 
-                println!("{}", format!("Windows ({})", windows.len()).bold());
+                let count = windows.len();
+                println!("{}", format!("Windows ({count})").bold());
                 println!("{table}");
             }
         }

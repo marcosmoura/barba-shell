@@ -15,8 +15,8 @@ use crate::modules::tiling::state::{LayoutType, Rect, TilingState};
 /// Initialize default ratios based on layout type and window count.
 ///
 /// Different layouts interpret ratios differently:
-/// - Split layouts: cumulative ratios (e.g., [0.33, 0.66] for 3 windows)
-/// - Dwindle: direct ratios per split level (e.g., [0.5, 0.5] for 3 windows)
+/// - Split layouts: cumulative ratios (e.g., `[0.33, 0.66]` for 3 windows)
+/// - Dwindle: direct ratios per split level (e.g., `[0.5, 0.5]` for 3 windows)
 /// - Grid: layout-specific (first ratio often controls master/primary split)
 #[allow(clippy::cast_precision_loss)]
 fn initialize_default_ratios(layout: LayoutType, window_count: usize) -> Vec<f64> {
@@ -31,13 +31,12 @@ fn initialize_default_ratios(layout: LayoutType, window_count: usize) -> Vec<f64
         LayoutType::Grid => {
             // For most grid layouts, first ratio controls master width
             // Default depends on layout structure
+            #[allow(clippy::match_same_arms)] // Keep explicit for documentation
             match window_count {
-                2 => vec![0.5],        // 2 windows: 50/50 split
-                3 => vec![0.5],        // Master + 2 stack: 50% master
-                5 => vec![1.0 / 3.0],  // Master + 4 stack: 33% master (1 of 3 cols)
-                7 => vec![1.0 / 3.0],  // Master + 6 stack: 33% master
-                10 | 11 => vec![0.25], // 3x4 master: 25% master (1 of 4 cols)
-                _ => vec![0.5],        // Default
+                2 | 3 => vec![0.5],       // 2 windows: 50/50 split; Master + 2 stack: 50% master
+                5 | 7 => vec![1.0 / 3.0], // Master + 4/6 stack: 33% master (1 of 3 cols)
+                10 | 11 => vec![0.25],    // 3x4 master: 25% master (1 of 4 cols)
+                _ => vec![0.5],           // Default
             }
         }
         // Master layout uses master_ratio from workspace config, not split_ratios
@@ -60,6 +59,7 @@ fn initialize_default_ratios(layout: LayoutType, window_count: usize) -> Vec<f64
 /// - Split: ratios are cumulative positions, with cascade to other windows
 /// - Dwindle: ratios are direct per-split values
 /// - Grid: first ratio controls primary split
+#[allow(clippy::too_many_lines)]
 pub fn on_resize_split(
     state: &mut TilingState,
     workspace_id: Uuid,
@@ -88,7 +88,7 @@ pub fn on_resize_split(
         layout,
         LayoutType::Floating | LayoutType::Monocle | LayoutType::Master
     ) {
-        log::debug!("resize_split: layout {:?} doesn't use split ratios", layout);
+        log::debug!("resize_split: layout {layout:?} doesn't use split ratios");
         return;
     }
 
@@ -106,7 +106,6 @@ pub fn on_resize_split(
 
     // Validate index based on layout
     let max_index = match layout {
-        LayoutType::Dwindle => window_count.saturating_sub(1),
         LayoutType::Grid => 1,
         _ => window_count.saturating_sub(1),
     };
@@ -147,11 +146,10 @@ pub fn on_resize_split(
             state
                 .get_window(id)
                 .and_then(|w| w.minimum_size)
-                .map(|(min_w, min_h)| {
+                .map_or(0.05, |(min_w, min_h)| {
                     let min_size = if is_horizontal { min_w } else { min_h };
                     (min_size / total_size).max(0.05)
-                })
-                .unwrap_or(0.05) // Default minimum 5%
+                }) // Default minimum 5%
         })
         .collect();
 
@@ -193,10 +191,7 @@ pub fn on_resize_split(
         ws.split_ratios = ratios;
     });
 
-    log::debug!(
-        "Resized split at index {window_index} by {delta} (layout: {:?})",
-        layout
-    );
+    log::debug!("Resized split at index {window_index} by {delta} (layout: {layout:?})");
 
     // Notify subscriber to recalculate layout
     if let Some(handle) = get_subscriber_handle() {
@@ -210,19 +205,19 @@ pub fn on_resize_split(
 
 /// Applies a resize to split layout ratios while respecting minimum sizes.
 ///
-/// For cumulative ratios [r0, r1, r2, ...]:
-/// - Window 0: 0.0 to r0
-/// - Window 1: r0 to r1
-/// - Window 2: r1 to r2
-/// - Window N: r(N-1) to 1.0
+/// For cumulative ratios `[r0, r1, r2, ...]`:
+/// - Window 0: `0.0` to `r0`
+/// - Window 1: `r0` to `r1`
+/// - Window 2: `r1` to `r2`
+/// - Window N: `r(N-1)` to `1.0`
 ///
-/// When growing window i+1 (decreasing ratio[i]):
-/// - Window i shrinks
-/// - If window i is at minimum, cascade to shrink earlier windows
+/// When growing window `i+1` (decreasing `ratio[i]`):
+/// - Window `i` shrinks
+/// - If window `i` is at minimum, cascade to shrink earlier windows
 ///
-/// When shrinking window i+1 (increasing ratio[i]):
-/// - Window i grows
-/// - Windows after i shrink
+/// When shrinking window `i+1` (increasing `ratio[i]`):
+/// - Window `i` grows
+/// - Windows after `i` shrink
 /// - If any of those windows is at minimum, stop
 fn apply_split_resize_with_minimums(
     ratios: &mut [f64],
@@ -465,6 +460,7 @@ fn apply_grid_resize_with_minimums(
 /// * `state` - The tiling state
 /// * `dimension` - "width" or "height"
 /// * `amount` - Pixels to add (positive) or remove (negative)
+#[allow(clippy::too_many_lines)]
 pub fn on_resize_focused_window(state: &mut TilingState, dimension: &str, amount: i32) {
     let focus = state.get_focus_state();
     let Some(workspace_id) = focus.focused_workspace_id else {
@@ -556,9 +552,7 @@ pub fn on_resize_focused_window(state: &mut TilingState, dimension: &str, amount
                     // Dimension doesn't match this split direction
                     // Try to find the appropriate split for this dimension
                     log::debug!(
-                        "resize_focused_window: dimension {} doesn't match split direction for window at index {}",
-                        dimension,
-                        window_index
+                        "resize_focused_window: dimension {dimension} doesn't match split direction for window at index {window_index}"
                     );
                     return;
                 };
@@ -593,10 +587,7 @@ pub fn on_resize_focused_window(state: &mut TilingState, dimension: &str, amount
             }
         }
         _ => {
-            log::debug!(
-                "resize_focused_window: layout {:?} doesn't support resize",
-                layout
-            );
+            log::debug!("resize_focused_window: layout {layout:?} doesn't support resize");
             return;
         }
     };
@@ -604,10 +595,7 @@ pub fn on_resize_focused_window(state: &mut TilingState, dimension: &str, amount
     on_resize_split(state, workspace_id, ratio_index, effective_delta);
 
     log::debug!(
-        "Resized window {focused_id} {dimension} by {amount}px (layout: {:?}, ratio_index: {}, delta: {:.4})",
-        layout,
-        ratio_index,
-        effective_delta
+        "Resized window {focused_id} {dimension} by {amount}px (layout: {layout:?}, ratio_index: {ratio_index}, delta: {effective_delta:.4})"
     );
 }
 
@@ -656,10 +644,7 @@ pub fn on_user_resize_completed(
         layout,
         LayoutType::Floating | LayoutType::Monocle | LayoutType::Master
     ) {
-        log::debug!(
-            "user_resize_completed: layout {:?} doesn't use split ratios",
-            layout
-        );
+        log::debug!("user_resize_completed: layout {layout:?} doesn't use split ratios");
         // Just re-apply layout to snap back
         if let Some(handle) = get_subscriber_handle() {
             handle.notify_layout_changed(workspace_id, true);
@@ -761,10 +746,7 @@ pub fn on_user_resize_completed(
             }
         }
         _ => {
-            log::debug!(
-                "user_resize_completed: layout {:?} doesn't support user resize",
-                layout
-            );
+            log::debug!("user_resize_completed: layout {layout:?} doesn't support user resize");
             if let Some(handle) = get_subscriber_handle() {
                 handle.notify_layout_changed(workspace_id, true);
             }

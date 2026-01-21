@@ -82,9 +82,8 @@ pub async fn get_tiling_workspaces(
         .await
         .map_err(|e| StacheError::TilingError(e.to_string()))?;
 
-    let workspaces = match workspaces_result {
-        QueryResult::Workspaces(ws) => ws,
-        _ => return Err(StacheError::TilingError("Unexpected query result".to_string())),
+    let QueryResult::Workspaces(workspaces) = workspaces_result else {
+        return Err(StacheError::TilingError("Unexpected query result".to_string()));
     };
 
     // Get all screens for name lookup
@@ -159,9 +158,8 @@ pub async fn get_tiling_windows(workspace: Option<String>) -> Result<Vec<WindowI
         .await
         .map_err(|e| StacheError::TilingError(e.to_string()))?;
 
-    let windows = match windows_result {
-        QueryResult::Windows(w) => w,
-        _ => return Err(StacheError::TilingError("Unexpected query result".to_string())),
+    let QueryResult::Windows(windows) = windows_result else {
+        return Err(StacheError::TilingError("Unexpected query result".to_string()));
     };
 
     // Get all workspaces for name lookup
@@ -180,15 +178,13 @@ pub async fn get_tiling_windows(workspace: Option<String>) -> Result<Vec<WindowI
         .into_iter()
         .filter(|w| !w.is_minimized && !w.is_hidden)
         .filter(|w| {
-            if let Some(ref ws_name) = workspace {
+            workspace.as_ref().is_none_or(|ws_name| {
                 // Find the workspace name for this window
                 workspaces
                     .iter()
                     .find(|ws| ws.id == w.workspace_id)
                     .is_some_and(|ws| ws.name.eq_ignore_ascii_case(ws_name))
-            } else {
-                true
-            }
+            })
         })
         .map(|w| {
             let workspace_name = workspaces
@@ -268,9 +264,8 @@ pub async fn get_tiling_focused_window() -> Result<Option<WindowInfo>, StacheErr
         .await
         .map_err(|e| StacheError::TilingError(e.to_string()))?;
 
-    let window = match window_result {
-        QueryResult::Window(Some(w)) => w,
-        _ => return Ok(None),
+    let QueryResult::Window(Some(window)) = window_result else {
+        return Ok(None);
     };
 
     // Get workspaces for name lookup
@@ -421,9 +416,8 @@ pub async fn get_tiling_current_workspace_windows() -> Result<Vec<WindowInfo>, S
         .await
         .map_err(|e| StacheError::TilingError(e.to_string()))?;
 
-    let focused_workspace = match focused_ws_result {
-        QueryResult::Workspace(Some(ws)) => ws,
-        _ => return Ok(Vec::new()),
+    let QueryResult::Workspace(Some(focused_workspace)) = focused_ws_result else {
+        return Ok(Vec::new());
     };
 
     // Get focused window ID
@@ -443,9 +437,8 @@ pub async fn get_tiling_current_workspace_windows() -> Result<Vec<WindowInfo>, S
         .await
         .map_err(|e| StacheError::TilingError(e.to_string()))?;
 
-    let windows = match windows_result {
-        QueryResult::Windows(w) => w,
-        _ => return Ok(Vec::new()),
+    let QueryResult::Windows(windows) = windows_result else {
+        return Ok(Vec::new());
     };
 
     // Filter to focused workspace and non-minimized windows

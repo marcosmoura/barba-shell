@@ -368,7 +368,7 @@ mod tests {
             usage: 50.0,
             temperature: Some(70.0),
         };
-        let debug_str = format!("{:?}", info);
+        let debug_str = format!("{info:?}");
         assert!(debug_str.contains("CpuInfo"));
         assert!(debug_str.contains("50"));
         assert!(debug_str.contains("70"));

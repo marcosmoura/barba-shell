@@ -260,13 +260,13 @@ mod tests {
         let target = ScreenTarget::Index(ScreenIndex::new(3));
         let json = serde_json::to_string(&target).unwrap();
         // Index variant serializes with the index object
-        assert!(json.contains("index") || json.contains("3"));
+        assert!(json.contains("index") || json.contains('3'));
     }
 
     #[test]
     fn test_screen_target_debug() {
         let target = ScreenTarget::All;
-        let debug_str = format!("{:?}", target);
+        let debug_str = format!("{target:?}");
         assert!(debug_str.contains("All"));
     }
 
@@ -340,7 +340,7 @@ mod tests {
     #[test]
     fn test_screen_index_debug() {
         let idx = ScreenIndex::new(42);
-        let debug_str = format!("{:?}", idx);
+        let debug_str = format!("{idx:?}");
         assert!(debug_str.contains("42"));
     }
 

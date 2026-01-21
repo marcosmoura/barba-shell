@@ -320,7 +320,8 @@ impl EventProcessor {
 
     /// Dispatch a window created event immediately.
     pub fn on_window_created(&self, info: WindowCreatedInfo) {
-        log::trace!("Window created: {:?}", info.window_id);
+        let window_id = info.window_id;
+        log::trace!("Window created: {window_id:?}");
 
         // Track this window for destroy detection
         self.pid_windows.lock().entry(info.pid).or_default().insert(info.window_id);
@@ -345,9 +346,11 @@ impl EventProcessor {
         }
 
         // Remove from pid_windows tracking
-        let mut pid_windows = self.pid_windows.lock();
-        for windows in pid_windows.values_mut() {
-            windows.remove(&window_id);
+        {
+            let mut pid_windows = self.pid_windows.lock();
+            for windows in pid_windows.values_mut() {
+                windows.remove(&window_id);
+            }
         }
 
         log::debug!("tiling: sending WindowDestroyed message to actor for window_id={window_id}");
@@ -367,7 +370,7 @@ impl EventProcessor {
             pid_windows.get(&pid).map(|s| s.iter().copied().collect()).unwrap_or_default()
         };
 
-        log::debug!("tiling: tracked windows for pid={pid}: {:?}", tracked_window_ids);
+        log::debug!("tiling: tracked windows for pid={pid}: {tracked_window_ids:?}");
 
         if tracked_window_ids.is_empty() {
             log::debug!("tiling: no tracked windows for pid={pid}, nothing to do");
@@ -376,20 +379,17 @@ impl EventProcessor {
 
         // Query current windows from macOS for this PID
         let current_window_ids = get_current_window_ids_for_pid(pid);
-        log::debug!(
-            "tiling: current windows from macOS for pid={pid}: {:?}",
-            current_window_ids
-        );
+        log::debug!("tiling: current windows from macOS for pid={pid}: {current_window_ids:?}");
 
         // Find windows that are tracked but no longer exist
         for window_id in tracked_window_ids {
-            if !current_window_ids.contains(&window_id) {
+            if current_window_ids.contains(&window_id) {
+                log::trace!("tiling: window {window_id} still exists for pid={pid}");
+            } else {
                 log::debug!(
                     "tiling: window {window_id} no longer exists for pid={pid}, destroying"
                 );
                 self.on_window_destroyed(window_id);
-            } else {
-                log::trace!("tiling: window {window_id} still exists for pid={pid}");
             }
         }
     }
@@ -605,6 +605,7 @@ impl EventProcessor {
     /// Tracks multiple windows for destroy detection.
     ///
     /// This is the batch version of `track_window_for_destroy_detection`.
+    #[allow(clippy::significant_drop_tightening)]
     pub fn track_windows_for_destroy_detection(&self, windows: &[(u32, i32)]) {
         let mut pid_windows = self.pid_windows.lock();
         for (window_id, pid) in windows {

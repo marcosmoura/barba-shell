@@ -236,25 +236,33 @@ fn handle_notification<R: Runtime>(app_handle: &AppHandle<R>, notification: Stac
 
                     // Get workspace by name
                     let ws_result = rt.block_on(handle.get_workspace_by_name(&workspace));
-                    let workspace_id =
-                        ws_result.ok().and_then(|r| r.into_workspace()).flatten().map(|ws| ws.id);
+                    let workspace_id = ws_result
+                        .ok()
+                        .and_then(tiling::actor::QueryResult::into_workspace)
+                        .flatten()
+                        .map(|ws| ws.id);
 
                     // Get focused window
                     let win_result = rt.block_on(handle.get_focused_window());
-                    let window_id =
-                        win_result.ok().and_then(|r| r.into_window()).flatten().map(|w| w.id);
+                    let window_id = win_result
+                        .ok()
+                        .and_then(tiling::actor::QueryResult::into_window)
+                        .flatten()
+                        .map(|w| w.id);
 
                     match (window_id, workspace_id) {
-                        (Some(wid), Some(wsid)) => {
+                        (Some(win_id), Some(ws_id)) => {
                             if let Err(e) =
                                 handle.send(tiling::actor::StateMessage::MoveWindowToWorkspace {
-                                    window_id: wid,
-                                    workspace_id: wsid,
+                                    window_id: win_id,
+                                    workspace_id: ws_id,
                                 })
                             {
                                 log::warn!("tiling: failed to send window to workspace: {e}");
                             } else {
-                                log::debug!("tiling: sent window {wid} to workspace '{workspace}'");
+                                log::debug!(
+                                    "tiling: sent window {win_id} to workspace '{workspace}'"
+                                );
                             }
                         }
                         (None, _) => {

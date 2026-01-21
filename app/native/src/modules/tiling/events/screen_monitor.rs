@@ -369,7 +369,7 @@ mod tests {
         let processor = Arc::new(EventProcessor::new(handle.clone()));
         let adapter = Arc::new(ScreenMonitorAdapter::new(processor));
 
-        install_adapter(adapter.clone());
+        install_adapter(Arc::clone(&adapter));
         assert!(get_installed_adapter().is_some());
 
         uninstall_adapter();

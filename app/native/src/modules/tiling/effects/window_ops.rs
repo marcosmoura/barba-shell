@@ -448,7 +448,7 @@ pub fn set_window_frame(window_id: u32, frame: &Rect) -> bool {
     true
 }
 
-/// Internal implementation of set_window_frame (runs on main thread).
+/// Internal implementation of `set_window_frame` (runs on main thread).
 fn set_window_frame_impl(window_id: u32, frame: &Rect) {
     let Some(element) = resolve_window_element(window_id) else {
         log::debug!("set_window_frame: could not resolve window {window_id}");
@@ -515,7 +515,9 @@ pub struct FrameSetResult {
 impl FrameSetResult {
     /// Returns true if the window couldn't reach the target size.
     #[must_use]
-    pub fn hit_constraints(&self) -> bool { self.hit_minimum_width || self.hit_minimum_height }
+    pub const fn hit_constraints(&self) -> bool {
+        self.hit_minimum_width || self.hit_minimum_height
+    }
 }
 
 /// Sets the frame of a window and verifies the result.
@@ -571,21 +573,22 @@ pub fn set_window_frame_verified(window_id: u32, target: &Rect) -> FrameSetResul
     let actual_frame = ax_element.frame();
 
     // Check if we hit size constraints
-    let (hit_min_width, hit_min_height) = if let Some(actual) = &actual_frame {
-        let width_diff = (actual.width - target.width).abs();
-        let height_diff = (actual.height - target.height).abs();
+    let (hit_min_width, hit_min_height) =
+        actual_frame
+            .as_ref()
+            .map_or((min_width_constraint, min_height_constraint), |actual| {
+                let width_diff = (actual.width - target.width).abs();
+                let height_diff = (actual.height - target.height).abs();
 
-        // If actual is larger than target and we're not close, we hit a minimum
-        let hit_width = width_diff > 1.0 && actual.width > target.width;
-        let hit_height = height_diff > 1.0 && actual.height > target.height;
+                // If actual is larger than target and we're not close, we hit a minimum
+                let hit_width = width_diff > 1.0 && actual.width > target.width;
+                let hit_height = height_diff > 1.0 && actual.height > target.height;
 
-        (
-            hit_width || min_width_constraint,
-            hit_height || min_height_constraint,
-        )
-    } else {
-        (min_width_constraint, min_height_constraint)
-    };
+                (
+                    hit_width || min_width_constraint,
+                    hit_height || min_height_constraint,
+                )
+            });
 
     FrameSetResult {
         success,
@@ -645,7 +648,7 @@ pub fn focus_window(window_id: u32) -> bool {
     true
 }
 
-/// Internal implementation of focus_window (runs on main thread).
+/// Internal implementation of `focus_window` (runs on main thread).
 fn focus_window_impl(window_id: u32) {
     // First, get the PID for this window so we can activate the app
     let pid = get_window_pid(window_id);
@@ -762,7 +765,7 @@ pub fn raise_window(window_id: u32) -> bool {
     true
 }
 
-/// Internal implementation of raise_window (runs on main thread).
+/// Internal implementation of `raise_window` (runs on main thread).
 fn raise_window_impl(window_id: u32) {
     let Some(element) = resolve_window_element(window_id) else {
         log::debug!("raise_window: could not resolve window {window_id}");
@@ -822,12 +825,9 @@ pub fn hide_app(pid: i32) -> bool {
     use objc::{msg_send, sel, sel_impl};
 
     unsafe {
-        let app_class = match Class::get("NSRunningApplication") {
-            Some(c) => c,
-            None => {
-                log::warn!("NSRunningApplication class not found");
-                return false;
-            }
+        let Some(app_class) = Class::get("NSRunningApplication") else {
+            log::warn!("NSRunningApplication class not found");
+            return false;
         };
 
         let app: *mut Object = msg_send![app_class, runningApplicationWithProcessIdentifier: pid];
@@ -865,12 +865,9 @@ pub fn unhide_app(pid: i32) -> bool {
     use objc::{msg_send, sel, sel_impl};
 
     unsafe {
-        let app_class = match Class::get("NSRunningApplication") {
-            Some(c) => c,
-            None => {
-                log::warn!("NSRunningApplication class not found");
-                return false;
-            }
+        let Some(app_class) = Class::get("NSRunningApplication") else {
+            log::warn!("NSRunningApplication class not found");
+            return false;
         };
 
         let app: *mut Object = msg_send![app_class, runningApplicationWithProcessIdentifier: pid];

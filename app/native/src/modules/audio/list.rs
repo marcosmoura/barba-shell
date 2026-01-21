@@ -153,6 +153,6 @@ mod tests {
         let output = format_devices_table(&devices);
         assert!(output.contains("Test"));
         assert!(output.contains("usb"));
-        assert!(output.contains("Y"));
+        assert!(output.contains('Y'));
     }
 }

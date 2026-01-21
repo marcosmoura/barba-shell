@@ -1,3 +1,5 @@
+cargo-features = ["profile-rustflags", "trim-paths"]
+
 [workspace]
 resolver = "2"
 members = ["app/native"]
@@ -20,10 +22,15 @@ unexpected_cfgs = { level = "allow", check-cfg = [
   'cfg(feature, values("cargo-clippy"))',
 ] }
 
+[profile.dev]
+incremental = true
+rustflags = ["-Zthreads=8"]
+
 [profile.release]
 codegen-units = 1
-incremental = false
 lto = true
 opt-level = "s"
 panic = "abort"
+rustflags = ["-Cdebuginfo=0", "-Zthreads=8"]
 strip = true
+trim-paths = "all"

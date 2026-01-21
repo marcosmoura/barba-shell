@@ -216,7 +216,7 @@ impl EffectSubscriberHandle {
             .notification_tx
             .try_send(SubscriberNotification::LayoutChanged { workspace_id, user_triggered })
         {
-            log::warn!(
+            tracing::warn!(
                 "tiling: dropped LayoutChanged notification for workspace {workspace_id}: {e}"
             );
         }
@@ -225,7 +225,7 @@ impl EffectSubscriberHandle {
     /// Notifies the subscriber that focus changed.
     pub fn notify_focus_changed(&self) {
         if let Err(e) = self.notification_tx.try_send(SubscriberNotification::FocusChanged) {
-            log::warn!("tiling: dropped FocusChanged notification: {e}");
+            tracing::warn!("tiling: dropped FocusChanged notification: {e}");
         }
     }
 
@@ -235,7 +235,7 @@ impl EffectSubscriberHandle {
             .notification_tx
             .try_send(SubscriberNotification::VisibilityChanged { workspace_id, visible })
         {
-            log::warn!(
+            tracing::warn!(
                 "tiling: dropped VisibilityChanged notification for workspace {workspace_id}: {e}"
             );
         }
@@ -247,7 +247,9 @@ impl EffectSubscriberHandle {
             .notification_tx
             .try_send(SubscriberNotification::FloatingChanged { window_id, floating })
         {
-            log::warn!("tiling: dropped FloatingChanged notification for window {window_id}: {e}");
+            tracing::warn!(
+                "tiling: dropped FloatingChanged notification for window {window_id}: {e}"
+            );
         }
     }
 
@@ -257,7 +259,7 @@ impl EffectSubscriberHandle {
             .notification_tx
             .try_send(SubscriberNotification::WorkspaceLayoutChanged { workspace_id, layout })
         {
-            log::warn!(
+            tracing::warn!(
                 "tiling: dropped WorkspaceLayoutChanged notification for workspace {workspace_id}: {e}"
             );
         }
@@ -266,7 +268,7 @@ impl EffectSubscriberHandle {
     /// Shuts down the subscriber.
     pub fn shutdown(&self) {
         if let Err(e) = self.notification_tx.try_send(SubscriberNotification::Shutdown) {
-            log::warn!("tiling: dropped Shutdown notification: {e}");
+            tracing::warn!("tiling: dropped Shutdown notification: {e}");
         }
     }
 }
@@ -310,7 +312,7 @@ impl EffectSubscriber {
     /// tauri::async_runtime::spawn(subscriber.run());
     /// ```
     pub async fn run(mut self) {
-        log::debug!("Effect subscriber started");
+        tracing::debug!("Effect subscriber started");
 
         // Initialize with current state before processing notifications
         self.initialize().await;
@@ -321,7 +323,7 @@ impl EffectSubscriber {
         while let Some(notification) = self.notification_rx.recv().await {
             match notification {
                 SubscriberNotification::Shutdown => {
-                    log::debug!("Effect subscriber received shutdown");
+                    tracing::debug!("Effect subscriber received shutdown");
                     break;
                 }
                 notification => {
@@ -330,12 +332,12 @@ impl EffectSubscriber {
             }
         }
 
-        log::debug!("Effect subscriber stopped");
+        tracing::debug!("Effect subscriber stopped");
     }
 
     /// Handles a single notification.
     async fn handle_notification(&mut self, notification: SubscriberNotification) {
-        log::debug!("tiling: subscriber received notification: {notification:?}");
+        tracing::debug!("tiling: subscriber received notification: {notification:?}");
 
         // For layout changes that may trigger animations, signal cancellation
         // of any ongoing animation so the new one can take priority, then
@@ -351,7 +353,7 @@ impl EffectSubscriber {
 
         let effects = match notification {
             SubscriberNotification::LayoutChanged { workspace_id, user_triggered } => {
-                log::debug!(
+                tracing::debug!(
                     "tiling: subscriber handling LayoutChanged for workspace {workspace_id}"
                 );
                 self.handle_layout_changed(workspace_id, user_triggered).await
@@ -376,10 +378,10 @@ impl EffectSubscriber {
             SubscriberNotification::Shutdown => Vec::new(),
         };
 
-        log::debug!("tiling: subscriber generated {} effects", effects.len());
+        tracing::debug!("tiling: subscriber generated {} effects", effects.len());
         if !effects.is_empty() {
             let count = self.executor.execute_batch(effects);
-            log::debug!("tiling: subscriber executed {count} effects");
+            tracing::debug!("tiling: subscriber executed {count} effects");
         }
     }
 
@@ -389,7 +391,7 @@ impl EffectSubscriber {
         workspace_id: Uuid,
         user_triggered: bool,
     ) -> Vec<TilingEffect> {
-        log::debug!(
+        tracing::debug!(
             "tiling: handle_layout_changed for workspace {workspace_id}, user_triggered={user_triggered}"
         );
 
@@ -398,16 +400,16 @@ impl EffectSubscriber {
             self.actor_handle.query(StateQuery::GetWindowLayout { workspace_id }).await;
 
         let Ok(QueryResult::Layout(new_positions)) = layout_result else {
-            log::warn!("tiling: failed to query layout for workspace {workspace_id}");
+            tracing::warn!("tiling: failed to query layout for workspace {workspace_id}");
             return Vec::new();
         };
 
-        log::debug!(
+        tracing::debug!(
             "tiling: queried layout for workspace {workspace_id}: {} windows",
             new_positions.len()
         );
         for (win_id, frame) in &new_positions {
-            log::trace!("tiling:   window {win_id} -> frame {frame:?}");
+            tracing::trace!("tiling:   window {win_id} -> frame {frame:?}");
         }
 
         // Store expected frames for minimum size detection before applying layout
@@ -415,17 +417,19 @@ impl EffectSubscriber {
         if !new_positions.is_empty()
             && let Err(e) = self.actor_handle.set_expected_frames(new_positions.clone())
         {
-            log::warn!("tiling: failed to set expected frames: {e}");
+            tracing::warn!("tiling: failed to set expected frames: {e}");
         }
 
         // Update state and get the change
         let Some(change) = self.state.update_layout(workspace_id, new_positions, user_triggered)
         else {
-            log::debug!("tiling: no actual layout change detected for workspace {workspace_id}");
+            tracing::debug!(
+                "tiling: no actual layout change detected for workspace {workspace_id}"
+            );
             return Vec::new(); // No actual change
         };
 
-        log::debug!(
+        tracing::debug!(
             "tiling: layout change detected - old: {} windows, new: {} windows",
             change.old_positions.len(),
             change.new_positions.len()
@@ -441,7 +445,7 @@ impl EffectSubscriber {
         let focus_result = self.actor_handle.query(StateQuery::GetFocusState).await;
 
         let Ok(QueryResult::Focus(new_focus)) = focus_result else {
-            log::warn!("Failed to query focus state");
+            tracing::warn!("Failed to query focus state");
             return Vec::new();
         };
 
@@ -591,7 +595,7 @@ impl EffectSubscriber {
             }
         }
 
-        log::debug!(
+        tracing::debug!(
             "Effect subscriber initialized with {} visible workspaces",
             self.state.visible_workspaces.len()
         );

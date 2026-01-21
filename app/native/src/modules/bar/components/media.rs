@@ -293,7 +293,7 @@ fn process_stream_output(line: &str, state: &mut Map<String, Value>, window: &We
     if !state.is_empty()
         && let Err(err) = save_artwork_and_emit(state, window, false)
     {
-        eprintln!("Failed to emit media update: {err}");
+        tracing::warn!(error = %err, "failed to emit media update");
     }
 }
 
@@ -303,17 +303,19 @@ fn start_streaming(app: AppHandle, window: WebviewWindow) {
     let sidecar = match app.shell().sidecar("media-control") {
         Ok(cmd) => cmd.args(args),
         Err(err) => {
-            eprintln!("Failed to create media-control sidecar: {err}");
+            tracing::error!(error = %err, "failed to create media-control sidecar");
             return;
         }
     };
     let spawn_result = sidecar.spawn();
     let Ok((mut rx, child)) = spawn_result else {
         if let Err(err) = spawn_result {
-            eprintln!("Failed to spawn media-control sidecar: {err}");
+            tracing::error!(error = %err, "failed to spawn media-control sidecar");
         }
         return;
     };
+
+    tracing::debug!("media-control sidecar started");
 
     let mut state = Map::with_capacity(16);
     tauri::async_runtime::block_on(async {
@@ -333,10 +335,10 @@ fn start_streaming(app: AppHandle, window: WebviewWindow) {
                 CommandEvent::Stderr(line) => {
                     let stderr = String::from_utf8_lossy(&line);
                     let stderr = stderr.trim();
-                    eprintln!("media-control stderr: {stderr}");
+                    tracing::warn!(output = %stderr, "media-control stderr");
                 }
                 CommandEvent::Error(err) => {
-                    eprintln!("media-control stream error: {err}");
+                    tracing::error!(error = %err, "media-control stream error");
                 }
                 CommandEvent::Terminated(_) => break,
                 _ => {}

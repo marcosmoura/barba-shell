@@ -24,24 +24,24 @@ pub fn on_apply_preset(state: &mut TilingState, preset_name: &str) {
 
     // Find the preset
     let Some(preset) = find_preset(preset_name) else {
-        log::warn!("apply_preset: preset '{preset_name}' not found");
+        tracing::warn!("apply_preset: preset '{preset_name}' not found");
         return;
     };
 
     let focus = state.get_focus_state();
     let Some(workspace_id) = focus.focused_workspace_id else {
-        log::debug!("apply_preset: no focused workspace");
+        tracing::debug!("apply_preset: no focused workspace");
         return;
     };
 
     let Some(workspace) = state.get_workspace(workspace_id) else {
-        log::debug!("apply_preset: workspace not found");
+        tracing::debug!("apply_preset: workspace not found");
         return;
     };
 
     // Presets only work in floating layout
     if workspace.layout != LayoutType::Floating {
-        log::debug!(
+        tracing::debug!(
             "apply_preset: workspace '{}' is not in Floating layout (is {:?})",
             workspace.name,
             workspace.layout
@@ -51,12 +51,12 @@ pub fn on_apply_preset(state: &mut TilingState, preset_name: &str) {
 
     let focused_idx = workspace.focused_window_index.unwrap_or(0);
     let Some(&window_id) = workspace.window_ids.get(focused_idx) else {
-        log::debug!("apply_preset: no window at focused index");
+        tracing::debug!("apply_preset: no window at focused index");
         return;
     };
 
     let Some(screen) = state.get_screen(workspace.screen_id) else {
-        log::debug!("apply_preset: screen not found");
+        tracing::debug!("apply_preset: screen not found");
         return;
     };
 
@@ -93,7 +93,7 @@ pub fn on_apply_preset(state: &mut TilingState, preset_name: &str) {
             crate::modules::tiling::effects::window_ops::set_window_frame(window_id, &target_frame);
     }
 
-    log::debug!(
+    tracing::debug!(
         "Applied preset '{}' to window {window_id}: ({}, {}, {}, {})",
         preset_name,
         target_frame.x as i32,

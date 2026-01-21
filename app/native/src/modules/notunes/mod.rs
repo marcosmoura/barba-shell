@@ -95,7 +95,7 @@ unsafe fn terminate_music_apps() {
         if let Some(bundle_id_str) = unsafe { get_app_bundle_id(app) }
             && is_music_app(&bundle_id_str)
         {
-            eprintln!("stache: notunes: terminating running instance of {bundle_id_str}");
+            tracing::info!(bundle_id = %bundle_id_str, "notunes: terminating running instance");
             let _: () = msg_send![app, forceTerminate];
         }
     }
@@ -189,7 +189,7 @@ extern "C" fn handle_app_launch(_self: &Object, _cmd: Sel, notification: *mut Ob
         if let Some(bundle_id_str) = get_app_bundle_id(app)
             && is_music_app(&bundle_id_str)
         {
-            eprintln!("stache: notunes: blocking launch of {bundle_id_str}");
+            tracing::info!(bundle_id = %bundle_id_str, "notunes: blocking launch");
 
             // Force terminate the app
             let _: () = msg_send![app, forceTerminate];
@@ -214,7 +214,7 @@ fn launch_target_app() {
     // Check if the app is installed
     let path = std::path::Path::new(app_path);
     if !path.exists() {
-        eprintln!("stache: notunes: {display_name} not found at {app_path}");
+        tracing::warn!(app = %display_name, path = %app_path, "notunes: target app not found");
         return;
     }
 
@@ -240,8 +240,10 @@ fn launch_target_app() {
 
     // Launch the app using /usr/bin/open
     match std::process::Command::new("/usr/bin/open").arg(app_path).spawn() {
-        Ok(_) => eprintln!("stache: notunes: launched {display_name} as replacement"),
-        Err(e) => eprintln!("stache: notunes: failed to launch {display_name}: {e}"),
+        Ok(_) => tracing::info!(app = %display_name, "notunes: launched replacement app"),
+        Err(e) => {
+            tracing::error!(app = %display_name, error = %e, "notunes: failed to launch replacement app");
+        }
     }
 }
 

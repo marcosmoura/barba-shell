@@ -17,17 +17,17 @@ use crate::modules::tiling::state::{
 /// On first run (no existing screens), creates workspaces from config.
 /// On subsequent runs (screen hotplug), reassigns workspaces as needed.
 pub fn on_screens_changed(state: &mut TilingState) {
-    log::debug!("Handling screens changed");
+    tracing::debug!("Handling screens changed");
 
     // Get current screens from macOS
     let new_screens = get_screens_from_macos();
 
     if new_screens.is_empty() {
-        log::warn!("No screens detected!");
+        tracing::warn!("No screens detected!");
         return;
     }
 
-    log::info!("tiling: detected {} screen(s)", new_screens.len());
+    tracing::info!("tiling: detected {} screen(s)", new_screens.len());
 
     // Check if this is initial setup (no screens yet)
     let is_initial_setup = state.screens.is_empty();
@@ -48,7 +48,7 @@ pub fn on_screens_changed(state: &mut TilingState) {
     // Remove old screens
     for screen_id in &removed_screens {
         state.remove_screen(*screen_id);
-        log::debug!("Removed screen {screen_id}");
+        tracing::debug!("Removed screen {screen_id}");
     }
 
     // Track workspaces that need layout recomputation
@@ -85,7 +85,7 @@ pub fn on_screens_changed(state: &mut TilingState) {
         }
     }
 
-    log::info!("tiling: {} workspace(s) configured", state.workspaces.len());
+    tracing::info!("tiling: {} workspace(s) configured", state.workspaces.len());
 }
 
 /// Handles pre-detected screens being set.
@@ -93,10 +93,10 @@ pub fn on_screens_changed(state: &mut TilingState) {
 /// This is the preferred way to set screens during initialization, as it
 /// doesn't require calling macOS APIs from the async actor task.
 pub fn on_set_screens(state: &mut TilingState, screens: Vec<Screen>) {
-    log::debug!("tiling: on_set_screens called with {} screens", screens.len());
+    tracing::debug!("tiling: on_set_screens called with {} screens", screens.len());
 
     if screens.is_empty() {
-        log::warn!("tiling: no screens provided to on_set_screens");
+        tracing::warn!("tiling: no screens provided to on_set_screens");
         return;
     }
 
@@ -119,7 +119,7 @@ pub fn on_set_screens(state: &mut TilingState, screens: Vec<Screen>) {
     // Remove old screens
     for screen_id in &removed_screens {
         state.remove_screen(*screen_id);
-        log::debug!("Removed screen {screen_id}");
+        tracing::debug!("Removed screen {screen_id}");
     }
 
     // Track workspaces that need layout recomputation
@@ -156,7 +156,7 @@ pub fn on_set_screens(state: &mut TilingState, screens: Vec<Screen>) {
         }
     }
 
-    log::info!(
+    tracing::info!(
         "tiling: {} workspace(s) configured on {} screen(s)",
         state.workspaces.len(),
         state.screens.len()
@@ -173,7 +173,7 @@ fn create_workspaces_from_config(state: &mut TilingState) {
         create_default_workspaces(state);
     } else {
         // Create workspaces from config
-        log::debug!(
+        tracing::debug!(
             "tiling: creating {} workspaces from config",
             tiling_config.workspaces.len()
         );
@@ -181,7 +181,7 @@ fn create_workspaces_from_config(state: &mut TilingState) {
             // Find the screen for this workspace
             // If the configured screen doesn't exist, fall back to main screen
             let screen_id = resolve_screen_name(state, &ws_config.screen).or_else(|| {
-                log::trace!(
+                tracing::trace!(
                     "tiling: workspace '{}' screen '{}' not found, falling back to main",
                     ws_config.name,
                     ws_config.screen
@@ -204,7 +204,7 @@ fn create_workspaces_from_config(state: &mut TilingState) {
                     configured_screen: Some(ws_config.screen.clone()),
                 };
                 state.upsert_workspace(workspace);
-                log::debug!(
+                tracing::debug!(
                     "Created workspace '{}' on screen {} with layout {:?}",
                     ws_config.name,
                     screen_id,
@@ -236,7 +236,7 @@ fn create_default_workspaces(state: &mut TilingState) {
             configured_screen: None,
         };
         state.upsert_workspace(workspace);
-        log::debug!("Created default workspace '{name}' on screen {screen_id}");
+        tracing::debug!("Created default workspace '{name}' on screen {screen_id}");
     }
 }
 
@@ -262,7 +262,7 @@ fn ensure_screen_workspaces(state: &mut TilingState) {
                 configured_screen: None,
             };
             state.upsert_workspace(workspace);
-            log::debug!("Created fallback workspace '{name}' for screen {screen_id}");
+            tracing::debug!("Created fallback workspace '{name}' for screen {screen_id}");
         }
     }
 }
@@ -324,7 +324,7 @@ fn set_initial_focus(state: &mut TilingState) {
                 focused_ws_id = Some(ws_id);
             }
 
-            log::debug!(
+            tracing::debug!(
                 "Set workspace {ws_id} as visible on screen {screen_id} (focused: {is_main_screen})"
             );
         }
@@ -333,7 +333,7 @@ fn set_initial_focus(state: &mut TilingState) {
     // Set the focused workspace in the focus state
     if let Some(ws_id) = focused_ws_id {
         state.set_focused_workspace(Some(ws_id));
-        log::debug!("Set initial focus to workspace {ws_id}");
+        tracing::debug!("Set initial focus to workspace {ws_id}");
     }
 }
 
@@ -361,7 +361,7 @@ fn reassign_workspaces_from_removed_screens(
     let main_screen_id = state.get_main_screen().map_or(0, |s| s.id);
 
     if main_screen_id == 0 {
-        log::warn!("No main screen to reassign workspaces to");
+        tracing::warn!("No main screen to reassign workspaces to");
         return Vec::new();
     }
 
@@ -375,7 +375,7 @@ fn reassign_workspaces_from_removed_screens(
 
     for ws_id in &workspaces_to_reassign {
         state.update_workspace(*ws_id, |ws| {
-            log::info!(
+            tracing::info!(
                 "Screen unplugged: moving workspace '{}' from screen {} to main screen {}",
                 ws.name,
                 ws.screen_id,
@@ -416,7 +416,7 @@ fn restore_workspaces_to_configured_screens(state: &mut TilingState) -> Vec<uuid
             // Only move if the workspace is not already on its configured screen
             if current_screen_id != target_screen_id {
                 state.update_workspace(ws_id, |ws| {
-                    log::info!(
+                    tracing::info!(
                         "Screen plugged back in: restoring workspace '{}' to screen {} ('{}')",
                         ws.name,
                         target_screen_id,

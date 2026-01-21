@@ -34,31 +34,32 @@ fn handle_notification<R: Runtime>(app_handle: &AppHandle<R>, notification: Stac
         StacheNotification::WindowFocusChanged => {
             // Emit event to all windows
             if let Err(err) = app_handle.emit(events::spaces::WINDOW_FOCUS_CHANGED, ()) {
-                eprintln!("stache: failed to emit window-focus-changed event: {err}");
+                tracing::warn!(error = %err, "failed to emit window-focus-changed event");
             }
         }
 
         StacheNotification::WorkspaceChanged(workspace) => {
             // Emit event with workspace name
             if let Err(err) = app_handle.emit(events::spaces::WORKSPACE_CHANGED, &workspace) {
-                eprintln!("stache: failed to emit workspace-changed event: {err}");
+                tracing::warn!(error = %err, "failed to emit workspace-changed event");
             }
         }
 
         StacheNotification::Reload => {
             // Emit reload event to frontend so it can refresh/cleanup
             if let Err(err) = app_handle.emit(events::app::RELOAD, ()) {
-                eprintln!("stache: failed to emit reload event: {err}");
+                tracing::warn!(error = %err, "failed to emit reload event");
             }
 
             // In debug mode, just log. In release mode, restart the app.
             #[cfg(debug_assertions)]
             {
-                eprintln!("stache: reload requested via CLI. Restart the app to apply changes.");
+                tracing::info!("reload requested via CLI - restart the app to apply changes");
             }
 
             #[cfg(not(debug_assertions))]
             {
+                tracing::info!("reload requested via CLI, restarting application");
                 app_handle.restart();
             }
         }
@@ -68,15 +69,15 @@ fn handle_notification<R: Runtime>(app_handle: &AppHandle<R>, notification: Stac
             let app_handle = app_handle.clone();
             std::thread::spawn(move || {
                 if !tiling::init::is_initialized() {
-                    log::warn!("tiling: manager not initialized");
+                    tracing::warn!("tiling: manager not initialized");
                     return;
                 }
 
                 if let Some(handle) = tiling::init::get_handle() {
                     if let Err(e) = handle.switch_workspace(&workspace) {
-                        log::warn!("tiling: failed to switch workspace: {e}");
+                        tracing::warn!("tiling: failed to switch workspace: {e}");
                     } else {
-                        log::debug!("tiling: switched to workspace: {workspace}");
+                        tracing::debug!("tiling: switched to workspace: {workspace}");
 
                         // Emit WORKSPACE_CHANGED event
                         if let Err(e) = app_handle.emit(
@@ -85,11 +86,11 @@ fn handle_notification<R: Runtime>(app_handle: &AppHandle<R>, notification: Stac
                                 "workspace": workspace,
                             }),
                         ) {
-                            log::warn!("tiling: failed to emit workspace-changed: {e}");
+                            tracing::warn!("tiling: failed to emit workspace-changed: {e}");
                         }
                     }
                 } else {
-                    log::warn!("tiling: handle not available");
+                    tracing::warn!("tiling: handle not available");
                 }
             });
         }
@@ -97,7 +98,7 @@ fn handle_notification<R: Runtime>(app_handle: &AppHandle<R>, notification: Stac
         StacheNotification::TilingSetLayout(layout) => {
             std::thread::spawn(move || {
                 if !tiling::init::is_initialized() {
-                    log::warn!("tiling: manager not initialized");
+                    tracing::warn!("tiling: manager not initialized");
                     return;
                 }
 
@@ -122,16 +123,16 @@ fn handle_notification<R: Runtime>(app_handle: &AppHandle<R>, notification: Stac
                             return;
                         };
                         if let Err(e) = handle.set_layout(ws.id, layout_type) {
-                            log::warn!("tiling: failed to set layout: {e}");
+                            tracing::warn!("tiling: failed to set layout: {e}");
                         } else {
-                            log::debug!(
+                            tracing::debug!(
                                 "tiling: set layout to {layout_type:?} for workspace '{}'",
                                 ws.name
                             );
                         }
                     }
                     Err(e) => {
-                        log::warn!("tiling: invalid layout '{layout}': {e}");
+                        tracing::warn!("tiling: invalid layout '{layout}': {e}");
                     }
                 }
             });
@@ -141,7 +142,7 @@ fn handle_notification<R: Runtime>(app_handle: &AppHandle<R>, notification: Stac
             let app_handle = app_handle.clone();
             std::thread::spawn(move || {
                 if !tiling::init::is_initialized() {
-                    log::warn!("tiling: manager not initialized");
+                    tracing::warn!("tiling: manager not initialized");
                     return;
                 }
 
@@ -149,9 +150,9 @@ fn handle_notification<R: Runtime>(app_handle: &AppHandle<R>, notification: Stac
                     // Parse direction
                     if let Some(direction) = tiling::actor::FocusDirection::parse(&target) {
                         if let Err(e) = handle.focus_window(direction) {
-                            log::warn!("tiling: failed to focus window: {e}");
+                            tracing::warn!("tiling: failed to focus window: {e}");
                         } else {
-                            log::debug!("tiling: focused window {target}");
+                            tracing::debug!("tiling: focused window {target}");
 
                             // Emit WINDOW_FOCUS_CHANGED event
                             let _ = app_handle.emit(
@@ -160,7 +161,7 @@ fn handle_notification<R: Runtime>(app_handle: &AppHandle<R>, notification: Stac
                             );
                         }
                     } else {
-                        log::warn!("tiling: invalid focus direction: {target}");
+                        tracing::warn!("tiling: invalid focus direction: {target}");
                     }
                 }
             });
@@ -169,7 +170,7 @@ fn handle_notification<R: Runtime>(app_handle: &AppHandle<R>, notification: Stac
         StacheNotification::TilingWindowSwap(direction) => {
             std::thread::spawn(move || {
                 if !tiling::init::is_initialized() {
-                    log::warn!("tiling: manager not initialized");
+                    tracing::warn!("tiling: manager not initialized");
                     return;
                 }
 
@@ -177,12 +178,12 @@ fn handle_notification<R: Runtime>(app_handle: &AppHandle<R>, notification: Stac
                     // Parse direction
                     if let Some(dir) = tiling::actor::FocusDirection::parse(&direction) {
                         if let Err(e) = handle.swap_window_in_direction(dir) {
-                            log::warn!("tiling: failed to swap window: {e}");
+                            tracing::warn!("tiling: failed to swap window: {e}");
                         } else {
-                            log::debug!("tiling: swapped window {direction}");
+                            tracing::debug!("tiling: swapped window {direction}");
                         }
                     } else {
-                        log::warn!("tiling: invalid swap direction: {direction}");
+                        tracing::warn!("tiling: invalid swap direction: {direction}");
                     }
                 }
             });
@@ -191,15 +192,15 @@ fn handle_notification<R: Runtime>(app_handle: &AppHandle<R>, notification: Stac
         StacheNotification::TilingWindowResize { dimension, amount } => {
             std::thread::spawn(move || {
                 if !tiling::init::is_initialized() {
-                    log::warn!("tiling: manager not initialized");
+                    tracing::warn!("tiling: manager not initialized");
                     return;
                 }
 
                 if let Some(handle) = tiling::init::get_handle() {
                     if let Err(e) = handle.resize_focused_window(&dimension, amount) {
-                        log::warn!("tiling: failed to resize window: {e}");
+                        tracing::warn!("tiling: failed to resize window: {e}");
                     } else {
-                        log::debug!("tiling: resized window {dimension} by {amount}px");
+                        tracing::debug!("tiling: resized window {dimension} by {amount}px");
                     }
                 }
             });
@@ -208,15 +209,15 @@ fn handle_notification<R: Runtime>(app_handle: &AppHandle<R>, notification: Stac
         StacheNotification::TilingWindowPreset(preset) => {
             std::thread::spawn(move || {
                 if !tiling::init::is_initialized() {
-                    log::warn!("tiling: manager not initialized");
+                    tracing::warn!("tiling: manager not initialized");
                     return;
                 }
 
                 if let Some(handle) = tiling::init::get_handle() {
                     if let Err(e) = handle.apply_preset(&preset) {
-                        log::warn!("tiling: failed to apply preset: {e}");
+                        tracing::warn!("tiling: failed to apply preset: {e}");
                     } else {
-                        log::debug!("tiling: applied preset '{preset}'");
+                        tracing::debug!("tiling: applied preset '{preset}'");
                     }
                 }
             });
@@ -225,7 +226,7 @@ fn handle_notification<R: Runtime>(app_handle: &AppHandle<R>, notification: Stac
         StacheNotification::TilingWindowSendToWorkspace(workspace) => {
             std::thread::spawn(move || {
                 if !tiling::init::is_initialized() {
-                    log::warn!("tiling: manager not initialized");
+                    tracing::warn!("tiling: manager not initialized");
                     return;
                 }
 
@@ -258,18 +259,18 @@ fn handle_notification<R: Runtime>(app_handle: &AppHandle<R>, notification: Stac
                                     workspace_id: ws_id,
                                 })
                             {
-                                log::warn!("tiling: failed to send window to workspace: {e}");
+                                tracing::warn!("tiling: failed to send window to workspace: {e}");
                             } else {
-                                log::debug!(
+                                tracing::debug!(
                                     "tiling: sent window {win_id} to workspace '{workspace}'"
                                 );
                             }
                         }
                         (None, _) => {
-                            log::warn!("tiling: no focused window");
+                            tracing::warn!("tiling: no focused window");
                         }
                         (_, None) => {
-                            log::warn!("tiling: workspace '{workspace}' not found");
+                            tracing::warn!("tiling: workspace '{workspace}' not found");
                         }
                     }
                 }
@@ -279,15 +280,15 @@ fn handle_notification<R: Runtime>(app_handle: &AppHandle<R>, notification: Stac
         StacheNotification::TilingWindowSendToScreen(screen) => {
             std::thread::spawn(move || {
                 if !tiling::init::is_initialized() {
-                    log::warn!("tiling: manager not initialized");
+                    tracing::warn!("tiling: manager not initialized");
                     return;
                 }
 
                 if let Some(handle) = tiling::init::get_handle() {
                     if let Err(e) = handle.send_window_to_screen(&screen) {
-                        log::warn!("tiling: failed to send window to screen: {e}");
+                        tracing::warn!("tiling: failed to send window to screen: {e}");
                     } else {
-                        log::debug!("tiling: sent window to screen {screen}");
+                        tracing::debug!("tiling: sent window to screen {screen}");
                     }
                 }
             });
@@ -296,7 +297,7 @@ fn handle_notification<R: Runtime>(app_handle: &AppHandle<R>, notification: Stac
         StacheNotification::TilingWorkspaceBalance => {
             std::thread::spawn(move || {
                 if !tiling::init::is_initialized() {
-                    log::warn!("tiling: manager not initialized");
+                    tracing::warn!("tiling: manager not initialized");
                     return;
                 }
 
@@ -313,9 +314,9 @@ fn handle_notification<R: Runtime>(app_handle: &AppHandle<R>, notification: Stac
                     return;
                 };
                 if let Err(e) = handle.balance_workspace(ws.id) {
-                    log::warn!("tiling: failed to balance workspace: {e}");
+                    tracing::warn!("tiling: failed to balance workspace: {e}");
                 } else {
-                    log::debug!("tiling: balanced workspace '{}'", ws.name);
+                    tracing::debug!("tiling: balanced workspace '{}'", ws.name);
                 }
             });
         }
@@ -323,15 +324,15 @@ fn handle_notification<R: Runtime>(app_handle: &AppHandle<R>, notification: Stac
         StacheNotification::TilingWorkspaceSendToScreen(screen) => {
             std::thread::spawn(move || {
                 if !tiling::init::is_initialized() {
-                    log::warn!("tiling: manager not initialized");
+                    tracing::warn!("tiling: manager not initialized");
                     return;
                 }
 
                 if let Some(handle) = tiling::init::get_handle() {
                     if let Err(e) = handle.send_workspace_to_screen(&screen) {
-                        log::warn!("tiling: failed to send workspace to screen: {e}");
+                        tracing::warn!("tiling: failed to send workspace to screen: {e}");
                     } else {
-                        log::debug!("tiling: sent workspace to screen {screen}");
+                        tracing::debug!("tiling: sent workspace to screen {screen}");
                     }
                 }
             });

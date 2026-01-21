@@ -108,7 +108,7 @@ impl AXObserverAdapter {
     /// This is the main entry point called from the observer callback.
     pub fn handle_event(&self, event: WindowEvent) {
         if !self.is_active() {
-            log::trace!("Ignoring event {:?} - adapter not active", event.event_type);
+            tracing::trace!("Ignoring event {:?} - adapter not active", event.event_type);
             return;
         }
 
@@ -174,7 +174,7 @@ impl AXObserverAdapter {
 
         // Extract window info from the AX element
         let Some(window_id) = get_window_id(ax_element) else {
-            log::debug!("Window created event: could not get window ID");
+            tracing::debug!("Window created event: could not get window ID");
             return;
         };
 
@@ -184,7 +184,7 @@ impl AXObserverAdapter {
 
         // Skip PiP (Picture-in-Picture) windows - they have subrole AXFloatingWindow
         if is_pip_window(subrole.as_deref()) {
-            log::debug!(
+            tracing::debug!(
                 "Window created: id={window_id}, pid={pid} - skipping PiP window (subrole={subrole:?})"
             );
             return;
@@ -248,11 +248,13 @@ impl AXObserverAdapter {
     }
 
     fn handle_window_destroyed(&self, pid: i32, ax_element: AXUIElementRef) {
-        log::debug!("tiling: handle_window_destroyed called for pid={pid}, element={ax_element:?}");
+        tracing::debug!(
+            "tiling: handle_window_destroyed called for pid={pid}, element={ax_element:?}"
+        );
 
         // First try to get window ID directly (might work if element is still valid)
         if let Some(window_id) = get_window_id(ax_element) {
-            log::debug!("tiling: window destroyed - got window_id={window_id} from AX element");
+            tracing::debug!("tiling: window destroyed - got window_id={window_id} from AX element");
             self.processor.on_window_destroyed(window_id);
             return;
         }
@@ -271,14 +273,14 @@ impl AXObserverAdapter {
             && r != "AXWindow"
         {
             // Definitely NOT a window (e.g., tab, button) - ignore
-            log::trace!(
+            tracing::trace!(
                 "tiling: AXUIElementDestroyed for non-window element (role={r}, pid={pid}), ignoring"
             );
             return;
         }
 
         // Either it IS a window, or we couldn't determine (element invalid) - fall back to PID detection
-        log::debug!(
+        tracing::debug!(
             "tiling: window destroyed - role={role:?}, falling back to PID-based detection for pid={pid}"
         );
         self.processor.on_window_destroyed_for_pid(pid);
@@ -286,11 +288,11 @@ impl AXObserverAdapter {
 
     fn handle_window_focused(&self, pid: i32, ax_element: AXUIElementRef) {
         let Some(window_id) = get_window_id(ax_element) else {
-            log::debug!("tiling: Window focused event: could not get window ID (pid={pid})");
+            tracing::debug!("tiling: Window focused event: could not get window ID (pid={pid})");
             return;
         };
 
-        log::debug!("tiling: AX focus event received - window_id={window_id}, pid={pid}");
+        tracing::debug!("tiling: AX focus event received - window_id={window_id}, pid={pid}");
         self.processor.on_window_focused(window_id);
     }
 
@@ -348,14 +350,14 @@ impl AXObserverAdapter {
     /// macOS doesn't reliably fire `AXFocusedWindowChanged` when switching between apps,
     /// so we query the focused window when an app is activated.
     fn handle_app_activated(&self, pid: i32) {
-        log::trace!("App activated: pid={pid}, querying focused window...");
+        tracing::trace!("App activated: pid={pid}, querying focused window...");
 
         // Query the focused window of this app
         if let Some(window_id) = get_focused_window_for_app(pid) {
-            log::debug!("App activated: found focused window {window_id}");
+            tracing::debug!("App activated: found focused window {window_id}");
             self.processor.on_window_focused(window_id);
         } else {
-            log::trace!("App activated: no focused window found for pid={pid}");
+            tracing::trace!("App activated: no focused window found for pid={pid}");
         }
 
         // Also notify app activation (for other purposes)
@@ -750,7 +752,7 @@ pub fn adapter_callback(event: WindowEvent) {
         adapter.handle_event(event);
     } else {
         let event_type = &event.event_type;
-        log::warn!("No adapter installed, dropping event {event_type:?}");
+        tracing::warn!("No adapter installed, dropping event {event_type:?}");
     }
 }
 

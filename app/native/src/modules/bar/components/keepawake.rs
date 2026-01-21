@@ -145,7 +145,7 @@ pub fn init(window: &tauri::WebviewWindow) {
     let app_handle = window.app_handle();
 
     if let Err(err) = app_handle.state::<KeepAwakeController>().enable_awake() {
-        eprintln!("Failed to acquire keep awake handle on startup: {err}");
+        tracing::warn!(error = %err, "failed to acquire keep awake handle on startup");
     }
 
     if LOCK_WATCHER_ONCE.set(()).is_err() {
@@ -155,7 +155,7 @@ pub fn init(window: &tauri::WebviewWindow) {
     let app_handle = app_handle.clone();
     spawn_named_thread("lock-watcher", move || {
         if let Err(err) = watch_system_lock_state(&app_handle) {
-            eprintln!("Failed to start system lock watcher: {err}");
+            tracing::error!(error = %err, "failed to start system lock watcher");
         }
     });
 }
@@ -175,7 +175,7 @@ fn watch_system_lock_state(app_handle: &tauri::AppHandle) -> Result<(), String> 
                     apply_lock_state(app_handle, is_locked);
                 }
             }
-            Err(err) => eprintln!("Failed to poll session lock state: {err}"),
+            Err(err) => tracing::warn!(error = %err, "failed to poll session lock state"),
         }
 
         thread::sleep(LOCK_POLL_INTERVAL);
@@ -193,10 +193,10 @@ fn apply_lock_state(app_handle: &tauri::AppHandle, locked: bool) {
     match payload {
         Ok(payload) => {
             if let Err(err) = emit_keep_awake_changed(app_handle, payload) {
-                eprintln!("Failed to emit keep_awake_changed: {err}");
+                tracing::warn!(error = %err, "failed to emit keep_awake_changed event");
             }
         }
-        Err(err) => eprintln!("Failed to update keep awake state: {err}"),
+        Err(err) => tracing::warn!(error = %err, "failed to update keep awake state"),
     }
 }
 

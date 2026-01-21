@@ -185,18 +185,18 @@ fn start_event_tap() {
         );
 
         if tap.is_null() {
-            eprintln!(
-                "stache: cmd_q: failed to create event tap - check accessibility permissions"
-            );
+            tracing::error!("cmd_q: failed to create event tap - check accessibility permissions");
             return;
         }
 
         // Wrap the tap in a CFMachPort and create a run loop source
         let tap_port = CFMachPort::wrap_under_create_rule(tap.cast());
         let Ok(run_loop_source) = tap_port.create_runloop_source(0) else {
-            eprintln!("stache: cmd_q: failed to create run loop source");
+            tracing::error!("cmd_q: failed to create run loop source");
             return;
         };
+
+        tracing::debug!("cmd_q: event tap initialized");
 
         // Add the source to the current run loop
         let run_loop = CFRunLoop::get_current();
@@ -332,21 +332,21 @@ fn get_frontmost_app_name() -> Option<String> {
 fn kill_frontmost_app() {
     unsafe {
         let Some(workspace_class) = Class::get("NSWorkspace") else {
-            eprintln!("stache: cmd_q: failed to get NSWorkspace class");
+            tracing::error!("cmd_q: failed to get NSWorkspace class");
             return;
         };
 
         let workspace: *mut Object = msg_send![workspace_class, sharedWorkspace];
 
         if workspace.is_null() {
-            eprintln!("stache: cmd_q: failed to get shared workspace");
+            tracing::error!("cmd_q: failed to get shared workspace");
             return;
         }
 
         let frontmost_app: *mut Object = msg_send![workspace, frontmostApplication];
 
         if frontmost_app.is_null() {
-            eprintln!("stache: cmd_q: no frontmost application");
+            tracing::debug!("cmd_q: no frontmost application");
             return;
         }
 
@@ -367,14 +367,14 @@ fn kill_frontmost_app() {
         let terminated: BOOL = msg_send![frontmost_app, terminate];
 
         if terminated == YES {
-            println!("stache: cmd_q: quit application '{app_name}'");
+            tracing::info!(app = %app_name, "cmd_q: quit application");
         } else {
             // If terminate fails, try forceTerminate
             let force_terminated: BOOL = msg_send![frontmost_app, forceTerminate];
             if force_terminated == YES {
-                println!("stache: cmd_q: force quit application '{app_name}'");
+                tracing::info!(app = %app_name, "cmd_q: force quit application");
             } else {
-                eprintln!("stache: cmd_q: failed to quit application '{app_name}'");
+                tracing::error!(app = %app_name, "cmd_q: failed to quit application");
             }
         }
     }
@@ -392,8 +392,8 @@ fn show_hold_to_quit_alert() {
         let _ = app_handle.emit(events::cmd_q::ALERT, &message);
     }
 
-    // Fallback: print to console
-    println!("stache: {message}");
+    // Fallback: log to tracing
+    tracing::debug!(message = %message, "cmd_q: hold to quit alert");
 }
 
 #[cfg(test)]

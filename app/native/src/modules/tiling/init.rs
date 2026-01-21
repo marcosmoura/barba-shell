@@ -73,7 +73,7 @@ static INITIALIZED: OnceLock<bool> = OnceLock::new();
 pub fn get_handle() -> Option<&'static StateActorHandle> {
     let handle = HANDLE.get();
     if handle.is_none() {
-        log::trace!("tiling: get_handle called before initialization");
+        tracing::trace!("tiling: get_handle called before initialization");
     }
     handle
 }
@@ -122,7 +122,7 @@ pub fn is_enabled() -> bool { get_config().tiling.is_enabled() }
 pub fn init(app_handle: tauri::AppHandle) -> bool {
     // Check if already initialized
     if INITIALIZED.get().is_some() {
-        log::warn!("tiling: already initialized");
+        tracing::warn!("tiling: already initialized");
         return false;
     }
 
@@ -130,14 +130,14 @@ pub fn init(app_handle: tauri::AppHandle) -> bool {
 
     // Check if tiling is enabled
     if !config.tiling.is_enabled() {
-        log::info!("tiling: disabled in config (set enabled=true to enable)");
+        tracing::info!("tiling: disabled in config (set enabled=true to enable)");
         let _ = INITIALIZED.set(false);
         return false;
     }
 
     // Check accessibility permissions
     if !is_accessibility_granted() {
-        log::warn!("tiling: accessibility permissions not granted");
+        tracing::warn!("tiling: accessibility permissions not granted");
         let _ = INITIALIZED.set(false);
         return false;
     }
@@ -149,20 +149,20 @@ pub fn init(app_handle: tauri::AppHandle) -> bool {
     match init_internal() {
         Ok(()) => {
             let _ = INITIALIZED.set(true);
-            log::info!("tiling: initialized successfully");
+            tracing::info!("tiling: initialized successfully");
 
             // Emit initialized event
             if let Err(e) = app_handle.emit(
                 events::tiling::INITIALIZED,
                 serde_json::json!({ "enabled": true, "version": "v2" }),
             ) {
-                log::warn!("tiling: failed to emit initialized event: {e}");
+                tracing::warn!("tiling: failed to emit initialized event: {e}");
             }
 
             true
         }
         Err(e) => {
-            log::error!("tiling: initialization failed: {e}");
+            tracing::error!("tiling: initialization failed: {e}");
             let _ = INITIALIZED.set(false);
             false
         }
@@ -175,7 +175,7 @@ pub fn init(app_handle: tauri::AppHandle) -> bool {
 pub fn shutdown() {
     if let Some(handle) = HANDLE.get() {
         let _ = handle.send(StateMessage::Shutdown);
-        log::info!("tiling: shutdown requested");
+        tracing::info!("tiling: shutdown requested");
     }
 
     if let Some(processor) = PROCESSOR.get() {
@@ -212,7 +212,7 @@ fn init_internal() -> Result<(), String> {
     // Create the effect executor with app handle for event emission
     let mut executor = get_app_handle().map_or_else(
         || {
-            log::warn!("tiling: no app handle available, events will not be emitted");
+            tracing::warn!("tiling: no app handle available, events will not be emitted");
             EffectExecutor::new()
         },
         EffectExecutor::with_app_handle,
@@ -221,7 +221,7 @@ fn init_internal() -> Result<(), String> {
     // Enable border updates if borders are configured
     let config = crate::config::get_config();
     if config.tiling.borders.is_enabled() {
-        log::debug!("tiling: borders enabled in config, enabling border updates in executor");
+        tracing::debug!("tiling: borders enabled in config, enabling border updates in executor");
         executor.set_borders_enabled(true);
     }
 
@@ -230,7 +230,7 @@ fn init_internal() -> Result<(), String> {
 
     // Store the subscriber handle globally so handlers can notify the subscriber
     if SUBSCRIBER_HANDLE.set(subscriber_handle).is_err() {
-        log::warn!("tiling: subscriber handle already set");
+        tracing::warn!("tiling: subscriber handle already set");
     }
 
     tauri::async_runtime::spawn(subscriber.run());
@@ -238,7 +238,7 @@ fn init_internal() -> Result<(), String> {
     // Create and initialize the app monitor adapter
     let app_monitor = Arc::new(AppMonitorAdapter::new(processor.clone()));
     if !app_monitor.init() {
-        log::warn!("tiling: app monitor initialization failed");
+        tracing::warn!("tiling: app monitor initialization failed");
     }
     // Install the adapter globally so callbacks can access it
     super::events::app_monitor::install_adapter(app_monitor);
@@ -246,7 +246,7 @@ fn init_internal() -> Result<(), String> {
     // Create and initialize the screen monitor adapter
     let screen_monitor = Arc::new(ScreenMonitorAdapter::new(processor.clone()));
     if !screen_monitor.init() {
-        log::warn!("tiling: screen monitor initialization failed");
+        tracing::warn!("tiling: screen monitor initialization failed");
     }
     // Install the adapter globally so callbacks can access it
     super::events::screen_monitor::install_adapter(screen_monitor);
@@ -258,29 +258,29 @@ fn init_internal() -> Result<(), String> {
 
     // Initialize the standalone v2 AXObserver system
     if super::events::observer::init() {
-        log::debug!("tiling: AXObserver initialized");
+        tracing::debug!("tiling: AXObserver initialized");
     } else {
-        log::warn!("tiling: AXObserver initialization failed");
+        tracing::warn!("tiling: AXObserver initialization failed");
     }
 
     // Initialize the mouse monitor for drag/resize detection
     if super::events::mouse_monitor::init() {
         // Set up the callback for when mouse is released after a drag/resize
         super::events::mouse_monitor::set_mouse_up_callback(on_mouse_up);
-        log::debug!("tiling: mouse monitor initialized");
+        tracing::debug!("tiling: mouse monitor initialized");
     } else {
-        log::warn!("tiling: mouse monitor initialization failed");
+        tracing::warn!("tiling: mouse monitor initialization failed");
     }
 
     // Initialize the border system (connects to JankyBorders if available)
     if !borders::init() {
-        log::warn!("tiling: borders initialization failed (JankyBorders may not be installed)");
+        tracing::warn!("tiling: borders initialization failed (JankyBorders may not be installed)");
     }
 
     // Initialize screens and workspaces
     initialize_state(&handle);
 
-    log::info!("tiling: all components started");
+    tracing::info!("tiling: all components started");
     Ok(())
 }
 
@@ -291,15 +291,15 @@ fn init_internal() -> Result<(), String> {
 fn initialize_state(handle: &StateActorHandle) {
     // Detect screens on the main thread (this is called during Tauri setup)
     // NSScreen APIs must be called from the main thread
-    log::debug!("tiling: detecting screens on main thread...");
+    tracing::debug!("tiling: detecting screens on main thread...");
     let screens = super::actor::handlers::get_screens_from_macos();
 
     if screens.is_empty() {
-        log::warn!("tiling: no screens detected during initialization");
+        tracing::warn!("tiling: no screens detected during initialization");
         return;
     }
 
-    log::debug!(
+    tracing::debug!(
         "tiling: detected {} screen(s): {:?}",
         screens.len(),
         screens.iter().map(|s| &s.name).collect::<Vec<_>>()
@@ -308,7 +308,7 @@ fn initialize_state(handle: &StateActorHandle) {
     // Send pre-detected screens to the actor
     // This avoids calling macOS APIs from the async actor task
     if let Err(e) = handle.send(StateMessage::SetScreens { screens }) {
-        log::error!("tiling: failed to send SetScreens message: {e}");
+        tracing::error!("tiling: failed to send SetScreens message: {e}");
     }
 
     // Track existing windows
@@ -330,18 +330,18 @@ fn track_existing_windows(handle: &StateActorHandle) {
     use super::rules::should_tile_window;
     use super::window::{get_all_windows_including_hidden, get_focused_window_id};
 
-    log::debug!("tiling: tracking existing windows...");
+    tracing::debug!("tiling: tracking existing windows...");
 
     // Get the currently focused window ID first (before enumeration)
     let focused_window_id = get_focused_window_id();
-    log::trace!("tiling: system focused window id = {focused_window_id:?}");
+    tracing::trace!("tiling: system focused window id = {focused_window_id:?}");
 
     // Enumerate all windows including hidden ones
     let windows = get_all_windows_including_hidden();
 
-    log::debug!("Found {} windows from system", windows.len());
+    tracing::debug!("Found {} windows from system", windows.len());
     for w in &windows {
-        log::trace!(
+        tracing::trace!(
             "  - id={}, pid={}, app='{}', title='{}', minimized={}, hidden={}",
             w.id,
             w.pid,
@@ -372,7 +372,7 @@ fn track_existing_windows(handle: &StateActorHandle) {
     for window in &windows {
         // Filter out system apps that shouldn't be tiled
         if !should_tile_window(&window.bundle_id, &window.app_name) {
-            log::trace!(
+            tracing::trace!(
                 "tiling: skipping system window '{}' from '{}'",
                 window.title,
                 window.app_name
@@ -417,25 +417,25 @@ fn track_existing_windows(handle: &StateActorHandle) {
     if !window_infos.is_empty()
         && let Err(e) = handle.send(StateMessage::BatchWindowsCreated(window_infos))
     {
-        log::error!("tiling: failed to send BatchWindowsCreated: {e}");
+        tracing::error!("tiling: failed to send BatchWindowsCreated: {e}");
     }
 
-    log::debug!("tiling: tracked {tracked_count} windows");
+    tracing::debug!("tiling: tracked {tracked_count} windows");
 
     // Send focus event for the currently focused window
     if let Some(window_id) = focused_window_id {
-        log::trace!("tiling: setting initial focus to window {window_id}");
+        tracing::trace!("tiling: setting initial focus to window {window_id}");
         if let Err(e) = handle.send(StateMessage::WindowFocused { window_id }) {
-            log::error!("tiling: failed to send WindowFocused: {e}");
+            tracing::error!("tiling: failed to send WindowFocused: {e}");
         }
     } else {
-        log::trace!("tiling: no focused window detected at startup");
+        tracing::trace!("tiling: no focused window detected at startup");
     }
 
     // Signal that initialization is complete - this triggers initial layouts
-    log::trace!("tiling: sending InitComplete...");
+    tracing::trace!("tiling: sending InitComplete...");
     if let Err(e) = handle.send(StateMessage::InitComplete) {
-        log::error!("tiling: failed to send InitComplete: {e}");
+        tracing::error!("tiling: failed to send InitComplete: {e}");
     }
 }
 

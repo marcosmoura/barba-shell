@@ -133,7 +133,7 @@ pub fn init() -> bool {
         .spawn(start_mouse_event_tap)
         .map_or_else(
             |e| {
-                eprintln!("stache: tiling: mouse monitor thread spawn failed: {e}");
+                tracing::error!("tiling: mouse monitor thread spawn failed: {e}");
                 INITIALIZED.store(false, Ordering::SeqCst);
                 false
             },
@@ -170,8 +170,8 @@ fn start_mouse_event_tap() {
         );
 
         if tap.is_null() {
-            eprintln!(
-                "stache: tiling: mouse monitor: failed to create event tap - check accessibility permissions"
+            tracing::error!(
+                "tiling: mouse monitor: failed to create event tap - check accessibility permissions"
             );
             INITIALIZED.store(false, Ordering::SeqCst);
             return;
@@ -180,7 +180,7 @@ fn start_mouse_event_tap() {
         // Wrap the tap in a CFMachPort and create a run loop source
         let tap_port = CFMachPort::wrap_under_create_rule(tap.cast());
         let Ok(run_loop_source) = tap_port.create_runloop_source(0) else {
-            eprintln!("stache: tiling: mouse monitor: failed to create run loop source");
+            tracing::error!("tiling: mouse monitor: failed to create run loop source");
             INITIALIZED.store(false, Ordering::SeqCst);
             return;
         };
@@ -192,7 +192,7 @@ fn start_mouse_event_tap() {
         // Enable the event tap
         CGEventTapEnable(tap, true);
 
-        eprintln!("stache: tiling: mouse monitor initialized");
+        tracing::debug!("tiling: mouse monitor initialized");
 
         // Run the run loop (this blocks)
         CFRunLoop::run_current();

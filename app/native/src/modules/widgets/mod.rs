@@ -8,7 +8,7 @@ use crate::widgets::window::monitor_click_outside;
 
 pub fn init(app: &App) {
     let Some(webview_window) = app.app_handle().get_webview_window("widgets") else {
-        eprintln!("stache: error: 'widgets' window not found in tauri.conf.json");
+        tracing::error!("'widgets' window not found in tauri.conf.json");
         return;
     };
 

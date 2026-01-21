@@ -164,7 +164,7 @@ pub fn resolve_window_element(window_id: u32) -> Option<AXUIElementRef> {
         }
     }
 
-    log::debug!("resolve_window_element: window {window_id} not found");
+    tracing::debug!("resolve_window_element: window {window_id} not found");
     None
 }
 
@@ -451,7 +451,7 @@ pub fn set_window_frame(window_id: u32, frame: &Rect) -> bool {
 /// Internal implementation of `set_window_frame` (runs on main thread).
 fn set_window_frame_impl(window_id: u32, frame: &Rect) {
     let Some(element) = resolve_window_element(window_id) else {
-        log::debug!("set_window_frame: could not resolve window {window_id}");
+        tracing::debug!("set_window_frame: could not resolve window {window_id}");
         return;
     };
 
@@ -466,7 +466,7 @@ fn set_window_frame_impl(window_id: u32, frame: &Rect) {
     unsafe { CFRelease(element.cast()) };
 
     if !(pos_ok && (size_ok_1 || size_ok_2)) {
-        log::debug!("set_window_frame: failed for window {window_id}");
+        tracing::debug!("set_window_frame: failed for window {window_id}");
     }
 }
 
@@ -678,7 +678,7 @@ fn focus_window_impl(window_id: u32) {
     }
 
     let Some(element) = resolve_window_element(window_id) else {
-        log::debug!("focus_window: could not resolve window {window_id}");
+        tracing::debug!("focus_window: could not resolve window {window_id}");
         return;
     };
 
@@ -792,7 +792,7 @@ pub fn raise_window(window_id: u32) -> bool {
 /// Internal implementation of `raise_window` (runs on main thread).
 fn raise_window_impl(window_id: u32) {
     let Some(element) = resolve_window_element(window_id) else {
-        log::debug!("raise_window: could not resolve window {window_id}");
+        tracing::debug!("raise_window: could not resolve window {window_id}");
         return;
     };
 
@@ -857,13 +857,13 @@ pub fn hide_app(pid: i32) -> bool {
 
     unsafe {
         let Some(app_class) = Class::get("NSRunningApplication") else {
-            log::warn!("NSRunningApplication class not found");
+            tracing::warn!("NSRunningApplication class not found");
             return false;
         };
 
         let app: *mut Object = msg_send![app_class, runningApplicationWithProcessIdentifier: pid];
         if app.is_null() {
-            log::debug!("hide_app: no running application for pid {pid}");
+            tracing::debug!("hide_app: no running application for pid {pid}");
             return false;
         }
 
@@ -897,13 +897,13 @@ pub fn unhide_app(pid: i32) -> bool {
 
     unsafe {
         let Some(app_class) = Class::get("NSRunningApplication") else {
-            log::warn!("NSRunningApplication class not found");
+            tracing::warn!("NSRunningApplication class not found");
             return false;
         };
 
         let app: *mut Object = msg_send![app_class, runningApplicationWithProcessIdentifier: pid];
         if app.is_null() {
-            log::debug!("unhide_app: no running application for pid {pid}");
+            tracing::debug!("unhide_app: no running application for pid {pid}");
             return false;
         }
 

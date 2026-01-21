@@ -19,7 +19,7 @@ pub fn on_set_layout(state: &mut TilingState, workspace_id: Uuid, layout: Layout
         ws.split_ratios.clear();
     });
 
-    log::debug!("Set workspace {workspace_id} layout to {layout:?}");
+    tracing::debug!("Set workspace {workspace_id} layout to {layout:?}");
 
     // Notify subscriber about layout change
     if let Some(handle) = get_subscriber_handle() {
@@ -31,7 +31,7 @@ pub fn on_set_layout(state: &mut TilingState, workspace_id: Uuid, layout: Layout
 /// Cycle through layouts for a workspace.
 pub fn on_cycle_layout(state: &mut TilingState, workspace_id: Uuid) {
     let Some(workspace) = state.get_workspace(workspace_id) else {
-        log::warn!("cycle_layout: workspace {workspace_id} not found");
+        tracing::warn!("cycle_layout: workspace {workspace_id} not found");
         return;
     };
 
@@ -47,7 +47,7 @@ pub fn on_cycle_layout(state: &mut TilingState, workspace_id: Uuid) {
     };
 
     on_set_layout(state, workspace_id, next_layout);
-    log::debug!("Cycled workspace {workspace_id} layout to {next_layout:?}");
+    tracing::debug!("Cycled workspace {workspace_id} layout to {next_layout:?}");
 }
 
 // ============================================================================

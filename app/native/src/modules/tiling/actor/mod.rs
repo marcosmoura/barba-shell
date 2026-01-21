@@ -57,7 +57,7 @@ impl StateActor {
     /// The actor will run in the background and process messages.
     #[must_use]
     pub fn spawn() -> StateActorHandle {
-        log::debug!("tiling: spawning state actor");
+        tracing::debug!("tiling: spawning state actor");
         let (sender, receiver) = mpsc::channel(CHANNEL_BUFFER_SIZE);
 
         let actor = Self {
@@ -79,11 +79,11 @@ impl StateActor {
     /// This loop includes panic recovery - if a message handler panics,
     /// the error is logged and the actor continues processing messages.
     async fn run(mut self) {
-        log::trace!("tiling: actor message loop starting");
+        tracing::trace!("tiling: actor message loop starting");
 
         while let Some(msg) = self.receiver.recv().await {
             if matches!(msg, StateMessage::Shutdown) {
-                log::debug!("State actor received shutdown message");
+                tracing::debug!("State actor received shutdown message");
                 return;
             }
 
@@ -102,15 +102,15 @@ impl StateActor {
                     .or_else(|| panic_info.downcast_ref::<String>().cloned())
                     .unwrap_or_else(|| "unknown panic".to_string());
 
-                log::error!("tiling: PANIC in actor while handling '{msg_name}': {panic_msg}");
-                log::error!(
+                tracing::error!("tiling: PANIC in actor while handling '{msg_name}': {panic_msg}");
+                tracing::error!(
                     "tiling: Actor recovered from panic - state may be inconsistent. \
                      Consider restarting the application if issues persist."
                 );
             }
         }
 
-        log::debug!("State actor channel closed, exiting");
+        tracing::debug!("State actor channel closed, exiting");
     }
 
     /// Handle a single message.
@@ -122,26 +122,26 @@ impl StateActor {
                 handlers::on_window_created(&mut self.state, info);
             }
             StateMessage::WindowDestroyed { window_id } => {
-                log::debug!(
+                tracing::debug!(
                     "tiling: actor received WindowDestroyed message for window_id={window_id}"
                 );
                 if let Some(ws_id) = handlers::on_window_destroyed(&mut self.state, window_id) {
-                    log::debug!(
+                    tracing::debug!(
                         "tiling: window {window_id} was in workspace {ws_id}, notifying subscriber"
                     );
                     // Notify subscriber to recompute layout for the affected workspace
                     if let Some(handle) = get_subscriber_handle() {
-                        log::debug!(
+                        tracing::debug!(
                             "tiling: sending layout_changed notification to subscriber for workspace {ws_id}"
                         );
                         handle.notify_layout_changed(ws_id, false);
                     } else {
-                        log::warn!(
+                        tracing::warn!(
                             "tiling: no subscriber handle available to notify layout change!"
                         );
                     }
                 } else {
-                    log::debug!(
+                    tracing::debug!(
                         "tiling: window {window_id} was not tracked or workspace not found"
                     );
                 }
@@ -190,7 +190,7 @@ impl StateActor {
                 handlers::on_screens_changed(&mut self.state);
             }
             StateMessage::SetScreens { screens } => {
-                log::trace!("tiling: received SetScreens with {} screens", screens.len());
+                tracing::trace!("tiling: received SetScreens with {} screens", screens.len());
                 handlers::on_set_screens(&mut self.state, screens);
             }
 
@@ -239,7 +239,7 @@ impl StateActor {
             StateMessage::Query { query, respond_to } => {
                 let result = self.execute_query(query);
                 if respond_to.send(result).is_err() {
-                    log::warn!("tiling: failed to send query response (channel closed)");
+                    tracing::warn!("tiling: failed to send query response (channel closed)");
                 }
             }
 
@@ -393,13 +393,13 @@ impl StateActor {
     ) -> Vec<(u32, crate::modules::tiling::state::Rect)> {
         // Get workspace
         let Some(workspace) = self.state.get_workspace(workspace_id) else {
-            log::warn!("compute_layout: workspace {workspace_id} not found");
+            tracing::warn!("compute_layout: workspace {workspace_id} not found");
             return Vec::new();
         };
 
         // Get screen for this workspace
         let Some(screen) = self.state.get_screen(workspace.screen_id) else {
-            log::warn!(
+            tracing::warn!(
                 "compute_layout: screen {} not found for workspace {}",
                 workspace.screen_id,
                 workspace_id
@@ -565,7 +565,7 @@ impl StateActor {
     }
 
     fn on_set_enabled(&mut self, enabled: bool) {
-        log::debug!("Set enabled: {enabled}");
+        tracing::debug!("Set enabled: {enabled}");
         self.state.set_enabled(enabled);
     }
 
@@ -594,7 +594,7 @@ impl StateActor {
     /// Creates window entries without triggering individual layout notifications.
     /// Call `on_init_complete` after all windows are tracked to apply layouts.
     fn on_batch_windows_created(&mut self, windows: Vec<WindowCreatedInfo>) {
-        log::debug!(
+        tracing::debug!(
             "Batch creating {} windows (no layout notifications)",
             windows.len()
         );
@@ -611,7 +611,7 @@ impl StateActor {
     /// Triggers layout calculation for all visible workspaces and hides
     /// windows from non-visible workspaces.
     fn on_init_complete(&self) {
-        log::debug!("Initialization complete, applying initial layouts");
+        tracing::debug!("Initialization complete, applying initial layouts");
 
         // Sync window visibility based on workspace visibility
         self.sync_window_visibility();
@@ -627,7 +627,7 @@ impl StateActor {
             }
         }
 
-        log::debug!("Initial layout notifications sent");
+        tracing::debug!("Initial layout notifications sent");
     }
 
     /// Syncs window visibility based on workspace visibility.
@@ -669,7 +669,7 @@ impl StateActor {
             let _ = hide_app(*pid);
         }
 
-        log::debug!(
+        tracing::debug!(
             "Synced window visibility: {} apps shown, {} apps hidden",
             pids_in_visible.len(),
             pids_to_hide.len()

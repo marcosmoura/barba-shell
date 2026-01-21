@@ -112,7 +112,7 @@ pub fn enforce_minimum_sizes_for_split(
         return None; // No adjustments needed
     }
 
-    log::debug!("Minimum size violations detected in split layout, adjusting ratios");
+    tracing::debug!("Minimum size violations detected in split layout, adjusting ratios");
 
     // Calculate minimum ratios for each window
     let min_ratios: Vec<f64> =
@@ -121,7 +121,7 @@ pub fn enforce_minimum_sizes_for_split(
     // Check if total minimum requirements exceed available space
     let total_min_ratio: f64 = min_ratios.iter().sum();
     if total_min_ratio > 1.0 {
-        log::warn!(
+        tracing::warn!(
             "Total minimum size requirements ({:.2}%) exceed available space, \
              some windows will be smaller than their minimums",
             total_min_ratio * 100.0
@@ -306,7 +306,7 @@ pub fn enforce_minimum_sizes_for_dwindle(
         return None;
     }
 
-    log::debug!(
+    tracing::debug!(
         "Minimum size violations in dwindle layout for {} windows",
         violations.len()
     );
@@ -470,7 +470,7 @@ pub fn enforce_minimum_sizes_for_grid(
         return None;
     }
 
-    log::debug!(
+    tracing::debug!(
         "Minimum size violations in grid layout for {} windows",
         violations.len()
     );

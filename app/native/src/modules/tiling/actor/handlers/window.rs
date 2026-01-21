@@ -46,7 +46,7 @@ pub fn on_window_created_silent(state: &mut TilingState, info: WindowCreatedInfo
 /// Returns the workspace ID if a new window was created and layout should be triggered,
 /// None if window was just updated or is a tab (no layout needed).
 fn on_window_created_internal(state: &mut TilingState, info: WindowCreatedInfo) -> Option<Uuid> {
-    log::debug!(
+    tracing::debug!(
         "Handling window created: id={}, app={}, title='{}'",
         info.window_id,
         info.app_id,
@@ -55,7 +55,7 @@ fn on_window_created_internal(state: &mut TilingState, info: WindowCreatedInfo) 
 
     // Check if window already exists
     if state.get_window(info.window_id).is_some() {
-        log::debug!("Window {} already tracked, updating", info.window_id);
+        tracing::debug!("Window {} already tracked, updating", info.window_id);
         state.update_window(info.window_id, |w| {
             w.title.clone_from(&info.title);
             w.frame = info.frame;
@@ -134,7 +134,7 @@ fn on_window_created_internal(state: &mut TilingState, info: WindowCreatedInfo) 
         ws.window_ids.insert(insert_index, info.window_id);
     });
 
-    log::debug!(
+    tracing::debug!(
         "Window {} tracked in workspace {:?} (after focused window {:?})",
         info.window_id,
         workspace_id,
@@ -150,7 +150,7 @@ fn on_window_created_internal(state: &mut TilingState, info: WindowCreatedInfo) 
 /// Returns the workspace ID if the window was tracked AND was a real window (for layout recomputation).
 /// Tabs return None since they don't affect layout.
 pub fn on_window_destroyed(state: &mut TilingState, window_id: u32) -> Option<uuid::Uuid> {
-    log::debug!("tiling: handler on_window_destroyed called for window_id={window_id}");
+    tracing::debug!("tiling: handler on_window_destroyed called for window_id={window_id}");
 
     // Check if this window is a tracked tab - if so, just unregister and skip layout
     if tabs::is_tab(window_id) {
@@ -162,17 +162,17 @@ pub fn on_window_destroyed(state: &mut TilingState, window_id: u32) -> Option<uu
     let window_info = state.get_window(window_id).map(|w| w.workspace_id);
 
     let Some(workspace_id) = window_info else {
-        log::debug!("tiling: window {window_id} was not tracked in state");
+        tracing::debug!("tiling: window {window_id} was not tracked in state");
         // Still try to unregister from tab registry in case it was there
         tabs::unregister_tab(window_id);
         return None;
     };
 
-    log::debug!("tiling: window {window_id} workspace_id={workspace_id:?}");
+    tracing::debug!("tiling: window {window_id} workspace_id={workspace_id:?}");
 
     // Remove the window from state
     state.remove_window(window_id);
-    log::debug!("tiling: window {window_id} removed from state");
+    tracing::debug!("tiling: window {window_id} removed from state");
 
     // Invalidate window cache entry for this window
     get_window_cache().invalidate_window(window_id);
@@ -182,7 +182,7 @@ pub fn on_window_destroyed(state: &mut TilingState, window_id: u32) -> Option<uu
         let before_count = ws.window_ids.len();
         ws.window_ids.retain(|id| *id != window_id);
         let after_count = ws.window_ids.len();
-        log::debug!(
+        tracing::debug!(
             "tiling: workspace {workspace_id} window count: {before_count} -> {after_count}"
         );
 
@@ -199,15 +199,15 @@ pub fn on_window_destroyed(state: &mut TilingState, window_id: u32) -> Option<uu
     // Clear focus if this was the focused window
     let focus = eyeball::Observable::get(&state.focus);
     if focus.focused_window_id == Some(window_id) {
-        log::debug!("tiling: cleared focus since destroyed window was focused");
+        tracing::debug!("tiling: cleared focus since destroyed window was focused");
         state.clear_focus();
     }
 
     // Remove window from focus history (it may have been the last focused window in some workspace)
     state.remove_window_from_focus_history(window_id);
-    log::debug!("tiling: removed window {window_id} from focus history");
+    tracing::debug!("tiling: removed window {window_id} from focus history");
 
-    log::debug!("tiling: returning workspace_id={workspace_id} for layout recalculation");
+    tracing::debug!("tiling: returning workspace_id={workspace_id} for layout recalculation");
     Some(workspace_id)
 }
 
@@ -218,11 +218,11 @@ pub fn on_window_destroyed(state: &mut TilingState, window_id: u32) -> Option<uu
 /// becomes visible (and any other workspace on the same screen becomes hidden).
 pub fn on_window_focused(state: &mut TilingState, window_id: u32) {
     let Some(window) = state.get_window(window_id) else {
-        log::trace!("Window {window_id} not tracked - ignoring focus event");
+        tracing::trace!("Window {window_id} not tracked - ignoring focus event");
         return;
     };
 
-    log::debug!(
+    tracing::debug!(
         "Window {} focused -> workspace {} (app: {})",
         window_id,
         window.workspace_id,
@@ -294,7 +294,7 @@ pub fn on_window_focused(state: &mut TilingState, window_id: u32) {
 
     // Sync window visibility if any workspace visibility changed
     if !workspaces_becoming_visible.is_empty() || !workspaces_becoming_hidden.is_empty() {
-        log::debug!(
+        tracing::debug!(
             "Visibility changed - showing: {workspaces_becoming_visible:?}, hiding: {workspaces_becoming_hidden:?}"
         );
 
@@ -356,11 +356,11 @@ pub fn sync_window_visibility_for_workspaces(
     use crate::modules::tiling::effects::window_ops::{hide_app, unhide_app};
 
     if becoming_visible.is_empty() && becoming_hidden.is_empty() {
-        log::trace!("No visibility changes to sync");
+        tracing::trace!("No visibility changes to sync");
         return;
     }
 
-    log::debug!(
+    tracing::debug!(
         "Syncing visibility - becoming_visible: {becoming_visible:?}, becoming_hidden: {becoming_hidden:?}"
     );
 
@@ -395,18 +395,18 @@ pub fn sync_window_visibility_for_workspaces(
     // PIDs to hide: in hidden workspaces but NOT in any visible workspace
     let pids_to_hide: Vec<i32> = pids_in_hidden.difference(&pids_in_visible).copied().collect();
 
-    log::trace!("PIDs to show: {pids_to_show:?}, PIDs to hide: {pids_to_hide:?}");
+    tracing::trace!("PIDs to show: {pids_to_show:?}, PIDs to hide: {pids_to_hide:?}");
 
     // Show apps first (so they become visible before we hide others)
     for pid in &pids_to_show {
         let result = unhide_app(*pid);
-        log::trace!("unhide_app({pid}) = {result}");
+        tracing::trace!("unhide_app({pid}) = {result}");
     }
 
     // Hide apps that only have windows in non-visible workspaces
     for pid in &pids_to_hide {
         let result = hide_app(*pid);
-        log::trace!("hide_app({pid}) = {result}");
+        tracing::trace!("hide_app({pid}) = {result}");
     }
 }
 
@@ -415,7 +415,7 @@ pub fn sync_window_visibility_for_workspaces(
 /// Note: We don't clear focus here because another window will typically
 /// receive focus immediately after. Focus is only cleared when explicitly needed.
 pub fn on_window_unfocused(state: &mut TilingState, window_id: u32) {
-    log::debug!("Handling window unfocused: {window_id}");
+    tracing::debug!("Handling window unfocused: {window_id}");
 
     // Just log for now - actual focus change happens in on_window_focused
     let _ = state.get_window(window_id);
@@ -437,7 +437,7 @@ pub fn on_window_moved(state: &mut TilingState, window_id: u32, frame: Rect) {
     // These are intermediate frames from the animation system and should not
     // trigger minimum size detection or update our tracked frame state.
     if should_ignore_geometry_events() {
-        log::trace!(
+        tracing::trace!(
             "on_window_moved: ignoring geometry event for window {window_id} during animation/settling"
         );
         return;
@@ -508,7 +508,7 @@ fn detect_and_update_inferred_minimum(
 
     // Get the window's expected frame and workspace
     let Some(window) = state.get_window(window_id) else {
-        log::trace!("detect_minimum: window {window_id} not found in state");
+        tracing::trace!("detect_minimum: window {window_id} not found in state");
         return None;
     };
 
@@ -556,7 +556,7 @@ fn detect_and_update_inferred_minimum(
 
 /// Handles a window minimized/unminimized event.
 pub fn on_window_minimized(state: &mut TilingState, window_id: u32, minimized: bool) {
-    log::debug!("Handling window minimized: {window_id} = {minimized}");
+    tracing::debug!("Handling window minimized: {window_id} = {minimized}");
 
     // Get workspace info before updating
     let workspace_info = state.get_window(window_id).and_then(|w| {
@@ -581,7 +581,7 @@ pub fn on_window_minimized(state: &mut TilingState, window_id: u32, minimized: b
 
 /// Handles a window title changed event.
 pub fn on_window_title_changed(state: &mut TilingState, window_id: u32, title: &str) {
-    log::debug!("Handling window title changed: {window_id} to '{title}'");
+    tracing::debug!("Handling window title changed: {window_id} to '{title}'");
 
     state.update_window(window_id, |w| {
         w.title = title.to_string();
@@ -593,7 +593,7 @@ pub fn on_window_title_changed(state: &mut TilingState, window_id: u32, title: &
 
 /// Handles a window fullscreen state changed event.
 pub fn on_window_fullscreen_changed(state: &mut TilingState, window_id: u32, fullscreen: bool) {
-    log::debug!("Handling window fullscreen changed: {window_id} = {fullscreen}");
+    tracing::debug!("Handling window fullscreen changed: {window_id} = {fullscreen}");
 
     // Get workspace before updating
     let workspace_id = state.get_window(window_id).map(|w| w.workspace_id);
@@ -731,7 +731,7 @@ pub fn on_batched_geometry_updates(state: &mut TilingState, updates: &[GeometryU
 fn find_workspace_for_window(state: &mut TilingState, info: &WindowCreatedInfo) -> Uuid {
     // Check window rules from config
     if let Some(workspace_id) = find_workspace_by_rules(state, info) {
-        log::debug!(
+        tracing::debug!(
             "Window {} (app={}) matched rule, assigned to workspace {:?}",
             info.window_id,
             info.app_id,
@@ -742,7 +742,7 @@ fn find_workspace_for_window(state: &mut TilingState, info: &WindowCreatedInfo) 
 
     // Try focused workspace as fallback
     if let Some(ws) = state.get_focused_workspace() {
-        log::debug!(
+        tracing::debug!(
             "Window {} (app={}) no rule match, using focused workspace '{}'",
             info.window_id,
             info.app_id,
@@ -762,7 +762,7 @@ fn find_workspace_for_window(state: &mut TilingState, info: &WindowCreatedInfo) 
     }
 
     // Create a default workspace
-    log::debug!("No workspace found, creating default");
+    tracing::debug!("No workspace found, creating default");
     let ws = create_default_workspace(state);
     let id = ws.id;
     state.upsert_workspace(ws);
@@ -787,7 +787,7 @@ fn find_workspace_by_rules(state: &TilingState, info: &WindowCreatedInfo) -> Opt
             if rule_matches_window(rule, info) {
                 // Found a match - find the workspace by name in state
                 if let Some(ws) = state.get_workspace_by_name(&ws_config.name) {
-                    log::debug!(
+                    tracing::debug!(
                         "Rule match: app_id='{}' → workspace '{}'",
                         info.app_id,
                         ws_config.name

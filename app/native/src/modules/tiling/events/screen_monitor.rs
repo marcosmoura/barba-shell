@@ -114,7 +114,7 @@ impl ScreenMonitorAdapter {
     /// `true` if initialization succeeded, `false` if already initialized or failed.
     pub fn init(&self) -> bool {
         if self.initialized.swap(true, Ordering::SeqCst) {
-            log::warn!("ScreenMonitorAdapter already initialized");
+            tracing::warn!("ScreenMonitorAdapter already initialized");
             return false;
         }
 
@@ -127,7 +127,7 @@ impl ScreenMonitorAdapter {
         };
 
         if result != 0 {
-            log::error!("Failed to register display reconfiguration callback: {result}");
+            tracing::error!("Failed to register display reconfiguration callback: {result}");
             self.initialized.store(false, Ordering::SeqCst);
             return false;
         }
@@ -135,7 +135,7 @@ impl ScreenMonitorAdapter {
         // Register current screens with the processor
         self.register_all_screens();
 
-        log::debug!("ScreenMonitorAdapter initialized");
+        tracing::debug!("ScreenMonitorAdapter initialized");
         true
     }
 
@@ -159,7 +159,7 @@ impl ScreenMonitorAdapter {
         for display_id in displays {
             let refresh_rate = get_display_refresh_rate(display_id);
             self.processor.register_screen(display_id, refresh_rate);
-            log::debug!("Registered screen {display_id} with refresh rate {refresh_rate} Hz");
+            tracing::debug!("Registered screen {display_id} with refresh rate {refresh_rate} Hz");
         }
     }
 
@@ -169,7 +169,7 @@ impl ScreenMonitorAdapter {
     /// CoreGraphics callback). We detect screens here and pass them to the
     /// processor to avoid calling macOS APIs from the async actor task.
     fn on_screens_changed(&self) {
-        log::debug!("Screens changed, updating registrations");
+        tracing::debug!("Screens changed, updating registrations");
 
         // Get current displays
         let current_displays: std::collections::HashSet<_> =
@@ -229,7 +229,7 @@ unsafe extern "C" fn display_reconfiguration_callback(
     }
 
     let event_type = if is_add { "connected" } else { "disconnected" };
-    log::debug!("Screen {event_type} (display reconfiguration)");
+    tracing::debug!("Screen {event_type} (display reconfiguration)");
 
     // Mark that we're processing to prevent reentrancy
     adapter.set_processing(true);

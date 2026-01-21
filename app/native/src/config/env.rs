@@ -41,10 +41,7 @@ pub fn parse_env_file(path: &Path) -> HashMap<String, String> {
         Ok(iter) => iter.filter_map(Result::ok).collect(),
         Err(err) => {
             if path.exists() {
-                eprintln!(
-                    "stache: warning: failed to read env file {}: {err}",
-                    path.display()
-                );
+                tracing::warn!(error = %err, path = %path.display(), "failed to read env file");
             }
             HashMap::new()
         }

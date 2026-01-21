@@ -151,7 +151,7 @@ fn remove_socket() {
 pub fn start_server<F>(handler: F)
 where F: Fn(IpcQuery) -> IpcResponse + Send + Sync + 'static {
     if SERVER_RUNNING.swap(true, Ordering::SeqCst) {
-        eprintln!("stache: ipc: server already running");
+        tracing::debug!("ipc server already running");
         return;
     }
 
@@ -169,14 +169,13 @@ where F: Fn(IpcQuery) -> IpcResponse + Send + Sync + 'static {
     let listener = match UnixListener::bind(&socket_path) {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("stache: ipc: failed to bind socket: {e}");
+            tracing::error!(error = %e, path = %socket_path.display(), "failed to bind ipc socket");
             SERVER_RUNNING.store(false, Ordering::SeqCst);
             return;
         }
     };
 
-    let socket_path_display = socket_path.display();
-    eprintln!("stache: ipc: server listening on {socket_path_display}");
+    tracing::info!(path = %socket_path.display(), "ipc server listening");
 
     // Spawn server thread
     let handler = Arc::new(handler);
@@ -206,7 +205,7 @@ where F: Fn(IpcQuery) -> IpcResponse + Send + Sync + 'static {
                 });
             }
             Err(e) => {
-                eprintln!("stache: ipc: connection error: {e}");
+                tracing::warn!(error = %e, "ipc connection error");
             }
         }
     }

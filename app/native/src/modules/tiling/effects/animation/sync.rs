@@ -121,7 +121,7 @@ fn get_display_refresh_rate() -> u32 {
                 rounded.clamp(30, 360)
             }
         };
-        log::debug!("tiling: detected display refresh rate: {rate} Hz");
+        tracing::debug!("tiling: detected display refresh rate: {rate} Hz");
         rate
     })
 }
@@ -251,9 +251,9 @@ pub fn init_display_link() {
     DISPLAY_LINK.get_or_init(|| {
         let link = DisplayLink::new();
         if link.is_some() {
-            log::debug!("tiling: CVDisplayLink initialized for vsync");
+            tracing::debug!("tiling: CVDisplayLink initialized for vsync");
         } else {
-            log::debug!("tiling: CVDisplayLink failed, using fallback timing");
+            tracing::debug!("tiling: CVDisplayLink failed, using fallback timing");
         }
         link
     });

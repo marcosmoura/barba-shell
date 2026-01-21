@@ -62,7 +62,7 @@ fn load_or_default() -> StacheConfig {
         }
         Err(ConfigError::NotFound) => StacheConfig::default(),
         Err(err) => {
-            eprintln!("stache: warning: failed to load configuration: {err}");
+            tracing::warn!(error = %err, "failed to load configuration, using defaults");
             StacheConfig::default()
         }
     }

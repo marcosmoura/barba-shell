@@ -11,6 +11,7 @@ pub mod config;
 pub mod constants;
 pub mod error;
 pub mod events;
+mod logging;
 pub mod schema;
 mod utils;
 
@@ -48,6 +49,9 @@ pub fn is_accessibility_granted() -> bool {
 ///
 /// Panics if Tauri fails to initialize or the event loop encounters an error.
 pub fn run() {
+    // Initialize logging first
+    logging::init();
+
     // Initialize the configuration system early
     config::init();
 
@@ -55,7 +59,7 @@ pub fn run() {
     // (tiling window manager, menu anywhere, etc.)
     let accessibility_granted = is_accessibility_granted();
     if !accessibility_granted {
-        eprintln!("stache: accessibility permissions not granted. Some features will be disabled.");
+        tracing::warn!("accessibility permissions not granted - some features will be disabled");
     }
 
     // Initialize wallpaper manager early so CLI commands can use it
@@ -92,7 +96,7 @@ pub fn run() {
             // Make the app not appear in the dock
             if let Err(e) = app.handle().set_activation_policy(tauri::ActivationPolicy::Prohibited)
             {
-                eprintln!("stache: warning: failed to set activation policy: {e}");
+                tracing::warn!(error = %e, "failed to set activation policy");
             }
 
             // Start watching the config file for changes
@@ -105,41 +109,49 @@ pub fn run() {
             });
 
             // Initialize Bar components
+            tracing::debug!("initializing bar");
             bar::init(app);
 
             // Initialize Widgets components
+            tracing::debug!("initializing widgets");
             widgets::init(app);
 
             // Start wallpaper manager
+            tracing::debug!("initializing wallpaper manager");
             wallpaper::init();
 
             // Initialize audio device manager
+            tracing::debug!("initializing audio manager");
             audio::init();
 
             // Initialize noTunes
+            tracing::debug!("initializing notunes");
             notunes::init();
 
             // Initialize hold-to-quit (⌘Q) handler
+            tracing::debug!("initializing cmd-q handler");
             cmd_q::init(app.handle().clone());
 
             // Initialize MenuAnywhere
+            tracing::debug!("initializing menu anywhere");
             menu_anywhere::init(app.handle().clone());
 
             // Initialize tiling window manager if enabled
             let tiling_config = config::get_config().tiling.clone();
             if tiling_config.is_enabled() {
-                eprintln!("stache: tiling enabled, starting init...");
+                tracing::info!("tiling window manager enabled, initializing");
                 tiling::init(app.handle().clone());
-                eprintln!("stache: tiling init returned");
+                tracing::debug!("tiling initialization complete");
             }
 
-            eprintln!("stache: setup complete!");
+            tracing::info!("setup complete");
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
+                tracing::info!("application exiting, cleaning up");
                 // Clean up IPC socket on exit
                 utils::ipc_socket::stop_server();
             }

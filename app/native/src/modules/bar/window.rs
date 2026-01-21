@@ -16,7 +16,7 @@ pub struct WindowFrame {
 
 pub fn set_window_position(webview_window: &tauri::WebviewWindow) {
     let Ok((logical_width, _)) = get_screen_size(webview_window) else {
-        eprintln!("Failed to get screen size for window positioning");
+        tracing::warn!("failed to get screen size for bar window positioning");
         return;
     };
     let config = get_config();

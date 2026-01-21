@@ -166,7 +166,7 @@ mod notifications {
 /// This function must be called from the main thread.
 pub fn init() -> bool {
     if INITIALIZED.swap(true, Ordering::SeqCst) {
-        log::debug!("tiling: observer already initialized");
+        tracing::debug!("tiling: observer already initialized");
         return true;
     }
 
@@ -192,7 +192,7 @@ pub fn init() -> bool {
         }
     }
 
-    log::info!("tiling: observers initialized ({observed} apps, {skipped} filtered)");
+    tracing::info!("tiling: observers initialized ({observed} apps, {skipped} filtered)");
     true
 }
 
@@ -261,7 +261,7 @@ pub fn add_observer_for_pid(pid: i32) -> Result<(), String> {
             )
         };
         if result != K_AX_ERROR_SUCCESS {
-            log::trace!("Failed to add notification {name} for pid {pid}: {result}");
+            tracing::trace!("Failed to add notification {name} for pid {pid}: {result}");
         }
     }
 
@@ -281,7 +281,7 @@ pub fn add_observer_for_pid(pid: i32) -> Result<(), String> {
 
     // Store the observer
     state.observers.insert(pid, ObserverRef(observer));
-    log::trace!("Added observer for pid {pid}");
+    tracing::trace!("Added observer for pid {pid}");
 
     Ok(())
 }
@@ -294,7 +294,7 @@ pub fn remove_observer_for_pid(pid: i32) {
     {
         // Release the observer
         unsafe { CFRelease(observer.0.cast()) };
-        log::trace!("Removed observer for pid {pid}");
+        tracing::trace!("Removed observer for pid {pid}");
     }
 }
 
@@ -344,14 +344,14 @@ unsafe extern "C" fn observer_callback(
 
         // Log destroyed events specifically
         if notification_name == notifications::UI_ELEMENT_DESTROYED {
-            log::debug!(
+            tracing::debug!(
                 "tiling: observer received AXUIElementDestroyed for pid={pid}, element={element:?}"
             );
         }
 
         // Convert notification to event type
         let Some(event_type) = WindowEventType::from_notification(&notification_name) else {
-            log::trace!("Unknown notification: {notification_name}");
+            tracing::trace!("Unknown notification: {notification_name}");
             return;
         };
 

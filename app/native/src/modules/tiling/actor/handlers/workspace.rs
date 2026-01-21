@@ -19,10 +19,10 @@ use crate::modules::tiling::state::TilingState;
 /// If the workspace exists and is not already visible, it becomes the focused
 /// workspace on its assigned screen.
 pub fn on_switch_workspace(state: &mut TilingState, name: &str) {
-    log::debug!("Switching to workspace '{name}'");
+    tracing::debug!("Switching to workspace '{name}'");
 
     let Some(workspace) = state.get_workspace_by_name(name) else {
-        log::warn!("Workspace '{name}' not found");
+        tracing::warn!("Workspace '{name}' not found");
         return;
     };
 
@@ -31,7 +31,7 @@ pub fn on_switch_workspace(state: &mut TilingState, name: &str) {
 
     // Check if already visible
     if workspace.is_visible && workspace.is_focused {
-        log::trace!("Workspace '{name}' already visible and focused, skipping");
+        tracing::trace!("Workspace '{name}' already visible and focused, skipping");
         return;
     }
 
@@ -46,7 +46,9 @@ pub fn on_switch_workspace(state: &mut TilingState, name: &str) {
         (previous_workspace_id, previous_focus.focused_window_id)
     {
         state.record_focus_history(prev_ws_id, prev_window_id);
-        log::debug!("Recorded focus history: workspace {prev_ws_id} -> window {prev_window_id}");
+        tracing::debug!(
+            "Recorded focus history: workspace {prev_ws_id} -> window {prev_window_id}"
+        );
     }
 
     // Track workspaces becoming visible/hidden
@@ -81,7 +83,7 @@ pub fn on_switch_workspace(state: &mut TilingState, name: &str) {
         // Window focus will be updated separately if needed
     });
 
-    log::debug!("Switched to workspace '{name}' (id={workspace_id})");
+    tracing::debug!("Switched to workspace '{name}' (id={workspace_id})");
 
     // Sync window visibility (hide windows from old workspace, show windows from new)
     sync_window_visibility_for_workspaces(
@@ -110,7 +112,7 @@ pub fn on_switch_workspace(state: &mut TilingState, name: &str) {
             .or_else(|| ws.window_ids.first().copied());
 
         if let Some(window_id) = target_window_id {
-            log::debug!(
+            tracing::debug!(
                 "Focusing window {} in workspace '{}' (from {})",
                 window_id,
                 name,
@@ -163,12 +165,12 @@ use crate::modules::tiling::actor::CycleDirection;
 pub fn on_cycle_workspace(state: &mut TilingState, direction: CycleDirection) {
     let focus = state.get_focus_state();
     let Some(current_workspace_id) = focus.focused_workspace_id else {
-        log::debug!("cycle_workspace: no focused workspace");
+        tracing::debug!("cycle_workspace: no focused workspace");
         return;
     };
 
     let Some(screen_id) = focus.focused_screen_id else {
-        log::debug!("cycle_workspace: no focused screen");
+        tracing::debug!("cycle_workspace: no focused screen");
         return;
     };
 
@@ -178,7 +180,7 @@ pub fn on_cycle_workspace(state: &mut TilingState, direction: CycleDirection) {
     // Record focus history for the workspace we're leaving
     if let Some(current_window_id) = focus.focused_window_id {
         state.record_focus_history(current_workspace_id, current_window_id);
-        log::debug!(
+        tracing::debug!(
             "Recorded focus history: workspace {current_workspace_id} -> window {current_window_id}"
         );
     }
@@ -192,7 +194,7 @@ pub fn on_cycle_workspace(state: &mut TilingState, direction: CycleDirection) {
         .collect();
 
     if screen_workspaces.len() <= 1 {
-        log::debug!("cycle_workspace: only one workspace on screen");
+        tracing::debug!("cycle_workspace: only one workspace on screen");
         return;
     }
 
@@ -232,7 +234,7 @@ pub fn on_cycle_workspace(state: &mut TilingState, direction: CycleDirection) {
         focus.focused_workspace_id = Some(next_workspace_id);
     });
 
-    log::debug!("Cycled to workspace {next_workspace_id} ({direction:?})");
+    tracing::debug!("Cycled to workspace {next_workspace_id} ({direction:?})");
 
     // Focus a window in the new workspace, preferring focus history
     if let Some(ws) = state.get_workspace(next_workspace_id) {
@@ -243,7 +245,7 @@ pub fn on_cycle_workspace(state: &mut TilingState, direction: CycleDirection) {
             .or_else(|| ws.window_ids.first().copied());
 
         if let Some(window_id) = target_window_id {
-            log::debug!(
+            tracing::debug!(
                 "Focusing window {} in workspace {} (from {})",
                 window_id,
                 next_workspace_id,
@@ -318,7 +320,7 @@ pub fn on_balance_workspace(state: &mut TilingState, workspace_id: Uuid) {
         });
     }
 
-    log::debug!("Balanced workspace {workspace_id}");
+    tracing::debug!("Balanced workspace {workspace_id}");
 
     // Notify subscriber to recalculate layout
     if let Some(handle) = get_subscriber_handle() {
@@ -338,12 +340,12 @@ pub fn on_send_workspace_to_screen(state: &mut TilingState, target_screen: &Targ
     // Get focused workspace
     let focus = state.get_focus_state();
     let Some(workspace_id) = focus.focused_workspace_id else {
-        log::debug!("send_workspace_to_screen: no focused workspace");
+        tracing::debug!("send_workspace_to_screen: no focused workspace");
         return;
     };
 
     let Some(workspace) = state.get_workspace(workspace_id) else {
-        log::debug!("send_workspace_to_screen: workspace not found");
+        tracing::debug!("send_workspace_to_screen: workspace not found");
         return;
     };
 
@@ -354,7 +356,7 @@ pub fn on_send_workspace_to_screen(state: &mut TilingState, target_screen: &Targ
     // Resolve target screen
     let target_screen_id = resolve_screen(state, target_screen);
     let Some(target_screen_id) = target_screen_id else {
-        log::warn!(
+        tracing::warn!(
             "send_workspace_to_screen: screen '{}' not found",
             target_screen.as_str()
         );
@@ -363,7 +365,7 @@ pub fn on_send_workspace_to_screen(state: &mut TilingState, target_screen: &Targ
 
     // Don't move to same screen
     if source_screen_id == target_screen_id {
-        log::debug!("send_workspace_to_screen: workspace already on target screen");
+        tracing::debug!("send_workspace_to_screen: workspace already on target screen");
         return;
     }
 
@@ -418,7 +420,7 @@ pub fn on_send_workspace_to_screen(state: &mut TilingState, target_screen: &Targ
         focus.focused_screen_id = Some(target_screen_id);
     });
 
-    log::debug!(
+    tracing::debug!(
         "Sent workspace '{workspace_name}' from screen {source_screen_id} to '{}'",
         target_screen.as_str()
     );

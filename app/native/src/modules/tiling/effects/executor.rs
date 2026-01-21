@@ -180,7 +180,7 @@ impl EffectExecutor {
                 if cache.set_window_frame_fast(*window_id, frame) {
                     success_count += 1;
                 } else {
-                    log::warn!("Failed to set frame for window {window_id}");
+                    tracing::warn!("Failed to set frame for window {window_id}");
                 }
             }
         }
@@ -220,7 +220,7 @@ impl EffectExecutor {
             if window_ops::focus_window(*window_id) {
                 success_count += 1;
             } else {
-                log::warn!("Failed to focus window {window_id}");
+                tracing::warn!("Failed to focus window {window_id}");
             }
         }
 
@@ -236,7 +236,7 @@ impl EffectExecutor {
             if window_ops::raise_window(*window_id) {
                 success_count += 1;
             } else {
-                log::warn!("Failed to raise window {window_id}");
+                tracing::warn!("Failed to raise window {window_id}");
             }
         }
 
@@ -272,7 +272,7 @@ impl EffectExecutor {
         let Some(app_handle) = &self.app_handle else {
             // No app handle - just log the events
             for (name, _) in events {
-                log::debug!("Would emit event: {name}");
+                tracing::debug!("Would emit event: {name}");
             }
             return events.len();
         };
@@ -283,10 +283,10 @@ impl EffectExecutor {
             match app_handle.emit(name, payload.clone()) {
                 Ok(()) => {
                     success_count += 1;
-                    log::trace!("Emitted event: {name}");
+                    tracing::trace!("Emitted event: {name}");
                 }
                 Err(e) => {
-                    log::warn!("Failed to emit event {name}: {e}");
+                    tracing::warn!("Failed to emit event {name}: {e}");
                 }
             }
         }

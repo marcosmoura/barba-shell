@@ -18,7 +18,7 @@ pub fn init(app: &App) {
     let app_handle = app.app_handle().clone();
 
     let Some(webview_window) = app_handle.get_webview_window("bar") else {
-        eprintln!("stache: error: 'bar' window not found in tauri.conf.json");
+        tracing::error!("'bar' window not found in tauri.conf.json");
         return;
     };
 
@@ -39,8 +39,10 @@ pub fn init(app: &App) {
 
     // Show the window
     if let Err(e) = webview_window.show() {
-        eprintln!("stache: error: failed to show bar window: {e}");
+        tracing::error!(error = %e, "failed to show bar window");
     }
+
+    tracing::debug!("bar initialized");
 
     // Open devtools if in dev mode
     #[cfg(debug_assertions)]

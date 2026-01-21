@@ -52,9 +52,10 @@ pub fn create_hotkey_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
             Ok(shortcut) => {
                 shortcut_map.insert(shortcut, commands.clone());
                 valid_shortcuts.push(shortcut);
+                tracing::debug!(shortcut = %shortcut_key, "registered shortcut");
             }
             Err(err) => {
-                eprintln!("stache: warning: invalid shortcut '{shortcut_key}': {err}");
+                tracing::warn!(shortcut = %shortcut_key, error = %err, "invalid shortcut");
             }
         }
     }
@@ -66,11 +67,13 @@ pub fn create_hotkey_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
     let shortcut_map: ShortcutCommandMap = Arc::new(shortcut_map);
     let shortcut_map_handler = Arc::clone(&shortcut_map);
 
+    tracing::info!(count = shortcut_map.len(), "registering global shortcuts");
+
     // Build the plugin with all valid shortcuts using with_shortcuts (batch registration)
     let builder = match Builder::<R>::new().with_shortcuts(valid_shortcuts) {
         Ok(b) => b,
         Err(err) => {
-            eprintln!("stache: warning: failed to register shortcuts: {err}");
+            tracing::error!(error = %err, "failed to register shortcuts");
             return Builder::<R>::new().build();
         }
     };
@@ -166,7 +169,7 @@ fn execute_single_command(command: &str, description: &str, index: usize, total:
     // Parse the command into parts
     let parts: Vec<&str> = command.split_whitespace().collect();
     if parts.is_empty() {
-        eprintln!("stache: warning: empty command for shortcut");
+        tracing::warn!("empty command for shortcut");
         return false;
     }
 
@@ -177,7 +180,7 @@ fn execute_single_command(command: &str, description: &str, index: usize, total:
     let binary_path = match resolve_binary(binary) {
         Ok(path) => path,
         Err(err) => {
-            eprintln!("stache: warning: failed to resolve binary '{binary}': {err}");
+            tracing::warn!(binary = %binary, error = %err, "failed to resolve binary");
             return false;
         }
     };
@@ -188,23 +191,29 @@ fn execute_single_command(command: &str, description: &str, index: usize, total:
             match child.wait() {
                 Ok(status) => {
                     if !status.success() {
-                        eprintln!(
-                            "stache: command '{description}' (step {index}/{total}) exited with status: {status}"
+                        tracing::warn!(
+                            command = %description,
+                            step = index,
+                            total,
+                            status = %status,
+                            "command exited with non-zero status"
                         );
                         return false;
                     }
+                    tracing::trace!(command = %description, "command completed successfully");
                     true
                 }
                 Err(err) => {
-                    eprintln!("stache: failed to wait for command '{description}': {err}");
+                    tracing::error!(command = %description, error = %err, "failed to wait for command");
                     false
                 }
             }
         }
         Err(err) => {
-            eprintln!(
-                "stache: failed to execute command '{}': {err}",
-                binary_path.display()
+            tracing::error!(
+                binary = %binary_path.display(),
+                error = %err,
+                "failed to execute command"
             );
             false
         }

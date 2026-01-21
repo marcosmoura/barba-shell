@@ -120,8 +120,8 @@ fn start_mouse_event_tap() {
         );
 
         if tap.is_null() {
-            eprintln!(
-                "stache: widgets: failed to create mouse event tap - check accessibility permissions"
+            tracing::error!(
+                "widgets: failed to create mouse event tap - check accessibility permissions"
             );
             return;
         }
@@ -129,7 +129,7 @@ fn start_mouse_event_tap() {
         // Wrap the tap in a CFMachPort and create a run loop source
         let tap_port = CFMachPort::wrap_under_create_rule(tap.cast());
         let Ok(run_loop_source) = tap_port.create_runloop_source(0) else {
-            eprintln!("stache: widgets: failed to create run loop source");
+            tracing::error!("widgets: failed to create run loop source");
             return;
         };
 
@@ -196,7 +196,7 @@ extern "C" fn mouse_event_callback(
     if !frame.contains(location)
         && let Err(e) = app_handle.emit(events::widgets::CLICK_OUTSIDE, ())
     {
-        eprintln!("stache: warning: failed to emit click-outside event: {e}");
+        tracing::warn!(error = %e, "failed to emit click-outside event");
     }
 
     event

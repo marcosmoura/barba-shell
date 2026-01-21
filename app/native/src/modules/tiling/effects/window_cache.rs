@@ -251,7 +251,7 @@ impl WindowElementCache {
             }
         }
 
-        log::trace!("window_cache: window {window_id} not found");
+        tracing::trace!("window_cache: window {window_id} not found");
         None
     }
 

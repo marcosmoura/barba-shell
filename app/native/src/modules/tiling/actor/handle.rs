@@ -331,7 +331,7 @@ impl StateActorHandle {
     /// Returns `Ok(())` but logs a warning if the dimension is invalid.
     pub fn resize_focused_window(&self, dimension: &str, amount: i32) -> Result<(), ActorError> {
         let Some(dim) = ResizeDimension::parse(dimension) else {
-            log::warn!("resize_focused_window: invalid dimension '{dimension}'");
+            tracing::warn!("resize_focused_window: invalid dimension '{dimension}'");
             return Ok(());
         };
         self.send(StateMessage::ResizeFocusedWindow { dimension: dim, amount })

@@ -68,7 +68,7 @@ pub fn on_resize_split(
     delta: f64,
 ) {
     let Some(workspace) = state.get_workspace(workspace_id) else {
-        log::warn!("resize_split: workspace {workspace_id} not found");
+        tracing::warn!("resize_split: workspace {workspace_id} not found");
         return;
     };
 
@@ -89,12 +89,12 @@ pub fn on_resize_split(
         layout,
         LayoutType::Floating | LayoutType::Monocle | LayoutType::Master
     ) {
-        log::debug!("resize_split: layout {layout:?} doesn't use split ratios");
+        tracing::debug!("resize_split: layout {layout:?} doesn't use split ratios");
         return;
     }
 
     if window_count <= 1 {
-        log::debug!("resize_split: need at least 2 windows");
+        tracing::debug!("resize_split: need at least 2 windows");
         return;
     }
 
@@ -112,7 +112,7 @@ pub fn on_resize_split(
     };
 
     if window_index >= max_index {
-        log::debug!(
+        tracing::debug!(
             "resize_split: invalid index {window_index} for {window_count} windows (max: {})",
             max_index.saturating_sub(1)
         );
@@ -126,7 +126,7 @@ pub fn on_resize_split(
 
     // Get screen for dimension calculations
     let Some(screen) = state.get_screen(workspace.screen_id) else {
-        log::debug!("resize_split: screen not found");
+        tracing::debug!("resize_split: screen not found");
         return;
     };
 
@@ -192,7 +192,7 @@ pub fn on_resize_split(
         ws.split_ratios = ratios;
     });
 
-    log::debug!("Resized split at index {window_index} by {delta} (layout: {layout:?})");
+    tracing::debug!("Resized split at index {window_index} by {delta} (layout: {layout:?})");
 
     // Notify subscriber to recalculate layout
     if let Some(handle) = get_subscriber_handle() {
@@ -428,7 +428,7 @@ fn apply_grid_resize_with_minimums(
             && (frame.width < min_w - 1.0 || frame.height < min_h - 1.0)
         {
             has_violation = true;
-            log::debug!(
+            tracing::debug!(
                 "Grid resize blocked: window {} would violate minimum size \
                  (frame: {:.0}x{:.0}, min: {:.0}x{:.0})",
                 window_id,
@@ -465,36 +465,36 @@ fn apply_grid_resize_with_minimums(
 pub fn on_resize_focused_window(state: &mut TilingState, dimension: ResizeDimension, amount: i32) {
     let focus = state.get_focus_state();
     let Some(workspace_id) = focus.focused_workspace_id else {
-        log::debug!("resize_focused_window: no focused workspace");
+        tracing::debug!("resize_focused_window: no focused workspace");
         return;
     };
 
     let Some(workspace) = state.get_workspace(workspace_id) else {
-        log::debug!("resize_focused_window: workspace not found");
+        tracing::debug!("resize_focused_window: workspace not found");
         return;
     };
 
     let layout = workspace.layout;
     let window_ids = workspace.window_ids.clone();
     if window_ids.len() < 2 {
-        log::debug!("resize_focused_window: need at least 2 windows to resize");
+        tracing::debug!("resize_focused_window: need at least 2 windows to resize");
         return;
     }
 
     let focused_idx = workspace.focused_window_index.unwrap_or(0);
     let Some(&focused_id) = window_ids.get(focused_idx) else {
-        log::debug!("resize_focused_window: no window at focused index");
+        tracing::debug!("resize_focused_window: no window at focused index");
         return;
     };
 
     let Some(_focused_window) = state.get_window(focused_id) else {
-        log::debug!("resize_focused_window: focused window not in state");
+        tracing::debug!("resize_focused_window: focused window not in state");
         return;
     };
 
     // Get the screen for workspace to calculate delta ratio
     let Some(screen) = state.get_screen(workspace.screen_id) else {
-        log::debug!("resize_focused_window: screen not found");
+        tracing::debug!("resize_focused_window: screen not found");
         return;
     };
 
@@ -514,7 +514,7 @@ pub fn on_resize_focused_window(state: &mut TilingState, dimension: ResizeDimens
         .collect();
 
     let Some(window_index) = layoutable.iter().position(|&id| id == focused_id) else {
-        log::debug!("resize_focused_window: focused window not layoutable");
+        tracing::debug!("resize_focused_window: focused window not layoutable");
         return;
     };
 
@@ -529,7 +529,9 @@ pub fn on_resize_focused_window(state: &mut TilingState, dimension: ResizeDimens
                 if window_index > 0 {
                     (window_index - 1, -delta_ratio)
                 } else {
-                    log::debug!("resize_focused_window: cannot resize single window in dwindle");
+                    tracing::debug!(
+                        "resize_focused_window: cannot resize single window in dwindle"
+                    );
                     return;
                 }
             } else {
@@ -548,7 +550,7 @@ pub fn on_resize_focused_window(state: &mut TilingState, dimension: ResizeDimens
                 } else {
                     // Dimension doesn't match this split direction
                     // Try to find the appropriate split for this dimension
-                    log::debug!(
+                    tracing::debug!(
                         "resize_focused_window: dimension {dimension:?} doesn't match split direction for window at index {window_index}"
                     );
                     return;
@@ -564,7 +566,7 @@ pub fn on_resize_focused_window(state: &mut TilingState, dimension: ResizeDimens
             if dimension == ResizeDimension::Width {
                 (0, delta_ratio)
             } else {
-                log::debug!(
+                tracing::debug!(
                     "resize_focused_window: height resize not fully supported for grid yet"
                 );
                 return;
@@ -576,7 +578,7 @@ pub fn on_resize_focused_window(state: &mut TilingState, dimension: ResizeDimens
                 if window_index > 0 {
                     (window_index - 1, -delta_ratio)
                 } else {
-                    log::debug!("resize_focused_window: cannot resize single window");
+                    tracing::debug!("resize_focused_window: cannot resize single window");
                     return;
                 }
             } else {
@@ -584,14 +586,14 @@ pub fn on_resize_focused_window(state: &mut TilingState, dimension: ResizeDimens
             }
         }
         _ => {
-            log::debug!("resize_focused_window: layout {layout:?} doesn't support resize");
+            tracing::debug!("resize_focused_window: layout {layout:?} doesn't support resize");
             return;
         }
     };
 
     on_resize_split(state, workspace_id, ratio_index, effective_delta);
 
-    log::debug!(
+    tracing::debug!(
         "Resized window {focused_id} {dimension:?} by {amount}px (layout: {layout:?}, ratio_index: {ratio_index}, delta: {effective_delta:.4})"
     );
 }
@@ -620,7 +622,7 @@ pub fn on_user_resize_completed(
     new_frame: Rect,
 ) {
     let Some(workspace) = state.get_workspace(workspace_id) else {
-        log::warn!("user_resize_completed: workspace {workspace_id} not found");
+        tracing::warn!("user_resize_completed: workspace {workspace_id} not found");
         return;
     };
 
@@ -641,7 +643,7 @@ pub fn on_user_resize_completed(
         layout,
         LayoutType::Floating | LayoutType::Monocle | LayoutType::Master
     ) {
-        log::debug!("user_resize_completed: layout {layout:?} doesn't use split ratios");
+        tracing::debug!("user_resize_completed: layout {layout:?} doesn't use split ratios");
         // Just re-apply layout to snap back
         if let Some(handle) = get_subscriber_handle() {
             handle.notify_layout_changed(workspace_id, true);
@@ -650,13 +652,13 @@ pub fn on_user_resize_completed(
     }
 
     if window_count <= 1 {
-        log::debug!("user_resize_completed: need at least 2 windows");
+        tracing::debug!("user_resize_completed: need at least 2 windows");
         return;
     }
 
     // Find the resized window's index in the layoutable list
     let Some(window_index) = layoutable.iter().position(|&id| id == window_id) else {
-        log::debug!("user_resize_completed: resized window not in layoutable list");
+        tracing::debug!("user_resize_completed: resized window not in layoutable list");
         if let Some(handle) = get_subscriber_handle() {
             handle.notify_layout_changed(workspace_id, true);
         }
@@ -665,7 +667,7 @@ pub fn on_user_resize_completed(
 
     // Get screen for dimension calculations
     let Some(screen) = state.get_screen(workspace.screen_id) else {
-        log::debug!("user_resize_completed: screen not found");
+        tracing::debug!("user_resize_completed: screen not found");
         return;
     };
 
@@ -707,7 +709,7 @@ pub fn on_user_resize_completed(
                 let split_index = window_index.saturating_sub(1);
                 (split_index.min(window_count.saturating_sub(2)), ratio_delta)
             } else {
-                log::debug!("user_resize_completed: cannot determine ratio for Dwindle resize");
+                tracing::debug!("user_resize_completed: cannot determine ratio for Dwindle resize");
                 if let Some(handle) = get_subscriber_handle() {
                     handle.notify_layout_changed(workspace_id, true);
                 }
@@ -720,7 +722,7 @@ pub fn on_user_resize_completed(
                 (0, ratio_delta)
             } else {
                 // Height changes in grid - not well supported yet
-                log::debug!("user_resize_completed: height resize in grid, re-applying layout");
+                tracing::debug!("user_resize_completed: height resize in grid, re-applying layout");
                 if let Some(handle) = get_subscriber_handle() {
                     handle.notify_layout_changed(workspace_id, true);
                 }
@@ -735,7 +737,7 @@ pub fn on_user_resize_completed(
                 if window_index > 0 {
                     (window_index - 1, -ratio_delta)
                 } else {
-                    log::debug!("user_resize_completed: cannot resize single window");
+                    tracing::debug!("user_resize_completed: cannot resize single window");
                     return;
                 }
             } else {
@@ -743,7 +745,7 @@ pub fn on_user_resize_completed(
             }
         }
         _ => {
-            log::debug!("user_resize_completed: layout {layout:?} doesn't support user resize");
+            tracing::debug!("user_resize_completed: layout {layout:?} doesn't support user resize");
             if let Some(handle) = get_subscriber_handle() {
                 handle.notify_layout_changed(workspace_id, true);
             }

@@ -128,7 +128,7 @@ pub fn get_connection_id() -> u32 {
     *CONNECTION_ID.get_or_init(|| {
         let cid = unsafe { SLSMainConnectionID() };
         if cid == 0 {
-            log::warn!("tiling: skylight: failed to get connection ID");
+            tracing::warn!("tiling: skylight: failed to get connection ID");
         }
         cid
     })

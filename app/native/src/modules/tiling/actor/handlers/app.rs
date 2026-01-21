@@ -20,7 +20,7 @@ use crate::modules::tiling::state::TilingState;
 /// This is called when a new application starts. Windows from this app
 /// will be tracked as they are created via window events.
 pub fn on_app_launched(state: &mut TilingState, pid: i32, bundle_id: &str, name: &str) {
-    log::debug!("Handling app launched: pid={pid}, bundle={bundle_id}, name={name}");
+    tracing::debug!("Handling app launched: pid={pid}, bundle={bundle_id}, name={name}");
 
     // Nothing to do immediately - windows will be tracked as they're created
     // via WindowCreated events. We just log for debugging.
@@ -32,18 +32,18 @@ pub fn on_app_launched(state: &mut TilingState, pid: i32, bundle_id: &str, name:
 /// Removes all windows belonging to this application from tracking.
 /// Returns the set of affected workspace IDs (for layout recomputation).
 pub fn on_app_terminated(state: &mut TilingState, pid: i32) -> HashSet<Uuid> {
-    log::debug!("Handling app terminated: pid={pid}");
+    tracing::debug!("Handling app terminated: pid={pid}");
 
     // Find all windows for this PID
     let window_ids: Vec<u32> = state.get_windows_for_pid(pid).iter().map(|w| w.id).collect();
 
     if window_ids.is_empty() {
-        log::debug!("No windows to remove for pid {pid}");
+        tracing::debug!("No windows to remove for pid {pid}");
         return HashSet::new();
     }
 
     let count = window_ids.len();
-    log::debug!("Removing {count} windows for pid {pid}");
+    tracing::debug!("Removing {count} windows for pid {pid}");
 
     // Invalidate cache entries for this app (efficient bulk removal)
     get_window_cache().invalidate_app(pid);
@@ -102,7 +102,7 @@ pub fn on_app_terminated(state: &mut TilingState, pid: i32) -> HashSet<Uuid> {
 /// Marks all windows belonging to this application as hidden.
 /// Hidden windows are excluded from layout calculations.
 pub fn on_app_hidden(state: &mut TilingState, pid: i32) {
-    log::debug!("Handling app hidden: pid={pid}");
+    tracing::debug!("Handling app hidden: pid={pid}");
 
     // Find all windows for this PID and mark as hidden
     let window_ids: Vec<u32> = state.get_windows_for_pid(pid).iter().map(|w| w.id).collect();
@@ -118,7 +118,7 @@ pub fn on_app_hidden(state: &mut TilingState, pid: i32) {
 ///
 /// Marks all windows belonging to this application as visible.
 pub fn on_app_shown(state: &mut TilingState, pid: i32) {
-    log::debug!("Handling app shown: pid={pid}");
+    tracing::debug!("Handling app shown: pid={pid}");
 
     // Find all windows for this PID and mark as visible
     let window_ids: Vec<u32> = state.get_windows_for_pid(pid).iter().map(|w| w.id).collect();
@@ -134,7 +134,7 @@ pub fn on_app_shown(state: &mut TilingState, pid: i32) {
 ///
 /// This is informational - focus changes happen via window focus events.
 pub fn on_app_activated(state: &mut TilingState, pid: i32) {
-    log::debug!("Handling app activated: pid={pid}");
+    tracing::debug!("Handling app activated: pid={pid}");
 
     // Nothing specific to do - focus will be handled by window focus events
     let _ = state;

@@ -15,12 +15,12 @@ use crate::modules::tiling::state::{Rect, TilingState};
 pub fn on_cycle_focus(state: &mut TilingState, direction: CycleDirection) {
     let focus = state.get_focus_state();
     let Some(workspace_id) = focus.focused_workspace_id else {
-        log::debug!("cycle_focus: no focused workspace");
+        tracing::debug!("cycle_focus: no focused workspace");
         return;
     };
 
     let Some(workspace) = state.get_workspace(workspace_id) else {
-        log::debug!("cycle_focus: workspace {workspace_id} not found");
+        tracing::debug!("cycle_focus: workspace {workspace_id} not found");
         return;
     };
 
@@ -33,7 +33,7 @@ pub fn on_cycle_focus(state: &mut TilingState, direction: CycleDirection) {
         .collect();
 
     if layoutable.is_empty() {
-        log::debug!("cycle_focus: no layoutable windows");
+        tracing::debug!("cycle_focus: no layoutable windows");
         return;
     }
 
@@ -69,7 +69,7 @@ pub fn on_cycle_focus(state: &mut TilingState, direction: CycleDirection) {
         });
     }
 
-    log::debug!("Cycled focus to window {next_window_id} ({direction:?})");
+    tracing::debug!("Cycled focus to window {next_window_id} ({direction:?})");
 
     // Notify subscriber to actually focus the window
     if let Some(handle) = get_subscriber_handle() {
@@ -88,7 +88,7 @@ pub fn on_cycle_focus(state: &mut TilingState, direction: CycleDirection) {
 ///
 /// Supports both spatial directions (up/down/left/right) and cycling (next/previous).
 pub fn on_focus_window(state: &mut TilingState, direction: FocusDirection) {
-    log::debug!("on_focus_window called with direction={direction:?}");
+    tracing::debug!("on_focus_window called with direction={direction:?}");
 
     // For next/previous, delegate to cycle_focus
     if !direction.is_spatial() {
@@ -104,17 +104,17 @@ pub fn on_focus_window(state: &mut TilingState, direction: FocusDirection) {
     // Spatial focus (up/down/left/right)
     let focus = state.get_focus_state();
     let Some(workspace_id) = focus.focused_workspace_id else {
-        log::debug!("focus_window: no focused workspace in state");
+        tracing::debug!("focus_window: no focused workspace in state");
         return;
     };
 
     let Some(focused_window_id) = focus.focused_window_id else {
-        log::debug!("focus_window: no focused window in state");
+        tracing::debug!("focus_window: no focused window in state");
         return;
     };
 
     let Some(workspace) = state.get_workspace(workspace_id) else {
-        log::debug!("focus_window: workspace {workspace_id} not found");
+        tracing::debug!("focus_window: workspace {workspace_id} not found");
         return;
     };
 
@@ -127,13 +127,13 @@ pub fn on_focus_window(state: &mut TilingState, direction: FocusDirection) {
         .collect();
 
     if layoutable.len() < 2 {
-        log::debug!("focus_window: need at least 2 windows for spatial focus");
+        tracing::debug!("focus_window: need at least 2 windows for spatial focus");
         return;
     }
 
     // Get current window's frame
     let Some(from_window) = state.get_window(focused_window_id) else {
-        log::debug!("focus_window: focused window {focused_window_id} not found in state");
+        tracing::debug!("focus_window: focused window {focused_window_id} not found in state");
         return;
     };
 
@@ -153,7 +153,7 @@ pub fn on_focus_window(state: &mut TilingState, direction: FocusDirection) {
             });
         }
 
-        log::debug!("Focused window {target_window_id} ({direction:?})");
+        tracing::debug!("Focused window {target_window_id} ({direction:?})");
 
         // Notify subscriber about focus change
         if let Some(handle) = get_subscriber_handle() {
@@ -163,7 +163,7 @@ pub fn on_focus_window(state: &mut TilingState, direction: FocusDirection) {
         // Actually focus the window via AX API
         let _ = crate::modules::tiling::effects::window_ops::focus_window(target_window_id);
     } else {
-        log::debug!("focus_window: no window found in direction {direction:?}");
+        tracing::debug!("focus_window: no window found in direction {direction:?}");
     }
 }
 
@@ -177,17 +177,17 @@ pub fn on_focus_window(state: &mut TilingState, direction: FocusDirection) {
 pub fn on_swap_window_in_direction(state: &mut TilingState, direction: FocusDirection) {
     let focus = state.get_focus_state();
     let Some(workspace_id) = focus.focused_workspace_id else {
-        log::debug!("swap_in_direction: no focused workspace");
+        tracing::debug!("swap_in_direction: no focused workspace");
         return;
     };
 
     let Some(focused_window_id) = focus.focused_window_id else {
-        log::debug!("swap_in_direction: no focused window");
+        tracing::debug!("swap_in_direction: no focused window");
         return;
     };
 
     let Some(workspace) = state.get_workspace(workspace_id) else {
-        log::debug!("swap_in_direction: workspace {workspace_id} not found");
+        tracing::debug!("swap_in_direction: workspace {workspace_id} not found");
         return;
     };
 
@@ -201,13 +201,13 @@ pub fn on_swap_window_in_direction(state: &mut TilingState, direction: FocusDire
         .collect();
 
     if layoutable.len() < 2 {
-        log::debug!("swap_in_direction: need at least 2 windows to swap");
+        tracing::debug!("swap_in_direction: need at least 2 windows to swap");
         return;
     }
 
     // Check if focused window is layoutable
     if !layoutable.contains(&focused_window_id) {
-        log::debug!("swap_in_direction: focused window is not layoutable");
+        tracing::debug!("swap_in_direction: focused window is not layoutable");
         return;
     }
 
@@ -236,7 +236,7 @@ pub fn on_swap_window_in_direction(state: &mut TilingState, direction: FocusDire
     };
 
     let Some(target_window_id) = target_id else {
-        log::debug!("swap_in_direction: no target found in direction {direction:?}");
+        tracing::debug!("swap_in_direction: no target found in direction {direction:?}");
         return;
     };
 
@@ -256,7 +256,7 @@ pub fn on_swap_window_in_direction(state: &mut TilingState, direction: FocusDire
         }
     });
 
-    log::debug!("Swapped windows {focused_window_id} <-> {target_window_id} ({direction:?})");
+    tracing::debug!("Swapped windows {focused_window_id} <-> {target_window_id} ({direction:?})");
 
     // Notify subscriber to recalculate layout
     if let Some(handle) = get_subscriber_handle() {

@@ -323,7 +323,7 @@ impl WallpaperManager {
 
                 let next_index = manager.select_next_index();
                 if let Err(err) = manager.set_wallpaper_at_index(next_index) {
-                    eprintln!("stache: wallpaper timer error: {err}");
+                    tracing::warn!(error = %err, "wallpaper timer failed to set wallpaper");
                 }
             }
         });
@@ -360,19 +360,17 @@ pub fn setup() {
     let manager = match WallpaperManager::new(config) {
         Ok(m) => Arc::new(m),
         Err(err) => {
-            eprintln!("stache: warning: failed to create wallpaper manager: {err}");
+            tracing::warn!(error = %err, "failed to create wallpaper manager");
             return;
         }
     };
 
     // Store in global
     if MANAGER.set(manager).is_err() {
-        eprintln!("stache: warning: wallpaper manager already initialized");
+        tracing::warn!("wallpaper manager already initialized");
     } else {
-        println!(
-            "stache: wallpaper manager initialized with {} wallpapers",
-            get_manager().map_or(0, |m| m.wallpapers.len())
-        );
+        let count = get_manager().map_or(0, |m| m.wallpapers.len());
+        tracing::info!(count, "wallpaper manager initialized");
     }
 }
 
@@ -390,7 +388,7 @@ pub fn init() {
     // Set initial wallpaper (only in release builds to avoid slow dev startup)
     #[cfg(not(debug_assertions))]
     if let Err(err) = manager.set_initial_wallpaper() {
-        eprintln!("stache: warning: failed to set initial wallpaper: {err}");
+        tracing::warn!(error = %err, "failed to set initial wallpaper");
         return;
     }
 

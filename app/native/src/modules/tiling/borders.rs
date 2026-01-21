@@ -309,18 +309,18 @@ pub fn init() -> bool {
     let config = get_config();
 
     if !config.tiling.borders.is_enabled() {
-        log::debug!("tiling: borders disabled in config");
+        tracing::debug!("tiling: borders disabled in config");
         return true;
     }
 
     if !is_available() {
-        log::warn!("tiling: JankyBorders not found");
+        tracing::warn!("tiling: JankyBorders not found");
         return false;
     }
 
     // Connect via Mach IPC
     if connect_mach() {
-        log::debug!("tiling: connected to JankyBorders via Mach IPC");
+        tracing::debug!("tiling: connected to JankyBorders via Mach IPC");
     }
 
     // Build initial command with all settings
@@ -354,10 +354,10 @@ pub fn init() -> bool {
     *get_last_command().lock() = String::new();
 
     if send_command(&command) {
-        log::debug!("tiling: borders initialized");
+        tracing::debug!("tiling: borders initialized");
         true
     } else {
-        log::warn!("tiling: failed to initialize borders");
+        tracing::warn!("tiling: failed to initialize borders");
         false
     }
 }

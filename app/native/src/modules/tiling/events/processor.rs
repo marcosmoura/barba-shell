@@ -125,7 +125,7 @@ impl EventProcessor {
             if let Some(batch) = batches.get_mut(&screen_id) {
                 let old_rate = batch.refresh_rate;
                 batch.refresh_rate = refresh_rate.clamp(MIN_REFRESH_RATE, MAX_REFRESH_RATE);
-                log::debug!(
+                tracing::debug!(
                     "Updated screen {} refresh rate: {} Hz → {} Hz",
                     screen_id,
                     old_rate,
@@ -136,7 +136,7 @@ impl EventProcessor {
         }
 
         let batch = ScreenBatch::new(screen_id, refresh_rate);
-        log::debug!(
+        tracing::debug!(
             "Registered screen {} with refresh rate {} Hz (batch interval {:?})",
             screen_id,
             batch.refresh_rate,
@@ -174,7 +174,7 @@ impl EventProcessor {
                 let _ = self.actor_handle.send(StateMessage::BatchedGeometryUpdates(updates));
             }
 
-            log::debug!("Unregistered screen {screen_id}");
+            tracing::debug!("Unregistered screen {screen_id}");
         }
 
         // Update default screen if needed
@@ -210,7 +210,7 @@ impl EventProcessor {
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_err()
         {
-            log::warn!("EventProcessor already running");
+            tracing::warn!("EventProcessor already running");
             return;
         }
 
@@ -219,7 +219,7 @@ impl EventProcessor {
             self.start_screen_timer(screen_id);
         }
 
-        log::debug!("EventProcessor started");
+        tracing::debug!("EventProcessor started");
     }
 
     /// Start the timer for a specific screen.
@@ -286,10 +286,10 @@ impl EventProcessor {
                 batch.timer_running.store(false, Ordering::SeqCst);
             }
 
-            log::trace!("Batch timer stopped for screen {screen_id}");
+            tracing::trace!("Batch timer stopped for screen {screen_id}");
         });
 
-        log::trace!("Batch timer started for screen {screen_id} ({interval:?})");
+        tracing::trace!("Batch timer started for screen {screen_id} ({interval:?})");
     }
 
     /// Stop the batch flush timers.
@@ -304,7 +304,7 @@ impl EventProcessor {
             }
         }
 
-        log::debug!("EventProcessor stopped");
+        tracing::debug!("EventProcessor stopped");
     }
 
     /// Check if the processor is running.
@@ -318,7 +318,7 @@ impl EventProcessor {
     /// Dispatch a window created event immediately.
     pub fn on_window_created(&self, info: WindowCreatedInfo) {
         let window_id = info.window_id;
-        log::trace!("Window created: {window_id:?}");
+        tracing::trace!("Window created: {window_id:?}");
 
         // Track this window for destroy detection
         self.pid_windows.lock().entry(info.pid).or_default().insert(info.window_id);
@@ -330,7 +330,7 @@ impl EventProcessor {
     ///
     /// Also removes any pending geometry updates for this window.
     pub fn on_window_destroyed(&self, window_id: u32) {
-        log::debug!("tiling: processor.on_window_destroyed called for window_id={window_id}");
+        tracing::debug!("tiling: processor.on_window_destroyed called for window_id={window_id}");
 
         // Remove from window-screen mapping
         let screen_id = self.window_screen_map.remove(&window_id).map(|(_, id)| id);
@@ -350,7 +350,9 @@ impl EventProcessor {
             }
         }
 
-        log::debug!("tiling: sending WindowDestroyed message to actor for window_id={window_id}");
+        tracing::debug!(
+            "tiling: sending WindowDestroyed message to actor for window_id={window_id}"
+        );
         let _ = self.actor_handle.send(StateMessage::WindowDestroyed { window_id });
     }
 
@@ -359,7 +361,7 @@ impl EventProcessor {
     /// Uses the window element cache to efficiently check which tracked
     /// windows are no longer valid, avoiding expensive AX enumeration.
     pub fn on_window_destroyed_for_pid(&self, pid: i32) {
-        log::debug!("tiling: on_window_destroyed_for_pid called for pid={pid}");
+        tracing::debug!("tiling: on_window_destroyed_for_pid called for pid={pid}");
 
         // Get tracked windows for this PID from our local cache
         let tracked_window_ids: Vec<u32> = {
@@ -367,10 +369,10 @@ impl EventProcessor {
             pid_windows.get(&pid).map(|s| s.iter().copied().collect()).unwrap_or_default()
         };
 
-        log::debug!("tiling: tracked windows for pid={pid}: {tracked_window_ids:?}");
+        tracing::debug!("tiling: tracked windows for pid={pid}: {tracked_window_ids:?}");
 
         if tracked_window_ids.is_empty() {
-            log::debug!("tiling: no tracked windows for pid={pid}, nothing to do");
+            tracing::debug!("tiling: no tracked windows for pid={pid}, nothing to do");
             return;
         }
 
@@ -379,45 +381,45 @@ impl EventProcessor {
         let cache = crate::modules::tiling::effects::get_window_cache();
         let invalid_windows = cache.find_invalid_windows(&tracked_window_ids);
 
-        log::debug!(
+        tracing::debug!(
             "tiling: found {} invalid windows for pid={pid}",
             invalid_windows.len()
         );
 
         // Destroy invalid windows
         for window_id in invalid_windows {
-            log::debug!("tiling: window {window_id} no longer valid for pid={pid}, destroying");
+            tracing::debug!("tiling: window {window_id} no longer valid for pid={pid}, destroying");
             self.on_window_destroyed(window_id);
         }
     }
 
     /// Dispatch a window focused event immediately.
     pub fn on_window_focused(&self, window_id: u32) {
-        log::debug!("tiling: Window focused event received: {window_id}");
+        tracing::debug!("tiling: Window focused event received: {window_id}");
         let _ = self.actor_handle.send(StateMessage::WindowFocused { window_id });
     }
 
     /// Dispatch a window unfocused event immediately.
     pub fn on_window_unfocused(&self, window_id: u32) {
-        log::trace!("Window unfocused: {window_id}");
+        tracing::trace!("Window unfocused: {window_id}");
         let _ = self.actor_handle.send(StateMessage::WindowUnfocused { window_id });
     }
 
     /// Dispatch a window minimized event immediately.
     pub fn on_window_minimized(&self, window_id: u32, minimized: bool) {
-        log::trace!("Window minimized: {window_id} = {minimized}");
+        tracing::trace!("Window minimized: {window_id} = {minimized}");
         let _ = self.actor_handle.send(StateMessage::WindowMinimized { window_id, minimized });
     }
 
     /// Dispatch a window title changed event immediately.
     pub fn on_window_title_changed(&self, window_id: u32, title: String) {
-        log::trace!("Window title changed: {window_id} = '{title}'");
+        tracing::trace!("Window title changed: {window_id} = '{title}'");
         let _ = self.actor_handle.send(StateMessage::WindowTitleChanged { window_id, title });
     }
 
     /// Dispatch a window fullscreen changed event immediately.
     pub fn on_window_fullscreen_changed(&self, window_id: u32, fullscreen: bool) {
-        log::trace!("Window fullscreen changed: {window_id} = {fullscreen}");
+        tracing::trace!("Window fullscreen changed: {window_id} = {fullscreen}");
         let _ = self
             .actor_handle
             .send(StateMessage::WindowFullscreenChanged { window_id, fullscreen });
@@ -510,31 +512,31 @@ impl EventProcessor {
 
     /// Dispatch an app launched event.
     pub fn on_app_launched(&self, pid: i32, bundle_id: String, name: String) {
-        log::trace!("App launched: pid={pid}, bundle={bundle_id}");
+        tracing::trace!("App launched: pid={pid}, bundle={bundle_id}");
         let _ = self.actor_handle.send(StateMessage::AppLaunched { pid, bundle_id, name });
     }
 
     /// Dispatch an app terminated event.
     pub fn on_app_terminated(&self, pid: i32) {
-        log::trace!("App terminated: pid={pid}");
+        tracing::trace!("App terminated: pid={pid}");
         let _ = self.actor_handle.send(StateMessage::AppTerminated { pid });
     }
 
     /// Dispatch an app hidden event.
     pub fn on_app_hidden(&self, pid: i32) {
-        log::trace!("App hidden: pid={pid}");
+        tracing::trace!("App hidden: pid={pid}");
         let _ = self.actor_handle.send(StateMessage::AppHidden { pid });
     }
 
     /// Dispatch an app shown event.
     pub fn on_app_shown(&self, pid: i32) {
-        log::trace!("App shown: pid={pid}");
+        tracing::trace!("App shown: pid={pid}");
         let _ = self.actor_handle.send(StateMessage::AppShown { pid });
     }
 
     /// Dispatch an app activated event.
     pub fn on_app_activated(&self, pid: i32) {
-        log::trace!("App activated: pid={pid}");
+        tracing::trace!("App activated: pid={pid}");
         let _ = self.actor_handle.send(StateMessage::AppActivated { pid });
     }
 
@@ -547,7 +549,7 @@ impl EventProcessor {
     /// NOTE: This sends `ScreensChanged` which requires the actor to call macOS APIs.
     /// Prefer `on_set_screens` with pre-detected screens when possible.
     pub fn on_screens_changed(&self) {
-        log::trace!("Screens changed");
+        tracing::trace!("Screens changed");
         let _ = self.actor_handle.send(StateMessage::ScreensChanged);
     }
 
@@ -555,7 +557,7 @@ impl EventProcessor {
     ///
     /// This is the preferred method when screens have been detected on the main thread.
     pub fn on_set_screens(&self, screens: Vec<crate::modules::tiling::state::Screen>) {
-        log::trace!("Setting {} screens", screens.len());
+        tracing::trace!("Setting {} screens", screens.len());
         let _ = self.actor_handle.send(StateMessage::SetScreens { screens });
     }
 
@@ -608,7 +610,7 @@ impl EventProcessor {
         for (window_id, pid) in windows {
             pid_windows.entry(*pid).or_default().insert(*window_id);
         }
-        log::debug!(
+        tracing::debug!(
             "tiling: tracked {} windows for destroy detection ({} PIDs)",
             windows.len(),
             pid_windows.len()
@@ -643,7 +645,7 @@ pub fn get_display_refresh_rate(display_id: u32) -> f64 {
 
     let display = CGDisplay::new(display_id);
     let Some(mode) = display.display_mode() else {
-        log::debug!("Display {display_id} has no display mode, using default");
+        tracing::debug!("Display {display_id} has no display mode, using default");
         return DEFAULT_REFRESH_RATE;
     };
 
@@ -651,11 +653,11 @@ pub fn get_display_refresh_rate(display_id: u32) -> f64 {
 
     // Some displays (especially LCD panels) report 0
     if rate <= 0.0 {
-        log::debug!("Display {display_id} reported 0 Hz refresh rate, using default");
+        tracing::debug!("Display {display_id} reported 0 Hz refresh rate, using default");
         return DEFAULT_REFRESH_RATE;
     }
 
-    log::debug!("Display {display_id} refresh rate: {rate} Hz");
+    tracing::debug!("Display {display_id} refresh rate: {rate} Hz");
 
     rate
 }

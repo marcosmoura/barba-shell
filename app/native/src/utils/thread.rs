@@ -6,7 +6,7 @@ where F: FnOnce() + Send + 'static {
     let thread_name = format!("stache-{name}");
 
     if let Err(err) = thread::Builder::new().name(thread_name.clone()).spawn(task) {
-        eprintln!("Failed to spawn {thread_name}: {err}");
+        tracing::error!(thread = %thread_name, error = %err, "failed to spawn thread");
     }
 }
 

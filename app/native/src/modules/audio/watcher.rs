@@ -102,9 +102,9 @@ fn handle_output_device_change(config: &ProxyAudioConfig) {
 
     let name = &target.name;
     if set_default_output_device(target.id) {
-        println!("Default output device set to {name}");
+        tracing::info!(device = %name, "default output device changed");
     } else {
-        eprintln!("Failed to set default output device to {name}");
+        tracing::error!(device = %name, "failed to set default output device");
     }
 }
 
@@ -127,9 +127,9 @@ fn handle_input_device_change(config: &ProxyAudioConfig) {
 
     let name = &target.name;
     if set_default_input_device(target.id) {
-        println!("Default input device set to {name}");
+        tracing::info!(device = %name, "default input device changed");
     } else {
-        eprintln!("Failed to set default input device to {name}");
+        tracing::error!(device = %name, "failed to set default input device");
     }
 }
 

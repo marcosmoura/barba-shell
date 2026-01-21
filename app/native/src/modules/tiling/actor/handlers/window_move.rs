@@ -17,13 +17,13 @@ use crate::modules::tiling::state::TilingState;
 /// Move a window to a different workspace.
 pub fn on_move_window_to_workspace(state: &mut TilingState, window_id: u32, workspace_id: Uuid) {
     let Some(window) = state.get_window(window_id) else {
-        log::warn!("move_window: window {window_id} not found");
+        tracing::warn!("move_window: window {window_id} not found");
         return;
     };
 
     let old_workspace_id = window.workspace_id;
     if old_workspace_id == workspace_id {
-        log::debug!("move_window: window {window_id} already in workspace {workspace_id}");
+        tracing::debug!("move_window: window {window_id} already in workspace {workspace_id}");
         return;
     }
 
@@ -52,7 +52,7 @@ pub fn on_move_window_to_workspace(state: &mut TilingState, window_id: u32, work
         w.workspace_id = workspace_id;
     });
 
-    log::debug!("Moved window {window_id} to workspace {workspace_id}");
+    tracing::debug!("Moved window {window_id} to workspace {workspace_id}");
 
     // Notify subscriber to recalculate layouts for both workspaces
     if let Some(handle) = get_subscriber_handle() {
@@ -72,18 +72,18 @@ pub fn on_swap_windows(state: &mut TilingState, window_id_a: u32, window_id_b: u
     }
 
     let Some(window_a) = state.get_window(window_id_a) else {
-        log::warn!("swap_windows: window {window_id_a} not found");
+        tracing::warn!("swap_windows: window {window_id_a} not found");
         return;
     };
 
     let Some(window_b) = state.get_window(window_id_b) else {
-        log::warn!("swap_windows: window {window_id_b} not found");
+        tracing::warn!("swap_windows: window {window_id_b} not found");
         return;
     };
 
     // Windows must be in the same workspace
     if window_a.workspace_id != window_b.workspace_id {
-        log::warn!(
+        tracing::warn!(
             "swap_windows: windows in different workspaces ({} vs {})",
             window_a.workspace_id,
             window_b.workspace_id
@@ -103,7 +103,7 @@ pub fn on_swap_windows(state: &mut TilingState, window_id_a: u32, window_id_b: u
         }
     });
 
-    log::debug!("Swapped windows {window_id_a} <-> {window_id_b}");
+    tracing::debug!("Swapped windows {window_id_a} <-> {window_id_b}");
 
     // Notify subscriber to recalculate layout
     if let Some(handle) = get_subscriber_handle() {
@@ -118,7 +118,7 @@ pub fn on_swap_windows(state: &mut TilingState, window_id_a: u32, window_id_b: u
 /// Toggle floating state for a window.
 pub fn on_toggle_floating(state: &mut TilingState, window_id: u32) {
     let Some(window) = state.get_window(window_id) else {
-        log::warn!("toggle_floating: window {window_id} not found");
+        tracing::warn!("toggle_floating: window {window_id} not found");
         return;
     };
 
@@ -128,7 +128,7 @@ pub fn on_toggle_floating(state: &mut TilingState, window_id: u32) {
         w.is_floating = new_floating;
     });
 
-    log::debug!("Window {window_id} floating = {new_floating}");
+    tracing::debug!("Window {window_id} floating = {new_floating}");
 
     // Notify subscriber about floating change and layout recalculation
     if let Some(handle) = get_subscriber_handle() {
@@ -148,7 +148,7 @@ pub fn on_send_window_to_screen(state: &mut TilingState, target_screen: &TargetS
     // Resolve target screen
     let target_screen_id = resolve_screen(state, target_screen);
     let Some(target_screen_id) = target_screen_id else {
-        log::warn!(
+        tracing::warn!(
             "send_window_to_screen: screen '{}' not found",
             target_screen.as_str()
         );
@@ -158,25 +158,25 @@ pub fn on_send_window_to_screen(state: &mut TilingState, target_screen: &TargetS
     // Get focused window
     let focus = state.get_focus_state();
     let Some(window_id) = focus.focused_window_id else {
-        log::debug!("send_window_to_screen: no focused window");
+        tracing::debug!("send_window_to_screen: no focused window");
         return;
     };
 
     let Some(window) = state.get_window(window_id) else {
-        log::debug!("send_window_to_screen: window {window_id} not found");
+        tracing::debug!("send_window_to_screen: window {window_id} not found");
         return;
     };
 
     // Get current workspace
     let current_workspace_id = window.workspace_id;
     let Some(current_workspace) = state.get_workspace(current_workspace_id) else {
-        log::debug!("send_window_to_screen: workspace not found");
+        tracing::debug!("send_window_to_screen: workspace not found");
         return;
     };
 
     // Don't move if already on target screen
     if current_workspace.screen_id == target_screen_id {
-        log::debug!("send_window_to_screen: window already on target screen");
+        tracing::debug!("send_window_to_screen: window already on target screen");
         return;
     }
 
@@ -188,13 +188,13 @@ pub fn on_send_window_to_screen(state: &mut TilingState, target_screen: &TargetS
         .map(|ws| ws.id);
 
     let Some(target_workspace_id) = target_workspace_id else {
-        log::warn!("send_window_to_screen: no visible workspace on target screen");
+        tracing::warn!("send_window_to_screen: no visible workspace on target screen");
         return;
     };
 
     // Use move_window_to_workspace to do the actual work
     on_move_window_to_workspace(state, window_id, target_workspace_id);
-    log::debug!("Sent window {window_id} to screen '{}'", target_screen.as_str());
+    tracing::debug!("Sent window {window_id} to screen '{}'", target_screen.as_str());
 }
 
 // ============================================================================

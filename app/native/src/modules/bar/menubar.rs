@@ -49,7 +49,7 @@ fn register_menu_bar_visibility_observer(app_handle: AppHandle, window_label: St
     MENU_BAR_VISIBLE.store(initial_state, Ordering::Release);
 
     if let Err(e) = emit_menubar_visibility_event(&app_handle, &window_label, initial_state) {
-        eprintln!("stache: warning: failed to emit initial menubar visibility: {e}");
+        tracing::warn!(error = %e, "failed to emit initial menubar visibility");
     }
 
     // Start polling mechanism to detect menubar visibility changes
@@ -70,12 +70,12 @@ fn start_polling_mechanism(app_handle: AppHandle, window_label: String) {
                         if let Err(e) =
                             emit_menubar_visibility_event(&app_handle, &window_label, visible)
                         {
-                            eprintln!("stache: warning: failed to emit menubar visibility: {e}");
+                            tracing::warn!(error = %e, "failed to emit menubar visibility");
                         }
                     }
                 }
                 Err(e) => {
-                    eprintln!("stache: warning: failed to query menubar visibility: {e}");
+                    tracing::debug!(error = %e, "failed to query menubar visibility");
                 }
             }
         }

@@ -189,7 +189,7 @@ pub fn send_notification(notification: &StacheNotification) -> bool {
         let center: *mut Object = msg_send![class!(NSDistributedNotificationCenter), defaultCenter];
 
         if center.is_null() {
-            eprintln!("stache: failed to get NSDistributedNotificationCenter");
+            tracing::error!("failed to get NSDistributedNotificationCenter");
             return false;
         }
 
@@ -276,7 +276,7 @@ pub fn start_notification_listener() {
         let center: *mut Object = msg_send![class!(NSDistributedNotificationCenter), defaultCenter];
 
         if center.is_null() {
-            eprintln!("stache: failed to get NSDistributedNotificationCenter for listener");
+            tracing::error!("failed to get NSDistributedNotificationCenter for listener");
             return;
         }
 

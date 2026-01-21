@@ -80,7 +80,7 @@ impl AppMonitorAdapter {
     /// This function must be called from the main thread.
     pub fn init(&self) -> bool {
         if self.initialized.swap(true, Ordering::SeqCst) {
-            log::warn!("AppMonitorAdapter already initialized");
+            tracing::warn!("AppMonitorAdapter already initialized");
             return false;
         }
 
@@ -88,7 +88,7 @@ impl AppMonitorAdapter {
             // Get NSWorkspace's shared instance
             let workspace: *mut Object = msg_send![class!(NSWorkspace), sharedWorkspace];
             if workspace.is_null() {
-                log::error!("Failed to get shared workspace");
+                tracing::error!("Failed to get shared workspace");
                 self.initialized.store(false, Ordering::SeqCst);
                 return false;
             }
@@ -96,7 +96,7 @@ impl AppMonitorAdapter {
             // Get the notification center
             let notification_center: *mut Object = msg_send![workspace, notificationCenter];
             if notification_center.is_null() {
-                log::error!("Failed to get workspace notification center");
+                tracing::error!("Failed to get workspace notification center");
                 self.initialized.store(false, Ordering::SeqCst);
                 return false;
             }
@@ -104,7 +104,7 @@ impl AppMonitorAdapter {
             // Create the observer
             let observer = create_workspace_observer();
             if observer.is_null() {
-                log::error!("Failed to create app lifecycle observer");
+                tracing::error!("Failed to create app lifecycle observer");
                 self.initialized.store(false, Ordering::SeqCst);
                 return false;
             }
@@ -130,7 +130,7 @@ impl AppMonitorAdapter {
             ];
         }
 
-        log::debug!("AppMonitorAdapter initialized");
+        tracing::debug!("AppMonitorAdapter initialized");
         true
     }
 
@@ -143,13 +143,13 @@ impl AppMonitorAdapter {
         let bundle_id = bundle_id.unwrap_or_default();
         let name = name.unwrap_or_default();
 
-        log::debug!("App launched: pid={pid}, bundle={bundle_id}, name={name}");
+        tracing::debug!("App launched: pid={pid}, bundle={bundle_id}, name={name}");
 
         // Create AX observer for the new app (must happen on main thread)
         if should_observe_app(&bundle_id, &name)
             && let Err(e) = add_observer_for_pid(pid)
         {
-            log::warn!("Failed to add observer for pid {pid}: {e}");
+            tracing::warn!("Failed to add observer for pid {pid}: {e}");
         }
 
         self.processor.on_app_launched(pid, bundle_id, name);
@@ -157,7 +157,7 @@ impl AppMonitorAdapter {
 
     /// Handles an app termination event.
     fn on_app_terminated(&self, pid: i32, bundle_id: Option<&str>, name: Option<&str>) {
-        log::debug!("App terminated: pid={pid}, bundle={bundle_id:?}, name={name:?}");
+        tracing::debug!("App terminated: pid={pid}, bundle={bundle_id:?}, name={name:?}");
 
         // Remove the AX observer for this app (must happen on main thread)
         remove_observer_for_pid(pid);

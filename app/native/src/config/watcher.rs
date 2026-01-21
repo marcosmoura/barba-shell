@@ -39,7 +39,7 @@ pub fn watch_config_file<R: tauri::Runtime>(app_handle: AppHandle<R>) {
         let mut watcher: RecommendedWatcher = match notify::recommended_watcher(tx) {
             Ok(w) => w,
             Err(err) => {
-                eprintln!("stache: warning: failed to create config watcher: {err}");
+                tracing::warn!(error = %err, "failed to create config watcher");
                 return;
             }
         };
@@ -49,9 +49,11 @@ pub fn watch_config_file<R: tauri::Runtime>(app_handle: AppHandle<R>) {
         let watch_path = config_path.parent().unwrap_or(&config_path);
 
         if let Err(err) = watcher.watch(watch_path, RecursiveMode::NonRecursive) {
-            eprintln!("stache: warning: failed to watch config file: {err}");
+            tracing::warn!(error = %err, path = %watch_path.display(), "failed to watch config file");
             return;
         }
+
+        tracing::debug!(path = %config_path.display(), "watching config file for changes");
 
         // Track last event time for debouncing (None = no previous event)
         #[allow(unused_variables, unused_mut)]
@@ -84,18 +86,19 @@ pub fn watch_config_file<R: tauri::Runtime>(app_handle: AppHandle<R>) {
                     #[cfg(debug_assertions)]
                     {
                         last_event_time = Some(now);
-                        eprintln!(
-                            "stache: config file changed. Restart the app to apply new settings."
+                        tracing::info!(
+                            "config file changed - restart the app to apply new settings"
                         );
                     }
 
                     #[cfg(not(debug_assertions))]
                     {
+                        tracing::info!("config file changed, restarting application");
                         app_handle.restart();
                     }
                 }
                 Ok(Err(err)) => {
-                    eprintln!("stache: warning: config watch error: {err}");
+                    tracing::warn!(error = %err, "config watch error");
                 }
                 Err(_) => {
                     // Channel closed, watcher dropped

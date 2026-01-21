@@ -4,6 +4,8 @@ import { ErrorBoundary } from 'react-error-boundary';
 import { cx } from '@linaria/core';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
+import { queryClientDefaults } from '@/utils/queryClientDefaults';
+
 import { Media } from './Media';
 import { Spaces } from './Spaces';
 import { Status } from './Status';
@@ -12,13 +14,7 @@ import { useBar } from './Bar.state';
 import * as styles from './Bar.styles';
 
 const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      refetchOnReconnect: true,
-      refetchIntervalInBackground: true,
-      retry: true,
-    },
-  },
+  defaultOptions: queryClientDefaults,
 });
 
 const BarContent = memo(() => {

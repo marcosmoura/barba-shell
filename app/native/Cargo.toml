@@ -98,7 +98,6 @@ tabled = { version = "0.20", default-features = false, features = [
 # Tauri and plugins
 tauri = { version = "2.9.5", default-features = false, features = [
     "macos-private-api",
-    "unstable",
     "wry",
 ] }
 tauri-plugin-global-shortcut = "2.3.1"

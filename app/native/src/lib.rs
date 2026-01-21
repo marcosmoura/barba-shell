@@ -78,6 +78,7 @@ pub fn run() {
             bar::components::apps::open_app,
             bar::components::battery::get_battery_info,
             bar::components::cpu::get_cpu_info,
+            bar::components::initial_state::get_initial_state,
             bar::components::keepawake::is_system_awake,
             bar::components::keepawake::toggle_system_awake,
             bar::components::media::get_current_media_info,
@@ -93,7 +94,7 @@ pub fn run() {
             bar::window::get_bar_window_frame,
         ])
         .setup(move |app| {
-            // Make the app not appear in the dock
+            // Make the app not appear in the dock (must be synchronous, first thing)
             if let Err(e) = app.handle().set_activation_policy(tauri::ActivationPolicy::Prohibited)
             {
                 tracing::warn!(error = %e, "failed to set activation policy");
@@ -108,43 +109,80 @@ pub fn run() {
                     .unwrap_or_else(|| utils::ipc_socket::IpcResponse::error("Unknown query"))
             });
 
-            // Initialize Bar components
+            // Initialize Bar (UI-critical, blocks until window is ready)
             tracing::debug!("initializing bar");
             bar::init(app);
 
-            // Initialize Widgets components
+            // Initialize Widgets (UI-critical)
             tracing::debug!("initializing widgets");
             widgets::init(app);
 
-            // Start wallpaper manager
-            tracing::debug!("initializing wallpaper manager");
-            wallpaper::init();
-
-            // Initialize audio device manager
-            tracing::debug!("initializing audio manager");
-            audio::init();
-
-            // Initialize noTunes
-            tracing::debug!("initializing notunes");
-            notunes::init();
-
-            // Initialize hold-to-quit (⌘Q) handler
-            tracing::debug!("initializing cmd-q handler");
-            cmd_q::init(app.handle().clone());
-
-            // Initialize MenuAnywhere
-            tracing::debug!("initializing menu anywhere");
-            menu_anywhere::init(app.handle().clone());
-
-            // Initialize tiling window manager if enabled
+            // Spawn parallel initialization for background modules
+            let handle = app.handle().clone();
             let tiling_config = config::get_config().tiling.clone();
-            if tiling_config.is_enabled() {
-                tracing::info!("tiling window manager enabled, initializing");
-                tiling::init(app.handle().clone());
-                tracing::debug!("tiling initialization complete");
-            }
 
-            tracing::info!("setup complete");
+            tauri::async_runtime::spawn(async move {
+                tracing::debug!("starting parallel background initialization");
+
+                // All these modules are independent - initialize in parallel
+                let results = tokio::join!(
+                    tokio::task::spawn_blocking(|| {
+                        tracing::debug!("initializing wallpaper manager");
+                        wallpaper::init();
+                    }),
+                    tokio::task::spawn_blocking(|| {
+                        tracing::debug!("initializing audio manager");
+                        audio::init();
+                    }),
+                    tokio::task::spawn_blocking(|| {
+                        tracing::debug!("initializing notunes");
+                        notunes::init();
+                    }),
+                    tokio::task::spawn_blocking({
+                        let h = handle.clone();
+                        move || {
+                            tracing::debug!("initializing cmd-q handler");
+                            cmd_q::init(h);
+                        }
+                    }),
+                    tokio::task::spawn_blocking({
+                        let h = handle.clone();
+                        move || {
+                            tracing::debug!("initializing menu anywhere");
+                            menu_anywhere::init(h);
+                        }
+                    }),
+                );
+
+                // Log any panics from spawned tasks
+                let (wallpaper_r, audio_r, notunes_r, cmd_q_r, menu_r) = results;
+                if let Err(e) = wallpaper_r {
+                    tracing::error!("wallpaper init panicked: {e}");
+                }
+                if let Err(e) = audio_r {
+                    tracing::error!("audio init panicked: {e}");
+                }
+                if let Err(e) = notunes_r {
+                    tracing::error!("notunes init panicked: {e}");
+                }
+                if let Err(e) = cmd_q_r {
+                    tracing::error!("cmd_q init panicked: {e}");
+                }
+                if let Err(e) = menu_r {
+                    tracing::error!("menu_anywhere init panicked: {e}");
+                }
+
+                // Initialize tiling window manager if enabled (after other modules)
+                if tiling_config.is_enabled() {
+                    tracing::info!("tiling window manager enabled, initializing");
+                    tiling::init(handle);
+                    tracing::debug!("tiling initialization complete");
+                }
+
+                tracing::info!("background initialization complete");
+            });
+
+            tracing::info!("setup complete (background tasks spawned)");
             Ok(())
         })
         .build(tauri::generate_context!())

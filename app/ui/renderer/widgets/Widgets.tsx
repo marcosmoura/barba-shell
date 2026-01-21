@@ -4,6 +4,7 @@ import { ErrorBoundary } from 'react-error-boundary';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { motion } from 'motion/react';
 
+import { queryClientDefaults } from '@/utils/queryClientDefaults';
 import { resolveModule } from '@/utils/resolveModule';
 
 import { useWidgets } from './Widgets.state';
@@ -14,13 +15,7 @@ const Battery = lazy(() => import('./components/Battery').then(resolveModule('Ba
 const Weather = lazy(() => import('./components/Weather').then(resolveModule('Weather')));
 
 const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      refetchOnReconnect: true,
-      refetchIntervalInBackground: true,
-      retry: true,
-    },
-  },
+  defaultOptions: queryClientDefaults,
 });
 
 const WidgetsContent = memo(() => {

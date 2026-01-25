@@ -48,11 +48,6 @@ dotenvy = "0.15.7"
 # Reactive state management (tiling v2)
 eyeball = { version = "0.8.8", default-features = false }
 eyeball-im = { version = "0.8", default-features = false }
-futures = { version = "0.3.31", default-features = false, features = [
-    "std",
-    "async-await",
-    "executor",
-] }
 image = { version = "0.25.9", default-features = false, features = [
     "jpeg",
     "png",

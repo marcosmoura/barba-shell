@@ -4367,7 +4367,6 @@ dependencies = [
  "dotenvy",
  "eyeball",
  "eyeball-im",
- "futures",
  "image",
  "json_comments",
  "keepawake",

@@ -165,7 +165,6 @@ pub fn run() {
             bar::components::apps::open_app,
             bar::components::battery::get_battery_info,
             bar::components::cpu::get_cpu_info,
-            bar::components::initial_state::get_initial_state,
             bar::components::keepawake::is_system_awake,
             bar::components::keepawake::toggle_system_awake,
             bar::components::media::get_current_media_info,

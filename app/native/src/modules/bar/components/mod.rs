@@ -3,7 +3,6 @@ use tauri::WebviewWindow;
 pub mod apps;
 pub mod battery;
 pub mod cpu;
-pub mod initial_state;
 pub mod keepawake;
 pub mod media;
 pub mod tiling;

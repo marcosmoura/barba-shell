@@ -18,7 +18,7 @@ export const Media = () => {
       className={styles.media}
       as={Button}
       onClick={onMediaClick}
-      data-test-id="media-container"
+      data-testid="media-container"
     >
       {loadedArtwork && <img className={styles.artwork} src={loadedArtwork} alt={media.label} />}
       <Icon {...mediaIconProps} />

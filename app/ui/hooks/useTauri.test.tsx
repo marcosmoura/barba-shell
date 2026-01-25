@@ -1,4 +1,4 @@
-import { Suspense, act } from 'react';
+import { Suspense } from 'react';
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
@@ -238,7 +238,7 @@ describe('useTauri', () => {
       const setQueryDataSpy = vi.spyOn(queryClient, 'setQueryData');
       mockInvoke.mockResolvedValue({ value: 'initial' });
 
-      const { result } = await renderHook(
+      const { result, act } = await renderHook(
         () =>
           useTauri<{ value: string }>({
             queryKey: ['event-update'],
@@ -264,7 +264,7 @@ describe('useTauri', () => {
         | undefined;
       expect(stableCallback).toBeDefined();
 
-      await act(async () => {
+      await act(() => {
         stableCallback?.({ payload: { value: 'from-event' } });
       });
 
@@ -281,7 +281,7 @@ describe('useTauri', () => {
       const setQueryDataSpy = vi.spyOn(queryClient, 'setQueryData');
       mockInvoke.mockResolvedValue({ count: 0 });
 
-      const { result } = await renderHook(
+      const { result, act } = await renderHook(
         () =>
           useTauri<{ count: number }>({
             queryKey: ['transform'],
@@ -310,7 +310,7 @@ describe('useTauri', () => {
         | undefined;
       expect(stableCallback).toBeDefined();
 
-      await act(async () => {
+      await act(() => {
         stableCallback?.({ payload: { raw: 21 } });
       });
 

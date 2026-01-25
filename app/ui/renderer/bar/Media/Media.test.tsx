@@ -16,7 +16,7 @@ describe('Media Component', () => {
     });
 
     await vi.waitFor(() => {
-      expect(container.querySelector('[data-test-id="media-container"]')).toBeNull();
+      expect(container.querySelector('[data-testid="media-container"]')).toBeNull();
     });
 
     queryClient.clear();

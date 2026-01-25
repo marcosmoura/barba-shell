@@ -5,6 +5,18 @@
 import 'vitest-browser-react';
 import { vi } from 'vitest';
 
+// Suppress React act() warnings in vitest-browser-react tests
+// These warnings occur because of async state updates in useLayoutEffect
+// which are expected and handled by vitest-browser-react's retry-ability
+const originalError = console.error;
+console.error = (...args: unknown[]) => {
+  const message = typeof args[0] === 'string' ? args[0] : '';
+  if (message.includes('not wrapped in act(')) {
+    return;
+  }
+  originalError.apply(console, args);
+};
+
 // Default mock implementations for Tauri invoke commands
 const defaultInvokeMocks: Record<string, unknown> = {
   get_current_media_info: {},

@@ -1,9 +1,41 @@
-import { describe, expect, test, vi } from 'vitest';
+import { invoke } from '@tauri-apps/api/core';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { render } from 'vitest-browser-react';
 
 import { createQueryClientWrapper, createTestQueryClient } from '@/tests/utils';
 
 import { Spaces } from './Spaces';
+
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn(),
+}));
+
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn().mockResolvedValue(() => {}),
+  emitTo: vi.fn().mockResolvedValue(undefined),
+}));
+
+const mockInvoke = vi.mocked(invoke);
+
+beforeEach(() => {
+  mockInvoke.mockReset();
+  mockInvoke.mockImplementation((command: string) => {
+    switch (command) {
+      case 'is_tiling_enabled':
+        return Promise.resolve(true);
+      case 'get_tiling_workspaces':
+        return Promise.resolve([{ name: 'terminal' }, { name: 'coding' }]);
+      case 'get_tiling_focused_workspace':
+        return Promise.resolve('terminal');
+      case 'get_tiling_current_workspace_windows':
+        return Promise.resolve([{ appName: 'Ghostty', id: 100, title: 'Ghostty' }]);
+      case 'get_tiling_focused_window':
+        return Promise.resolve({ appName: 'Ghostty', id: 100, title: 'Ghostty' });
+      default:
+        return Promise.resolve(null);
+    }
+  });
+});
 
 const workspaceQueryKey = ['tiling_workspace_data'];
 const appsQueryKey = ['tiling_workspace_apps'];
@@ -24,9 +56,6 @@ const setAppsQueryData = (
   } | null,
 ) => queryClient.setQueryData(appsQueryKey, data);
 
-const getSpacesContainer = (container: HTMLElement) =>
-  container.querySelector('[data-test-id="spaces-container"]');
-
 describe('Spaces Component', () => {
   test('renders spaces container', async () => {
     const queryClient = createTestQueryClient();
@@ -39,13 +68,11 @@ describe('Spaces Component', () => {
       focusedApp: { appName: 'Ghostty', windowId: 100 },
     });
 
-    const { getByTestId } = await render(<Spaces />, {
+    const screen = await render(<Spaces />, {
       wrapper: createQueryClientWrapper(queryClient),
     });
 
-    await vi.waitFor(() => {
-      expect(getByTestId('spaces-container')).toBeDefined();
-    });
+    await expect.element(screen.getByTestId('spaces-container')).toBeVisible();
 
     queryClient.clear();
   });
@@ -57,13 +84,11 @@ describe('Spaces Component', () => {
       appsList: [],
     });
 
-    const { container } = await render(<Spaces />, {
+    const screen = await render(<Spaces />, {
       wrapper: createQueryClientWrapper(queryClient),
     });
 
-    await vi.waitFor(() => {
-      expect(getSpacesContainer(container)).toBeNull();
-    });
+    await expect.element(screen.getByTestId('spaces-container')).not.toBeInTheDocument();
 
     queryClient.clear();
   });
@@ -78,13 +103,11 @@ describe('Spaces Component', () => {
       appsList: [],
     });
 
-    const { container } = await render(<Spaces />, {
+    const screen = await render(<Spaces />, {
       wrapper: createQueryClientWrapper(queryClient),
     });
 
-    await vi.waitFor(() => {
-      expect(getSpacesContainer(container)).toBeNull();
-    });
+    await expect.element(screen.getByTestId('spaces-container')).not.toBeInTheDocument();
 
     queryClient.clear();
   });
@@ -104,8 +127,8 @@ describe('Spaces Component', () => {
       wrapper: createQueryClientWrapper(queryClient),
     });
 
+    // Should render workspace buttons with icons
     await vi.waitFor(() => {
-      // Should render workspace buttons with icons
       const buttons = container.querySelectorAll('button');
       expect(buttons.length).toBeGreaterThanOrEqual(2);
     });
@@ -124,13 +147,11 @@ describe('Spaces Component', () => {
       focusedApp: { appName: 'Visual Studio Code', windowId: 200 },
     });
 
-    const { getByText } = await render(<Spaces />, {
+    const screen = await render(<Spaces />, {
       wrapper: createQueryClientWrapper(queryClient),
     });
 
-    await vi.waitFor(() => {
-      expect(getByText('Visual Studio Code')).toBeDefined();
-    });
+    await expect.element(screen.getByText('Visual Studio Code')).toBeVisible();
 
     queryClient.clear();
   });
@@ -150,14 +171,12 @@ describe('Spaces Component', () => {
       focusedApp: { appName: 'Code', windowId: 100 },
     });
 
-    const { getByText } = await render(<Spaces />, {
+    const screen = await render(<Spaces />, {
       wrapper: createQueryClientWrapper(queryClient),
     });
 
-    await vi.waitFor(() => {
-      // Focused app shows its name
-      expect(getByText('Code')).toBeDefined();
-    });
+    // Focused app shows its name
+    await expect.element(screen.getByText('Code')).toBeVisible();
 
     queryClient.clear();
   });
@@ -172,13 +191,12 @@ describe('Spaces Component', () => {
       appsList: [],
     });
 
-    const { getByTestId, container } = await render(<Spaces />, {
+    const { container } = await render(<Spaces />, {
       wrapper: createQueryClientWrapper(queryClient),
     });
 
+    // Only workspace buttons, no app buttons
     await vi.waitFor(() => {
-      expect(getByTestId('spaces-container')).toBeDefined();
-      // Only workspace buttons, no app buttons
       const buttons = container.querySelectorAll('button');
       expect(buttons.length).toBe(2);
     });

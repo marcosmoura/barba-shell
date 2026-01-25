@@ -8,7 +8,7 @@ import { Weather } from './Weather';
 
 export const Status = () => {
   return (
-    <Stack data-test-id="status-container">
+    <Stack data-testid="status-container">
       <Weather />
       <KeepAwake />
       <Cpu />

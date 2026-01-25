@@ -18,7 +18,7 @@ const SpacesContent = () => {
   }
 
   return (
-    <Stack data-test-id="spaces-container">
+    <Stack data-testid="spaces-container">
       <WorkspaceList
         workspaces={workspaces}
         focusedWorkspace={focusedWorkspace}

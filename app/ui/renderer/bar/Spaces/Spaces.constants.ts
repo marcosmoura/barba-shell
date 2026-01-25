@@ -31,6 +31,7 @@ import {
   ZoomIcon,
 } from '@hugeicons/core-free-icons';
 import type { IconSvgElement } from '@hugeicons/react';
+import { SiTidal } from '@icons-pack/react-simple-icons';
 
 import { motionRaw } from '@/design-system';
 
@@ -72,6 +73,7 @@ const appIcons = {
   Slack: SlackIcon,
   Spotify: SpotifyIcon,
   WhatsApp: WhatsappIcon,
+  TIDAL: SiTidal,
   // WTF? There is a special character in the app name
   '‎WhatsApp': WhatsappIcon,
   Zoom: ZoomIcon,

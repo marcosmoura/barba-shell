@@ -6,3 +6,65 @@ publicHoistPattern:
 allowBuilds:
   esbuild: true
   unrs-resolver: true
+
+overrides:
+  braces: ^3.0.3
+  micromatch: ^4.0.8
+  postcss: ^8.5.15
+  trim: ^1.0.1
+  trim-newlines: ^5.0.0
+  yargs-parser: ^22.0.0
+
+minimumReleaseAgeExclude:
+  - '@oxfmt/binding-android-arm-eabi@0.51.0'
+  - '@oxfmt/binding-android-arm64@0.51.0'
+  - '@oxfmt/binding-darwin-arm64@0.51.0'
+  - '@oxfmt/binding-darwin-x64@0.51.0'
+  - '@oxfmt/binding-freebsd-x64@0.51.0'
+  - '@oxfmt/binding-linux-arm-gnueabihf@0.51.0'
+  - '@oxfmt/binding-linux-arm-musleabihf@0.51.0'
+  - '@oxfmt/binding-linux-arm64-gnu@0.51.0'
+  - '@oxfmt/binding-linux-arm64-musl@0.51.0'
+  - '@oxfmt/binding-linux-ppc64-gnu@0.51.0'
+  - '@oxfmt/binding-linux-riscv64-gnu@0.51.0'
+  - '@oxfmt/binding-linux-riscv64-musl@0.51.0'
+  - '@oxfmt/binding-linux-s390x-gnu@0.51.0'
+  - '@oxfmt/binding-linux-x64-gnu@0.51.0'
+  - '@oxfmt/binding-linux-x64-musl@0.51.0'
+  - '@oxfmt/binding-openharmony-arm64@0.51.0'
+  - '@oxfmt/binding-win32-arm64-msvc@0.51.0'
+  - '@oxfmt/binding-win32-ia32-msvc@0.51.0'
+  - '@oxfmt/binding-win32-x64-msvc@0.51.0'
+  - '@oxlint/binding-android-arm-eabi@1.66.0'
+  - '@oxlint/binding-android-arm64@1.66.0'
+  - '@oxlint/binding-darwin-arm64@1.66.0'
+  - '@oxlint/binding-darwin-x64@1.66.0'
+  - '@oxlint/binding-freebsd-x64@1.66.0'
+  - '@oxlint/binding-linux-arm-gnueabihf@1.66.0'
+  - '@oxlint/binding-linux-arm-musleabihf@1.66.0'
+  - '@oxlint/binding-linux-arm64-gnu@1.66.0'
+  - '@oxlint/binding-linux-arm64-musl@1.66.0'
+  - '@oxlint/binding-linux-ppc64-gnu@1.66.0'
+  - '@oxlint/binding-linux-riscv64-gnu@1.66.0'
+  - '@oxlint/binding-linux-riscv64-musl@1.66.0'
+  - '@oxlint/binding-linux-s390x-gnu@1.66.0'
+  - '@oxlint/binding-linux-x64-gnu@1.66.0'
+  - '@oxlint/binding-linux-x64-musl@1.66.0'
+  - '@oxlint/binding-openharmony-arm64@1.66.0'
+  - '@oxlint/binding-win32-arm64-msvc@1.66.0'
+  - '@oxlint/binding-win32-ia32-msvc@1.66.0'
+  - '@oxlint/binding-win32-x64-msvc@1.66.0'
+  - '@types/node@25.9.1'
+  - '@types/react@19.2.15'
+  - '@typescript/native-preview-darwin-arm64@7.0.0-dev.20260519.1'
+  - '@typescript/native-preview-darwin-x64@7.0.0-dev.20260519.1'
+  - '@typescript/native-preview-linux-arm64@7.0.0-dev.20260519.1'
+  - '@typescript/native-preview-linux-arm@7.0.0-dev.20260519.1'
+  - '@typescript/native-preview-linux-x64@7.0.0-dev.20260519.1'
+  - '@typescript/native-preview-win32-arm64@7.0.0-dev.20260519.1'
+  - '@typescript/native-preview-win32-x64@7.0.0-dev.20260519.1'
+  - '@typescript/native-preview@7.0.0-dev.20260519.1'
+  - oxfmt@0.51.0
+  - oxlint@1.66.0
+  - postcss@8.5.15
+  - stylelint-config-clean-order@8.0.2

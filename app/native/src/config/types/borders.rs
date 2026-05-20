@@ -6,6 +6,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::color::{Rgba, parse_hex_color};
+use super::tiling::EasingType;
 use super::workspaces::WindowRule;
 
 /// Gradient color configuration.
@@ -35,6 +36,16 @@ impl Default for GradientConfig {
     }
 }
 
+/// Animation settings for gradient border colors.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BorderAnimationConfig {
+    /// Duration in milliseconds for one color-swap leg.
+    pub duration: u32,
+    /// Easing function used for each color-swap leg.
+    pub easing: EasingType,
+}
+
 /// Border state configuration - either disabled or with specific settings.
 ///
 /// Can be:
@@ -61,6 +72,9 @@ pub enum BorderStateConfig {
         width: u32,
         /// Gradient configuration.
         gradient: GradientConfig,
+        /// Optional color animation for gradient borders.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        animation: Option<BorderAnimationConfig>,
     },
 
     /// Enabled with glow effect.
@@ -95,6 +109,15 @@ impl BorderStateConfig {
     /// Returns true if this is a glow effect.
     #[must_use]
     pub const fn is_glow(&self) -> bool { matches!(self, Self::GlowColor { .. }) }
+
+    /// Returns animation settings for gradient borders.
+    #[must_use]
+    pub const fn animation(&self) -> Option<&BorderAnimationConfig> {
+        match self {
+            Self::GradientColor { animation, .. } => animation.as_ref(),
+            Self::Disabled(_) | Self::SolidColor { .. } | Self::GlowColor { .. } => None,
+        }
+    }
 
     /// Returns the primary color string (for solid, glow, or gradient's from color).
     #[must_use]
@@ -388,5 +411,49 @@ mod tests {
         assert!(!config.is_enabled());
         assert!(config.focused.is_enabled());
         assert!(config.unfocused.is_enabled());
+    }
+
+    #[test]
+    fn test_gradient_border_deserializes_animation() {
+        let json = r##"{
+            "width": 6,
+            "gradient": {
+                "from": "#cba6f7",
+                "to": "#a6e3a1",
+                "angle": 180
+            },
+            "animation": {
+                "duration": 350,
+                "easing": "ease-out-expo"
+            }
+        }"##;
+
+        let config: BorderStateConfig = serde_json::from_str(json).unwrap();
+
+        let Some(animation) = config.animation() else {
+            panic!("expected gradient animation config");
+        };
+        assert_eq!(animation.duration, 350);
+        assert_eq!(
+            animation.easing,
+            crate::config::types::tiling::EasingType::EaseOutExpo
+        );
+    }
+
+    #[test]
+    fn test_solid_border_ignores_animation() {
+        let json = r##"{
+            "width": 6,
+            "color": "#cba6f7",
+            "animation": {
+                "duration": 350,
+                "easing": "ease-out-expo"
+            }
+        }"##;
+
+        let config: BorderStateConfig = serde_json::from_str(json).unwrap();
+
+        assert!(matches!(config, BorderStateConfig::SolidColor { .. }));
+        assert!(config.animation().is_none());
     }
 }

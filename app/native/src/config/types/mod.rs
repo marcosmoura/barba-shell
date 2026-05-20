@@ -25,7 +25,9 @@ pub use audio::{AudioDeviceDependency, AudioDevicePriority, MatchStrategy, Proxy
 // Bar types
 pub use bar::{BarConfig, WeatherConfig, WeatherProvider};
 // Border types
-pub use borders::{BorderColor, BorderStateConfig, BordersConfig, GradientConfig};
+pub use borders::{
+    BorderAnimationConfig, BorderColor, BorderStateConfig, BordersConfig, GradientConfig,
+};
 // Color types
 pub use color::{Rgba, parse_color, parse_hex_color, parse_rgba_color};
 // Command Quit types

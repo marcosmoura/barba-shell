@@ -15,10 +15,10 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 
 pub use types::{
-    AnimationConfig, AudioDeviceDependency, AudioDevicePriority, BarConfig, BorderColor,
-    BorderStateConfig, BordersConfig, CommandQuitConfig, ConfigError, DimensionValue, EasingType,
-    FloatingConfig, FloatingPreset, GapValue, GapsConfig, GapsConfigValue, GradientConfig,
-    LayoutType, MasterConfig, MasterPosition, MatchStrategy, MenuAnywhereConfig,
+    AnimationConfig, AudioDeviceDependency, AudioDevicePriority, BarConfig, BorderAnimationConfig,
+    BorderColor, BorderStateConfig, BordersConfig, CommandQuitConfig, ConfigError, DimensionValue,
+    EasingType, FloatingConfig, FloatingPreset, GapValue, GapsConfig, GapsConfigValue,
+    GradientConfig, LayoutType, MasterConfig, MasterPosition, MatchStrategy, MenuAnywhereConfig,
     MenuAnywhereModifier, MenuAnywhereMouseButton, NoTunesConfig, ProxyAudioConfig, Rgba,
     ShortcutCommands, StacheConfig, TargetMusicApp, TilingConfig, WallpaperConfig, WallpaperMode,
     WeatherConfig, WindowRule, WorkspaceConfig, config_paths, load_config as load_config_default,

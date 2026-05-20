@@ -165,7 +165,22 @@ fn run_animation(
             start = Instant::now();
         }
 
-        std::thread::sleep(frame_duration);
+        match wait_for_animation_command(rx, frame_duration) {
+            Ok(Some(cmd)) => return Some(cmd),
+            Ok(None) => {}
+            Err(_) => return None,
+        }
+    }
+}
+
+fn wait_for_animation_command(
+    rx: &mpsc::Receiver<AnimationCommand>,
+    frame_duration: Duration,
+) -> Result<Option<AnimationCommand>, mpsc::RecvTimeoutError> {
+    match rx.recv_timeout(frame_duration) {
+        Ok(cmd) => Ok(Some(cmd)),
+        Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
+        Err(err @ mpsc::RecvTimeoutError::Disconnected) => Err(err),
     }
 }
 
@@ -876,5 +891,23 @@ mod tests {
 
         assert!(!sent);
         assert_ne!(*get_last_command().lock(), expected_key);
+    }
+
+    #[test]
+    fn test_animation_wait_returns_queued_command_before_next_frame() {
+        let (tx, rx) = mpsc::channel();
+        tx.send(AnimationCommand::Update {
+            args: vec!["active_color=0xFFFF0000".to_string()],
+            animation: None,
+        })
+        .unwrap();
+
+        let command = wait_for_animation_command(&rx, Duration::from_secs(1))
+            .expect("channel should stay connected")
+            .expect("queued command should be returned");
+
+        let AnimationCommand::Update { args, animation } = command;
+        assert_eq!(args, vec!["active_color=0xFFFF0000".to_string()]);
+        assert!(animation.is_none());
     }
 }

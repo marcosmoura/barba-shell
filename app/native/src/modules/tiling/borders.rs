@@ -15,11 +15,18 @@
 use std::ffi::CString;
 use std::process::Command;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 
 use crate::config::types::tiling::LayoutType as ConfigLayoutType;
-use crate::config::{BorderColor, BorderStateConfig, Rgba, get_config, parse_hex_color};
+use crate::config::{
+    BorderAnimationConfig, BorderColor, BorderStateConfig, GradientConfig, Rgba, get_config,
+    parse_hex_color,
+};
+use crate::modules::tiling::effects::animation::{apply_easing, lerp};
 use crate::modules::tiling::rules::{SKIP_TILING_APP_NAMES, SKIP_TILING_BUNDLE_IDS};
 use crate::modules::tiling::state::LayoutType;
 
@@ -39,6 +46,11 @@ static LAST_COMMAND: OnceLock<Mutex<String>> = OnceLock::new();
 
 /// Mach port for IPC communication.
 static MACH_PORT: OnceLock<Mutex<Option<u32>>> = OnceLock::new();
+
+static ANIMATION_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+#[allow(dead_code)]
+fn stop_animation() { ANIMATION_GENERATION.fetch_add(1, Ordering::SeqCst); }
 
 fn get_last_command() -> &'static Mutex<String> {
     LAST_COMMAND.get_or_init(|| Mutex::new(String::new()))
@@ -194,10 +206,36 @@ fn rgba_to_hex(rgba: &Rgba) -> String {
     format!("0x{a:02X}{r:02X}{g:02X}{b:02X}")
 }
 
+fn lerp_rgba(from: &Rgba, to: &Rgba, progress: f64) -> Rgba {
+    Rgba {
+        r: lerp(from.r, to.r, progress),
+        g: lerp(from.g, to.g, progress),
+        b: lerp(from.b, to.b, progress),
+        a: lerp(from.a, to.a, progress),
+    }
+}
+
 /// Converts a hex color string to `JankyBorders` format.
 fn hex_to_janky(hex: &str) -> Option<String> {
     let rgba = parse_hex_color(hex).ok()?;
     Some(rgba_to_hex(&rgba))
+}
+
+fn gradient_to_janky(from_hex: &str, to_hex: &str, angle: f64) -> String {
+    let angle = ((angle % 360.0) + 360.0) % 360.0;
+    if (0.0..90.0).contains(&angle) || (180.0 < angle && angle < 270.0) {
+        format!("gradient(top_right={from_hex},bottom_left={to_hex})")
+    } else {
+        format!("gradient(top_left={from_hex},bottom_right={to_hex})")
+    }
+}
+
+fn animated_gradient_color(from: &Rgba, to: &Rgba, angle: f64, progress: f64) -> Option<String> {
+    let animated_from = lerp_rgba(from, to, progress);
+    let animated_to = lerp_rgba(to, from, progress);
+    let from_hex = rgba_to_hex(&animated_from);
+    let to_hex = rgba_to_hex(&animated_to);
+    Some(gradient_to_janky(&from_hex, &to_hex, angle))
 }
 
 /// Converts a `BorderColor` to `JankyBorders` color string.
@@ -208,13 +246,7 @@ fn border_color_to_janky(color: &BorderColor) -> Option<String> {
             let from_hex = hex_to_janky(from)?;
             let to_hex = hex_to_janky(to)?;
             let angle = angle.unwrap_or(135.0);
-            let angle = ((angle % 360.0) + 360.0) % 360.0;
-
-            if (0.0..90.0).contains(&angle) || (180.0..270.0).contains(&angle) {
-                Some(format!("gradient(top_right={from_hex},bottom_left={to_hex})"))
-            } else {
-                Some(format!("gradient(top_left={from_hex},bottom_right={to_hex})"))
-            }
+            Some(gradient_to_janky(&from_hex, &to_hex, angle))
         }
         BorderColor::Glow(hex) => {
             let janky_hex = hex_to_janky(hex)?;
@@ -278,6 +310,51 @@ fn send_command(args: &[String]) -> bool {
         .args(args)
         .output()
         .is_ok_and(|output| output.status.success())
+}
+
+#[allow(dead_code)]
+fn start_gradient_animation(
+    gradient: GradientConfig,
+    animation: BorderAnimationConfig,
+    generation: u64,
+) {
+    let Ok(from) = parse_hex_color(&gradient.from) else {
+        return;
+    };
+    let Ok(to) = parse_hex_color(&gradient.to) else {
+        return;
+    };
+
+    let duration = Duration::from_millis(u64::from(animation.duration.max(16)));
+    let frame_duration = Duration::from_millis(16);
+    let angle = gradient.angle;
+
+    thread::spawn(move || {
+        let mut forward = true;
+        let mut start = Instant::now();
+
+        loop {
+            if ANIMATION_GENERATION.load(Ordering::SeqCst) != generation {
+                break;
+            }
+
+            let raw_progress = (start.elapsed().as_secs_f64() / duration.as_secs_f64()).min(1.0);
+            let eased = apply_easing(raw_progress, animation.easing);
+            let progress = if forward { eased } else { 1.0 - eased };
+
+            if let Some(active_color) = animated_gradient_color(&from, &to, angle, progress) {
+                let args = vec![format!("active_color={active_color}")];
+                let _ = send_command(&args);
+            }
+
+            if raw_progress >= 1.0 {
+                forward = !forward;
+                start = Instant::now();
+            }
+
+            thread::sleep(frame_duration);
+        }
+    });
 }
 
 /// Builds the blacklist string for `JankyBorders`.
@@ -457,6 +534,32 @@ mod tests {
     fn test_hex_to_janky() {
         assert_eq!(hex_to_janky("#FF0000"), Some("0xFFFF0000".to_string()));
         assert_eq!(hex_to_janky("#00FF00"), Some("0xFF00FF00".to_string()));
+    }
+
+    #[test]
+    fn test_lerp_rgba_midpoint() {
+        let from = Rgba { r: 1.0, g: 0.0, b: 0.0, a: 1.0 };
+        let to = Rgba { r: 0.0, g: 0.0, b: 1.0, a: 1.0 };
+
+        let color = lerp_rgba(&from, &to, 0.5);
+
+        assert!((color.r - 0.5).abs() < f64::EPSILON);
+        assert!((color.g - 0.0).abs() < f64::EPSILON);
+        assert!((color.b - 0.5).abs() < f64::EPSILON);
+        assert!((color.a - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_gradient_color_string_uses_interpolated_from_and_to() {
+        let from = Rgba { r: 1.0, g: 0.0, b: 0.0, a: 1.0 };
+        let to = Rgba { r: 0.0, g: 0.0, b: 1.0, a: 1.0 };
+
+        let color = animated_gradient_color(&from, &to, 180.0, 0.5);
+
+        assert_eq!(
+            color,
+            Some("gradient(top_left=0xFF800080,bottom_right=0xFF800080)".to_string())
+        );
     }
 
     #[test]

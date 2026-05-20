@@ -367,11 +367,15 @@ impl EffectSubscriber {
 
             SubscriberNotification::FloatingChanged { window_id, floating } => {
                 self.handle_floating_changed(window_id, floating);
+                let focused_window_id = self.state.focus.focused_window_id;
+                self.refresh_active_border(focused_window_id).await;
                 Vec::new()
             }
 
             SubscriberNotification::WorkspaceLayoutChanged { workspace_id, layout } => {
                 self.handle_workspace_layout_changed(workspace_id, layout);
+                let focused_window_id = self.state.focus.focused_window_id;
+                self.refresh_active_border(focused_window_id).await;
                 Vec::new()
             }
 
@@ -454,26 +458,8 @@ impl EffectSubscriber {
             return Vec::new(); // No actual change
         };
 
-        // Query workspace layout and window floating state for borders
-        let mut layout = LayoutType::Floating;
-        let mut is_window_floating = false;
-
-        if let Ok(QueryResult::Workspace(Some(workspace))) =
-            self.actor_handle.query(StateQuery::GetFocusedWorkspace).await
-        {
-            layout = workspace.layout;
-        }
-
-        // Check if the focused window itself is floating
-        if let Some(window_id) = new_focus.focused_window_id
-            && let Ok(QueryResult::Window(Some(window))) =
-                self.actor_handle.query(StateQuery::GetWindow { id: window_id }).await
-        {
-            is_window_floating = window.is_floating;
-        }
-
-        // Update borders via the simple API
-        crate::modules::tiling::borders::on_focus_changed(layout, is_window_floating);
+        let (layout, is_window_floating) =
+            self.refresh_active_border(new_focus.focused_window_id).await;
 
         // Generate effects for other systems (not borders - handled above)
         let is_monocle = layout == LayoutType::Monocle;
@@ -606,6 +592,10 @@ impl EffectSubscriber {
     /// This should be called after `initialize()` to set up `JankyBorders`
     /// with the correct active color for the current state.
     async fn apply_initial_border_colors(&self) {
+        self.refresh_active_border(self.state.focus.focused_window_id).await;
+    }
+
+    async fn refresh_active_border(&self, focused_window_id: Option<u32>) -> (LayoutType, bool) {
         let mut layout = LayoutType::Floating;
         let mut is_window_floating = false;
 
@@ -616,7 +606,7 @@ impl EffectSubscriber {
         }
 
         // Check if the focused window itself is floating
-        if let Some(window_id) = self.state.focus.focused_window_id
+        if let Some(window_id) = focused_window_id
             && let Ok(QueryResult::Window(Some(window))) =
                 self.actor_handle.query(StateQuery::GetWindow { id: window_id }).await
         {
@@ -625,6 +615,8 @@ impl EffectSubscriber {
 
         // Update borders via the simple API
         crate::modules::tiling::borders::on_focus_changed(layout, is_window_floating);
+
+        (layout, is_window_floating)
     }
 }
 

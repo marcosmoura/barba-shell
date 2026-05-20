@@ -271,6 +271,22 @@ fn get_border_settings(config: &BorderStateConfig) -> (String, u32) {
     (color, width)
 }
 
+const fn animated_gradient_parts(
+    config: &BorderStateConfig,
+) -> Option<(&GradientConfig, &BorderAnimationConfig)> {
+    match config {
+        BorderStateConfig::GradientColor {
+            gradient,
+            animation: Some(animation),
+            ..
+        } => Some((gradient, animation)),
+        BorderStateConfig::Disabled(_)
+        | BorderStateConfig::SolidColor { .. }
+        | BorderStateConfig::GradientColor { animation: None, .. }
+        | BorderStateConfig::GlowColor { .. } => None,
+    }
+}
+
 // ============================================================================
 // JankyBorders Communication
 // ============================================================================
@@ -502,7 +518,14 @@ pub fn on_focus_changed(layout: LayoutType, is_window_floating: bool) {
         format!("inactive_color={inactive_color}"),
     ];
 
-    send_command(&args);
+    stop_animation();
+    let generation = ANIMATION_GENERATION.load(Ordering::SeqCst);
+
+    if send_command(&args)
+        && let Some((gradient, animation)) = animated_gradient_parts(active_config)
+    {
+        start_gradient_animation(gradient, animation, generation);
+    }
 }
 
 /// Refreshes border configuration.
@@ -560,6 +583,34 @@ mod tests {
             color,
             "gradient(top_left=0xFF800080,bottom_right=0xFF800080)".to_string()
         );
+    }
+
+    #[test]
+    fn test_gradient_with_animation_is_animatable() {
+        let config = BorderStateConfig::GradientColor {
+            width: 6,
+            gradient: GradientConfig {
+                from: "#cba6f7".to_string(),
+                to: "#a6e3a1".to_string(),
+                angle: 180.0,
+            },
+            animation: Some(BorderAnimationConfig {
+                duration: 350,
+                easing: crate::config::EasingType::EaseOutExpo,
+            }),
+        };
+
+        assert!(animated_gradient_parts(&config).is_some());
+    }
+
+    #[test]
+    fn test_solid_color_is_not_animatable() {
+        let config = BorderStateConfig::SolidColor {
+            width: 6,
+            color: "#cba6f7".to_string(),
+        };
+
+        assert!(animated_gradient_parts(&config).is_none());
     }
 
     #[test]

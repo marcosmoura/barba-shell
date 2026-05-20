@@ -204,8 +204,12 @@ unsafe extern "C" {
 const KERN_SUCCESS: i32 = 0;
 const TASK_BOOTSTRAP_PORT: i32 = 4;
 const MACH_SEND_MSG: i32 = 1;
-const MACH_MSG_TIMEOUT_NONE: u32 = 0;
 const MACH_PORT_NULL: u32 = 0;
+
+/// Timeout (ms) for animation-frame Mach sends. When the borders daemon's
+/// receive queue backs up, a short timeout prevents the animation runner
+/// thread from blocking indefinitely and keeps focus changes responsive.
+const MACH_SEND_TIMEOUT_MS: u32 = 100;
 
 #[repr(C, packed)]
 struct MachMessage {
@@ -314,11 +318,13 @@ fn send_mach(args: &[String]) -> bool {
             msg.header.size,
             0,
             MACH_PORT_NULL,
-            MACH_MSG_TIMEOUT_NONE,
+            MACH_SEND_TIMEOUT_MS,
             MACH_PORT_NULL,
         )
     };
 
+    // If the queue is full, `mach_msg` returns MACH_SEND_TIMED_OUT quickly
+    // instead of blocking indefinitely.  The caller simply skips the frame.
     result == 0
 }
 

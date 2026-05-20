@@ -13,6 +13,7 @@
 //! - Batches all settings into a single call
 
 use std::ffi::CString;
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -29,6 +30,7 @@ use crate::config::{
 use crate::modules::tiling::effects::animation::{apply_easing, lerp};
 use crate::modules::tiling::rules::{SKIP_TILING_APP_NAMES, SKIP_TILING_BUNDLE_IDS};
 use crate::modules::tiling::state::LayoutType;
+use crate::platform::command::resolve_binary;
 
 // ============================================================================
 // Constants
@@ -85,6 +87,7 @@ fn encode_mach_args(args: &[String]) -> Vec<u8> {
 #[link(name = "System", kind = "dylib")]
 unsafe extern "C" {
     fn bootstrap_look_up(bp: u32, service_name: *const i8, sp: *mut u32) -> i32;
+    fn task_get_special_port(task: u32, which_port: i32, special_port: *mut u32) -> i32;
     fn mach_msg(
         msg: *mut MachMessage,
         option: i32,
@@ -94,9 +97,11 @@ unsafe extern "C" {
         timeout: u32,
         notify: u32,
     ) -> i32;
+    static mach_task_self_: u32;
 }
 
-const BOOTSTRAP_PORT: u32 = 0;
+const KERN_SUCCESS: i32 = 0;
+const TASK_BOOTSTRAP_PORT: i32 = 4;
 const MACH_SEND_MSG: i32 = 1;
 const MACH_MSG_TIMEOUT_NONE: u32 = 0;
 const MACH_PORT_NULL: u32 = 0;
@@ -126,11 +131,24 @@ struct MachMsgBody {
 #[repr(C)]
 struct MachMsgOolDescriptor {
     address: *const u8,
+    size: u32,
     deallocate: u8,
     copy: u8,
     pad1: u8,
     type_: u8,
-    size: u32,
+}
+
+fn get_bootstrap_port() -> Option<u32> {
+    let mut bootstrap_port = 0;
+    let task = unsafe { mach_task_self_ };
+    let result =
+        unsafe { task_get_special_port(task, TASK_BOOTSTRAP_PORT, &raw mut bootstrap_port) };
+
+    if result == KERN_SUCCESS && bootstrap_port != 0 {
+        Some(bootstrap_port)
+    } else {
+        None
+    }
 }
 
 /// Connects to `JankyBorders` via Mach IPC.
@@ -138,9 +156,12 @@ fn connect_mach() -> bool {
     let Ok(service) = CString::new(JANKY_BORDERS_SERVICE) else {
         return false;
     };
+    let Some(bootstrap_port) = get_bootstrap_port() else {
+        return false;
+    };
 
     let mut port: u32 = 0;
-    let result = unsafe { bootstrap_look_up(BOOTSTRAP_PORT, service.as_ptr(), &raw mut port) };
+    let result = unsafe { bootstrap_look_up(bootstrap_port, service.as_ptr(), &raw mut port) };
 
     if result == 0 && port != 0 {
         *get_mach_port().lock() = Some(port);
@@ -176,12 +197,12 @@ fn send_mach(args: &[String]) -> bool {
         body: MachMsgBody { descriptor_count: 1 },
         descriptor: MachMsgOolDescriptor {
             address: data.as_ptr(),
+            #[allow(clippy::cast_possible_truncation)]
+            size: data.len() as u32,
             deallocate: 0,
             copy: MACH_MSG_VIRTUAL_COPY,
             pad1: 0,
             type_: MACH_MSG_OOL_DESCRIPTOR,
-            #[allow(clippy::cast_possible_truncation)]
-            size: data.len() as u32,
         },
     };
 
@@ -311,40 +332,64 @@ const fn animated_gradient_parts(
 // ============================================================================
 
 /// Checks if `JankyBorders` is available.
-fn is_available() -> bool {
-    Command::new("which")
-        .arg("borders")
+fn is_available() -> bool { is_available_with_resolver(resolve_binary) }
+
+fn is_available_with_resolver(resolve: impl FnOnce(&str) -> Result<PathBuf, String>) -> bool {
+    resolve("borders").is_ok()
+}
+
+fn resolve_borders_binary() -> Option<PathBuf> { resolve_binary("borders").ok() }
+
+fn send_cli(args: &[String]) -> bool {
+    let Some(binary) = resolve_borders_binary() else {
+        return false;
+    };
+
+    Command::new(binary)
+        .args(args)
         .output()
         .is_ok_and(|output| output.status.success())
 }
 
 /// Sends arguments to `JankyBorders` (with deduplication).
 fn send_command(args: &[String]) -> bool {
+    send_command_with(args, send_mach, connect_mach, send_cli)
+}
+
+fn send_command_with(
+    args: &[String],
+    mut send_mach_fn: impl FnMut(&[String]) -> bool,
+    mut connect_mach_fn: impl FnMut() -> bool,
+    mut send_cli_fn: impl FnMut(&[String]) -> bool,
+) -> bool {
     let key = command_key(args);
 
     // Check if command is the same as last time
     {
-        let mut last = get_last_command().lock();
+        let last = get_last_command().lock();
         if *last == key {
             return true; // Already sent this exact command
         }
-        *last = key;
     }
 
     // Try Mach IPC first
-    if send_mach(args) {
+    if send_mach_fn(args) {
+        *get_last_command().lock() = key;
         return true;
     }
 
-    if connect_mach() && send_mach(args) {
+    if connect_mach_fn() && send_mach_fn(args) {
+        *get_last_command().lock() = key;
         return true;
     }
 
     // Fall back to CLI
-    Command::new("borders")
-        .args(args)
-        .output()
-        .is_ok_and(|output| output.status.success())
+    if send_cli_fn(args) {
+        *get_last_command().lock() = key;
+        return true;
+    }
+
+    false
 }
 
 #[allow(dead_code)]
@@ -684,5 +729,42 @@ mod tests {
         let args = vec!["width=6".to_string(), "active_color=0xFFFF0000".to_string()];
 
         assert_eq!(command_key(&args), "width=6\0active_color=0xFFFF0000");
+    }
+
+    #[test]
+    fn test_mach_ool_descriptor_layout_matches_macos() {
+        assert_eq!(std::mem::offset_of!(MachMsgOolDescriptor, address), 0);
+        assert_eq!(std::mem::offset_of!(MachMsgOolDescriptor, size), 8);
+        assert_eq!(std::mem::offset_of!(MachMsgOolDescriptor, deallocate), 12);
+        assert_eq!(std::mem::offset_of!(MachMsgOolDescriptor, copy), 13);
+        assert_eq!(std::mem::offset_of!(MachMsgOolDescriptor, pad1), 14);
+        assert_eq!(std::mem::offset_of!(MachMsgOolDescriptor, type_), 15);
+        assert_eq!(std::mem::size_of::<MachMsgOolDescriptor>(), 16);
+    }
+
+    #[test]
+    fn test_is_available_uses_binary_resolver() {
+        assert!(is_available_with_resolver(|binary| {
+            assert_eq!(binary, "borders");
+            Ok(std::path::PathBuf::from("/opt/homebrew/bin/borders"))
+        }));
+        assert!(!is_available_with_resolver(|_| Err("missing".to_string())));
+    }
+
+    #[test]
+    fn test_failed_commands_are_not_cached() {
+        let args = vec!["active_color=0xFFFF0000".to_string()];
+        let expected_key = command_key(&args);
+        *get_last_command().lock() = String::new();
+
+        let failed = send_command_with(&args, |_| false, || false, |_| false);
+
+        assert!(!failed);
+        assert_ne!(*get_last_command().lock(), expected_key);
+
+        let retried = send_command_with(&args, |_| false, || false, |_| true);
+
+        assert!(retried);
+        assert_eq!(*get_last_command().lock(), expected_key);
     }
 }

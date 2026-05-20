@@ -238,6 +238,21 @@ fn animated_gradient_color(from: &Rgba, to: &Rgba, angle: f64, progress: f64) ->
     gradient_to_janky(&from_hex, &to_hex, angle)
 }
 
+fn animation_frame_args(
+    from: &Rgba,
+    to: &Rgba,
+    angle: f64,
+    progress: f64,
+    generation: u64,
+) -> Option<Vec<String>> {
+    if ANIMATION_GENERATION.load(Ordering::SeqCst) != generation {
+        return None;
+    }
+
+    let active_color = animated_gradient_color(from, to, angle, progress);
+    Some(vec![format!("active_color={active_color}")])
+}
+
 /// Converts a `BorderColor` to `JankyBorders` color string.
 fn border_color_to_janky(color: &BorderColor) -> Option<String> {
     match color {
@@ -359,8 +374,9 @@ fn start_gradient_animation(
             let eased = apply_easing(raw_progress, easing);
             let progress = if forward { eased } else { 1.0 - eased };
 
-            let active_color = animated_gradient_color(&from, &to, angle, progress);
-            let args = vec![format!("active_color={active_color}")];
+            let Some(args) = animation_frame_args(&from, &to, angle, progress, generation) else {
+                break;
+            };
             let _ = send_command(&args);
 
             if raw_progress >= 1.0 {
@@ -583,6 +599,17 @@ mod tests {
             color,
             "gradient(top_left=0xFF800080,bottom_right=0xFF800080)".to_string()
         );
+    }
+
+    #[test]
+    fn test_animation_frame_args_are_not_built_after_cancellation() {
+        let from = Rgba { r: 1.0, g: 0.0, b: 0.0, a: 1.0 };
+        let to = Rgba { r: 0.0, g: 0.0, b: 1.0, a: 1.0 };
+        let generation = ANIMATION_GENERATION.load(Ordering::SeqCst);
+
+        stop_animation();
+
+        assert!(animation_frame_args(&from, &to, 180.0, 0.5, generation).is_none());
     }
 
     #[test]

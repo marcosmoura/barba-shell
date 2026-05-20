@@ -158,7 +158,7 @@ fn run_animation(
         let progress = if forward { eased } else { 1.0 - eased };
 
         let active_color = animated_gradient_color(&from, &to, angle, progress);
-        send_command(&[format!("active_color={active_color}")]);
+        let _ = send_animation_frame(&[format!("active_color={active_color}")]);
 
         if raw_progress >= 1.0 {
             forward = !forward;
@@ -203,13 +203,13 @@ unsafe extern "C" {
 
 const KERN_SUCCESS: i32 = 0;
 const TASK_BOOTSTRAP_PORT: i32 = 4;
-const MACH_SEND_MSG: i32 = 1;
+const MACH_SEND_MSG: i32 = 0x0000_0001;
+const MACH_SEND_TIMEOUT: i32 = 0x0000_0010;
+const MACH_SEND_OPTIONS: i32 = MACH_SEND_MSG | MACH_SEND_TIMEOUT;
 const MACH_PORT_NULL: u32 = 0;
 
-/// Timeout (ms) for animation-frame Mach sends. When the borders daemon's
-/// receive queue backs up, a short timeout prevents the animation runner
-/// thread from blocking indefinitely and keeps focus changes responsive.
-const MACH_SEND_TIMEOUT_MS: u32 = 100;
+const MACH_COMMAND_SEND_TIMEOUT_MS: u32 = 100;
+const MACH_FRAME_SEND_TIMEOUT_MS: u32 = 0;
 
 #[repr(C, packed)]
 struct MachMessage {
@@ -277,7 +277,9 @@ fn connect_mach() -> bool {
 }
 
 /// Sends arguments via Mach IPC.
-fn send_mach(args: &[String]) -> bool {
+fn send_mach(args: &[String]) -> bool { send_mach_with_timeout(args, MACH_COMMAND_SEND_TIMEOUT_MS) }
+
+fn send_mach_with_timeout(args: &[String], timeout_ms: u32) -> bool {
     const MACH_MSGH_BITS_COMPLEX: u32 = 0x8000_0000;
     const MACH_MSGH_BITS_COPY_SEND: u32 = 19;
     const MACH_MSG_OOL_DESCRIPTOR: u8 = 1;
@@ -314,17 +316,16 @@ fn send_mach(args: &[String]) -> bool {
     let result = unsafe {
         mach_msg(
             &raw mut msg,
-            MACH_SEND_MSG,
+            MACH_SEND_OPTIONS,
             msg.header.size,
             0,
             MACH_PORT_NULL,
-            MACH_SEND_TIMEOUT_MS,
+            timeout_ms,
             MACH_PORT_NULL,
         )
     };
 
-    // If the queue is full, `mach_msg` returns MACH_SEND_TIMED_OUT quickly
-    // instead of blocking indefinitely.  The caller simply skips the frame.
+    // The timeout only applies because MACH_SEND_TIMEOUT is set in options.
     result == 0
 }
 
@@ -481,6 +482,33 @@ fn send_command_with(
 
     // Fall back to CLI
     if send_cli_fn(args) {
+        *get_last_command().lock() = key;
+        return true;
+    }
+
+    false
+}
+
+fn send_animation_frame(args: &[String]) -> bool {
+    send_animation_frame_with(args, |args| {
+        send_mach_with_timeout(args, MACH_FRAME_SEND_TIMEOUT_MS)
+    })
+}
+
+fn send_animation_frame_with(
+    args: &[String],
+    mut send_mach_fn: impl FnMut(&[String]) -> bool,
+) -> bool {
+    let key = command_key(args);
+
+    {
+        let last = get_last_command().lock();
+        if *last == key {
+            return true;
+        }
+    }
+
+    if send_mach_fn(args) {
         *get_last_command().lock() = key;
         return true;
     }
@@ -647,31 +675,18 @@ pub fn on_focus_changed(layout: LayoutType, is_window_floating: bool) {
 
     let animation = animated_gradient_parts(active_config).map(|(g, a)| (g.clone(), a.clone()));
 
-    // Clear dedup cache and send the new border command immediately (not
-    // through the animation runner). This way the base color is applied
-    // right away, even if the animation runner is still processing an old
-    // frame or sleeping between frames.
-    *get_last_command().lock() = String::new();
-    if !send_command(&args) {
-        tracing::warn!("tiling: FAILED to send border command on focus change");
-    }
+    init_animation_runner();
 
-    // If there's an animation config, queue it for the animation runner.
-    // The runner will start sending gradient frames from this point.
-    if let Some((gradient, config)) = animation {
-        let anim_args = vec![
-            format!("width={width}"),
-            format!("active_color={active_color}"),
-        ];
-        // Include the full config so the runner knows which gradient to
-        // interpolate.  The initial active_color is the static gradient —
-        // the runner will send interpolated frames over it.
-        if let Some(tx) = get_animation_tx().lock().as_ref() {
-            let _ = tx.send(AnimationCommand::Update {
-                args: anim_args,
-                animation: Some((gradient, config)),
-            });
-        }
+    let tx = get_animation_tx().lock().as_ref().cloned();
+    let command = AnimationCommand::Update { args, animation };
+
+    let Some(tx) = tx else {
+        tracing::warn!("tiling: border animation runner not available");
+        return;
+    };
+
+    if tx.send(command).is_err() {
+        tracing::warn!("tiling: FAILED to queue border command on focus change");
     }
 }
 
@@ -844,5 +859,22 @@ mod tests {
 
         assert!(retried);
         assert_eq!(*get_last_command().lock(), expected_key);
+    }
+
+    #[test]
+    fn test_mach_send_options_apply_timeout() {
+        assert_eq!(MACH_SEND_OPTIONS, MACH_SEND_MSG | MACH_SEND_TIMEOUT);
+    }
+
+    #[test]
+    fn test_animation_frame_failure_is_dropped_without_caching() {
+        let args = vec!["active_color=0xFFFF0000".to_string()];
+        let expected_key = command_key(&args);
+        *get_last_command().lock() = String::new();
+
+        let sent = send_animation_frame_with(&args, |_| false);
+
+        assert!(!sent);
+        assert_ne!(*get_last_command().lock(), expected_key);
     }
 }

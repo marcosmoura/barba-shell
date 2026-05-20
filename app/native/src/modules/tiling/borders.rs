@@ -112,12 +112,12 @@ fn process_update(
     cmd: AnimationCommand,
 ) -> Option<AnimationCommand> {
     let AnimationCommand::Update { args, animation } = cmd;
-    // Bypass dedup cache so the new color is always sent
     *get_last_command().lock() = String::new();
-    send_command(&args);
+    if !send_command(&args) {
+        tracing::warn!("tiling: FAILED to send border command");
+    }
 
     if let Some((gradient, config)) = animation {
-        // If run_animation consumed a command, return it for immediate processing
         run_animation(rx, &gradient, &config)
     } else {
         None

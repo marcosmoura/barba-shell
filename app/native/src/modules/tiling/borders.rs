@@ -267,10 +267,14 @@ fn animated_gradient_color(from: &Rgba, to: &Rgba, angle: f64, progress: f64) ->
 }
 
 fn send_animation_frame(generation: u64, active_color: &str) -> bool {
-    let _guard = get_animation_send_lock().lock();
+    // Lock only long enough to check generation — must not be held during
+    // send_command or concurrent stop_animation() calls will deadlock.
+    {
+        let _guard = get_animation_send_lock().lock();
 
-    if ANIMATION_GENERATION.load(Ordering::SeqCst) != generation {
-        return false;
+        if ANIMATION_GENERATION.load(Ordering::SeqCst) != generation {
+            return false;
+        }
     }
 
     let args = vec![format!("active_color={active_color}")];

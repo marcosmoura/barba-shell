@@ -96,32 +96,47 @@ fn animation_runner(rx: mpsc::Receiver<AnimationCommand>) {
             cmd = newer;
         }
 
-        match cmd {
-            AnimationCommand::Update { args, animation } => {
-                // Bypass dedup cache so the new color is always sent
-                *get_last_command().lock() = String::new();
-
-                send_command(&args);
-
-                if let Some((gradient, config)) = animation {
-                    run_animation(&rx, &gradient, &config);
-                }
-            }
+        // Process the command; if run_animation consumed a newer command
+        // from the channel, keep processing it without re-entering recv().
+        while let Some(next) = process_update(&rx, cmd) {
+            cmd = next;
         }
     }
 }
 
+/// Handles a single `Update` — sends the base config and runs the animation.
+/// Returns `Some(command)` if `run_animation` consumed a newer command
+/// from the channel without it being processed by the outer loop.
+fn process_update(
+    rx: &mpsc::Receiver<AnimationCommand>,
+    cmd: AnimationCommand,
+) -> Option<AnimationCommand> {
+    let AnimationCommand::Update { args, animation } = cmd;
+    // Bypass dedup cache so the new color is always sent
+    *get_last_command().lock() = String::new();
+    send_command(&args);
+
+    if let Some((gradient, config)) = animation {
+        // If run_animation consumed a command, return it for immediate processing
+        run_animation(rx, &gradient, &config)
+    } else {
+        None
+    }
+}
+
 /// Drives a ping-pong gradient animation, polling the channel after each frame.
-/// Returns as soon as a new command arrives.
+/// Returns `Some(command)` if a newer command was consumed from the channel.
 fn run_animation(
     rx: &mpsc::Receiver<AnimationCommand>,
     gradient: &GradientConfig,
     animation: &BorderAnimationConfig,
-) {
+) -> Option<AnimationCommand> {
     let Ok(from) = parse_hex_color(&gradient.from) else {
-        return;
+        return None;
     };
-    let Ok(to) = parse_hex_color(&gradient.to) else { return };
+    let Ok(to) = parse_hex_color(&gradient.to) else {
+        return None;
+    };
 
     let duration = Duration::from_millis(u64::from(animation.duration.max(16)));
     let easing = animation.easing;
@@ -132,9 +147,10 @@ fn run_animation(
     let mut start = Instant::now();
 
     loop {
-        // If a newer command is queued, stop this animation immediately
-        if rx.try_recv().is_ok() {
-            return;
+        // If a newer command is queued, return it so the runner processes it
+        // without blocking on the next recv().
+        if let Ok(cmd) = rx.try_recv() {
+            return Some(cmd);
         }
 
         let raw_progress = (start.elapsed().as_secs_f64() / duration.as_secs_f64()).min(1.0);

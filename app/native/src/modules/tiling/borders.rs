@@ -49,6 +49,18 @@ fn get_mach_port() -> &'static Mutex<Option<u32>> { MACH_PORT.get_or_init(|| Mut
 // Mach IPC
 // ============================================================================
 
+fn command_key(args: &[String]) -> String { args.join("\0") }
+
+fn encode_mach_args(args: &[String]) -> Vec<u8> {
+    let mut payload = Vec::new();
+    for arg in args {
+        payload.extend_from_slice(arg.as_bytes());
+        payload.push(0);
+    }
+    payload.push(0);
+    payload
+}
+
 #[link(name = "System", kind = "dylib")]
 unsafe extern "C" {
     fn bootstrap_look_up(bp: u32, service_name: *const i8, sp: *mut u32) -> i32;
@@ -117,8 +129,8 @@ fn connect_mach() -> bool {
     }
 }
 
-/// Sends a command via Mach IPC.
-fn send_mach(command: &str) -> bool {
+/// Sends arguments via Mach IPC.
+fn send_mach(args: &[String]) -> bool {
     const MACH_MSGH_BITS_COMPLEX: u32 = 0x8000_0000;
     const MACH_MSGH_BITS_COPY_SEND: u32 = 19;
     const MACH_MSG_OOL_DESCRIPTOR: u8 = 1;
@@ -128,7 +140,7 @@ fn send_mach(command: &str) -> bool {
         return false;
     };
 
-    let data = command.as_bytes();
+    let data = encode_mach_args(args);
 
     let mut msg = MachMessage {
         header: MachMsgHeader {
@@ -238,26 +250,31 @@ fn is_available() -> bool {
         .is_ok_and(|output| output.status.success())
 }
 
-/// Sends a command to `JankyBorders` (with deduplication).
-fn send_command(command: &str) -> bool {
+/// Sends arguments to `JankyBorders` (with deduplication).
+fn send_command(args: &[String]) -> bool {
+    let key = command_key(args);
+
     // Check if command is the same as last time
     {
         let mut last = get_last_command().lock();
-        if *last == command {
+        if *last == key {
             return true; // Already sent this exact command
         }
-        *last = command.to_string();
+        *last = key;
     }
 
     // Try Mach IPC first
-    if send_mach(command) {
+    if send_mach(args) {
+        return true;
+    }
+
+    if connect_mach() && send_mach(args) {
         return true;
     }
 
     // Fall back to CLI
-    let args: Vec<&str> = command.split_whitespace().collect();
     Command::new("borders")
-        .args(&args)
+        .args(args)
         .output()
         .is_ok_and(|output| output.status.success())
 }
@@ -344,16 +361,19 @@ pub fn init() -> bool {
     let (active_color, _) = get_border_settings(&borders.focused);
 
     // Build and send the initial command
-    let command = format!(
-        "width={width} style={style_char} hidpi={hidpi} \
-         active_color={active_color} inactive_color={inactive_color} \
-         blacklist={blacklist}"
-    );
+    let args = vec![
+        format!("width={width}"),
+        format!("style={style_char}"),
+        format!("hidpi={hidpi}"),
+        format!("active_color={active_color}"),
+        format!("inactive_color={inactive_color}"),
+        format!("blacklist={blacklist}"),
+    ];
 
     // Clear the cache so first command always sends
     *get_last_command().lock() = String::new();
 
-    if send_command(&command) {
+    if send_command(&args) {
         tracing::debug!("tiling: borders initialized");
         true
     } else {
@@ -395,10 +415,13 @@ pub fn on_focus_changed(layout: LayoutType, is_window_floating: bool) {
     let (inactive_color, _) = get_border_settings(&borders.unfocused);
 
     // Build and send command
-    let command =
-        format!("width={width} active_color={active_color} inactive_color={inactive_color}");
+    let args = vec![
+        format!("width={width}"),
+        format!("active_color={active_color}"),
+        format!("inactive_color={inactive_color}"),
+    ];
 
-    send_command(&command);
+    send_command(&args);
 }
 
 /// Refreshes border configuration.
@@ -438,5 +461,28 @@ mod tests {
         let (color, width) = get_border_settings(&config);
         assert_eq!(color, "0x00000000");
         assert_eq!(width, 0);
+    }
+
+    #[test]
+    fn test_encode_mach_args_uses_nul_separated_argv() {
+        let args = vec![
+            "width=6".to_string(),
+            "active_color=0xFFFF0000".to_string(),
+            "inactive_color=0x00000000".to_string(),
+        ];
+
+        let payload = encode_mach_args(&args);
+
+        assert_eq!(
+            payload,
+            b"width=6\0active_color=0xFFFF0000\0inactive_color=0x00000000\0\0".to_vec()
+        );
+    }
+
+    #[test]
+    fn test_command_key_distinguishes_argument_boundaries() {
+        let args = vec!["width=6".to_string(), "active_color=0xFFFF0000".to_string()];
+
+        assert_eq!(command_key(&args), "width=6\0active_color=0xFFFF0000");
     }
 }

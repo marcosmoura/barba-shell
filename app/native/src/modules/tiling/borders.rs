@@ -641,10 +641,31 @@ pub fn on_focus_changed(layout: LayoutType, is_window_floating: bool) {
 
     let animation = animated_gradient_parts(active_config).map(|(g, a)| (g.clone(), a.clone()));
 
-    // Queue the update — the animation runner will drain any stale commands
-    // and process this one immediately on its single thread.
-    if let Some(tx) = get_animation_tx().lock().as_ref() {
-        let _ = tx.send(AnimationCommand::Update { args, animation });
+    // Clear dedup cache and send the new border command immediately (not
+    // through the animation runner). This way the base color is applied
+    // right away, even if the animation runner is still processing an old
+    // frame or sleeping between frames.
+    *get_last_command().lock() = String::new();
+    if !send_command(&args) {
+        tracing::warn!("tiling: FAILED to send border command on focus change");
+    }
+
+    // If there's an animation config, queue it for the animation runner.
+    // The runner will start sending gradient frames from this point.
+    if let Some((gradient, config)) = animation {
+        let anim_args = vec![
+            format!("width={width}"),
+            format!("active_color={active_color}"),
+        ];
+        // Include the full config so the runner knows which gradient to
+        // interpolate.  The initial active_color is the static gradient —
+        // the runner will send interpolated frames over it.
+        if let Some(tx) = get_animation_tx().lock().as_ref() {
+            let _ = tx.send(AnimationCommand::Update {
+                args: anim_args,
+                animation: Some((gradient, config)),
+            });
+        }
     }
 }
 

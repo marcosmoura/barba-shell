@@ -15,9 +15,7 @@
 use std::ffi::CString;
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::thread;
+use std::sync::{OnceLock, mpsc};
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
@@ -49,22 +47,107 @@ static LAST_COMMAND: OnceLock<Mutex<String>> = OnceLock::new();
 /// Mach port for IPC communication.
 static MACH_PORT: OnceLock<Mutex<Option<u32>>> = OnceLock::new();
 
-static ANIMATION_GENERATION: AtomicU64 = AtomicU64::new(0);
-static ANIMATION_SEND_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-fn stop_animation() {
-    let _guard = get_animation_send_lock().lock();
-    ANIMATION_GENERATION.fetch_add(1, Ordering::SeqCst);
-}
-
 fn get_last_command() -> &'static Mutex<String> {
     LAST_COMMAND.get_or_init(|| Mutex::new(String::new()))
 }
 
 fn get_mach_port() -> &'static Mutex<Option<u32>> { MACH_PORT.get_or_init(|| Mutex::new(None)) }
 
-fn get_animation_send_lock() -> &'static Mutex<()> {
-    ANIMATION_SEND_LOCK.get_or_init(|| Mutex::new(()))
+// ============================================================================
+// Animation Runner (single background thread with command queue)
+// ============================================================================
+
+/// Commands sent to the animation runner thread.
+enum AnimationCommand {
+    Update {
+        args: Vec<String>,
+        animation: Option<(GradientConfig, BorderAnimationConfig)>,
+    },
+}
+
+/// Sender end of the animation command channel.
+static ANIMATION_TX: OnceLock<Mutex<Option<mpsc::Sender<AnimationCommand>>>> = OnceLock::new();
+
+/// Ensures the animation runner thread is started exactly once.
+static ANIMATION_RUNNER_STARTED: OnceLock<bool> = OnceLock::new();
+
+fn get_animation_tx() -> &'static Mutex<Option<mpsc::Sender<AnimationCommand>>> {
+    ANIMATION_TX.get_or_init(|| Mutex::new(None))
+}
+
+/// Spawns the animation runner thread (idempotent).
+pub fn init_animation_runner() {
+    let _ = ANIMATION_RUNNER_STARTED.get_or_init(|| {
+        let (tx, rx) = mpsc::channel();
+        *get_animation_tx().lock() = Some(tx);
+        std::thread::spawn(|| animation_runner(rx));
+        true
+    });
+}
+
+/// Single persistent thread that processes border updates sequentially.
+/// Drains stale commands before applying each new one.
+#[allow(clippy::needless_pass_by_value)]
+fn animation_runner(rx: mpsc::Receiver<AnimationCommand>) {
+    while let Ok(cmd) = rx.recv() {
+        match cmd {
+            AnimationCommand::Update { args, animation } => {
+                // Drain stale commands — only the latest focus/update matters
+                while rx.try_recv().is_ok() {}
+
+                // Bypass dedup cache so the new color is always sent
+                *get_last_command().lock() = String::new();
+
+                send_command(&args);
+
+                if let Some((gradient, config)) = animation {
+                    run_animation(&rx, &gradient, &config);
+                }
+            }
+        }
+    }
+}
+
+/// Drives a ping-pong gradient animation, polling the channel after each frame.
+/// Returns as soon as a new command arrives.
+fn run_animation(
+    rx: &mpsc::Receiver<AnimationCommand>,
+    gradient: &GradientConfig,
+    animation: &BorderAnimationConfig,
+) {
+    let Ok(from) = parse_hex_color(&gradient.from) else {
+        return;
+    };
+    let Ok(to) = parse_hex_color(&gradient.to) else { return };
+
+    let duration = Duration::from_millis(u64::from(animation.duration.max(16)));
+    let easing = animation.easing;
+    let frame_duration = Duration::from_millis(16);
+    let angle = gradient.angle;
+
+    let mut forward = true;
+    let mut start = Instant::now();
+
+    loop {
+        // If a newer command is queued, stop this animation immediately
+        if rx.try_recv().is_ok() {
+            return;
+        }
+
+        let raw_progress = (start.elapsed().as_secs_f64() / duration.as_secs_f64()).min(1.0);
+        let eased = apply_easing(raw_progress, easing);
+        let progress = if forward { eased } else { 1.0 - eased };
+
+        let active_color = animated_gradient_color(&from, &to, angle, progress);
+        send_command(&[format!("active_color={active_color}")]);
+
+        if raw_progress >= 1.0 {
+            forward = !forward;
+            start = Instant::now();
+        }
+
+        std::thread::sleep(frame_duration);
+    }
 }
 
 // ============================================================================
@@ -266,21 +349,6 @@ fn animated_gradient_color(from: &Rgba, to: &Rgba, angle: f64, progress: f64) ->
     gradient_to_janky(&from_hex, &to_hex, angle)
 }
 
-fn send_animation_frame(generation: u64, active_color: &str) -> bool {
-    // Lock only long enough to check generation — must not be held during
-    // send_command or concurrent stop_animation() calls will deadlock.
-    {
-        let _guard = get_animation_send_lock().lock();
-
-        if ANIMATION_GENERATION.load(Ordering::SeqCst) != generation {
-            return false;
-        }
-    }
-
-    let args = vec![format!("active_color={active_color}")];
-    send_command(&args)
-}
-
 /// Converts a `BorderColor` to `JankyBorders` color string.
 fn border_color_to_janky(color: &BorderColor) -> Option<String> {
     match color {
@@ -395,51 +463,6 @@ fn send_command_with(
     false
 }
 
-fn start_gradient_animation(
-    gradient: &GradientConfig,
-    animation: &BorderAnimationConfig,
-    generation: u64,
-) {
-    let Ok(from) = parse_hex_color(&gradient.from) else {
-        return;
-    };
-    let Ok(to) = parse_hex_color(&gradient.to) else {
-        return;
-    };
-
-    let duration = Duration::from_millis(u64::from(animation.duration.max(16)));
-    let easing = animation.easing;
-    let frame_duration = Duration::from_millis(16);
-    let angle = gradient.angle;
-
-    thread::spawn(move || {
-        let mut forward = true;
-        let mut start = Instant::now();
-
-        loop {
-            if ANIMATION_GENERATION.load(Ordering::SeqCst) != generation {
-                break;
-            }
-
-            let raw_progress = (start.elapsed().as_secs_f64() / duration.as_secs_f64()).min(1.0);
-            let eased = apply_easing(raw_progress, easing);
-            let progress = if forward { eased } else { 1.0 - eased };
-
-            let active_color = animated_gradient_color(&from, &to, angle, progress);
-            if !send_animation_frame(generation, &active_color) {
-                break;
-            }
-
-            if raw_progress >= 1.0 {
-                forward = !forward;
-                start = Instant::now();
-            }
-
-            thread::sleep(frame_duration);
-        }
-    });
-}
-
 /// Builds the blacklist string for `JankyBorders`.
 fn build_blacklist() -> String {
     let config = get_config();
@@ -534,13 +557,17 @@ pub fn init() -> bool {
     // Clear the cache so first command always sends
     *get_last_command().lock() = String::new();
 
-    if send_command(&args) {
-        tracing::debug!("tiling: borders initialized");
-        true
-    } else {
+    if !send_command(&args) {
         tracing::warn!("tiling: failed to initialize borders");
-        false
+        return false;
     }
+
+    tracing::debug!("tiling: borders initialized");
+
+    // Start the single animation runner thread
+    init_animation_runner();
+
+    true
 }
 
 /// Updates borders based on workspace layout.
@@ -587,28 +614,18 @@ pub fn on_focus_changed(layout: LayoutType, is_window_floating: bool) {
         animated_gradient_parts(active_config).is_some(),
     );
 
-    // Build and send command
     let args = vec![
         format!("width={width}"),
         format!("active_color={active_color}"),
         format!("inactive_color={inactive_color}"),
     ];
 
-    stop_animation();
-    let generation = ANIMATION_GENERATION.load(Ordering::SeqCst);
+    let animation = animated_gradient_parts(active_config).map(|(g, a)| (g.clone(), a.clone()));
 
-    let sent = send_command(&args);
-    let anim = animated_gradient_parts(active_config);
-
-    tracing::debug!("tiling: sent={sent} will_animate={}", anim.is_some(),);
-
-    if sent && let Some((gradient, animation)) = anim {
-        tracing::debug!(
-            "tiling: starting gradient animation duration={}ms easing={:?}",
-            animation.duration,
-            animation.easing,
-        );
-        start_gradient_animation(gradient, animation, generation);
+    // Queue the update — the animation runner will drain any stale commands
+    // and process this one immediately on its single thread.
+    if let Some(tx) = get_animation_tx().lock().as_ref() {
+        let _ = tx.send(AnimationCommand::Update { args, animation });
     }
 }
 
@@ -677,18 +694,6 @@ mod tests {
             color,
             "gradient(top_right=0xFFFF0000,bottom_left=0xFF0000FF)".to_string()
         );
-    }
-
-    #[test]
-    fn test_animation_frame_is_not_sent_after_cancellation() {
-        let from = Rgba { r: 1.0, g: 0.0, b: 0.0, a: 1.0 };
-        let to = Rgba { r: 0.0, g: 0.0, b: 1.0, a: 1.0 };
-        let generation = ANIMATION_GENERATION.load(Ordering::SeqCst);
-        let active_color = animated_gradient_color(&from, &to, 180.0, 0.5);
-
-        stop_animation();
-
-        assert!(!send_animation_frame(generation, &active_color));
     }
 
     #[test]

@@ -48,15 +48,23 @@ static LAST_COMMAND: OnceLock<Mutex<String>> = OnceLock::new();
 static MACH_PORT: OnceLock<Mutex<Option<u32>>> = OnceLock::new();
 
 static ANIMATION_GENERATION: AtomicU64 = AtomicU64::new(0);
+static ANIMATION_SEND_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[allow(dead_code)]
-fn stop_animation() { ANIMATION_GENERATION.fetch_add(1, Ordering::SeqCst); }
+fn stop_animation() {
+    let _guard = get_animation_send_lock().lock();
+    ANIMATION_GENERATION.fetch_add(1, Ordering::SeqCst);
+}
 
 fn get_last_command() -> &'static Mutex<String> {
     LAST_COMMAND.get_or_init(|| Mutex::new(String::new()))
 }
 
 fn get_mach_port() -> &'static Mutex<Option<u32>> { MACH_PORT.get_or_init(|| Mutex::new(None)) }
+
+fn get_animation_send_lock() -> &'static Mutex<()> {
+    ANIMATION_SEND_LOCK.get_or_init(|| Mutex::new(()))
+}
 
 // ============================================================================
 // Mach IPC
@@ -238,19 +246,15 @@ fn animated_gradient_color(from: &Rgba, to: &Rgba, angle: f64, progress: f64) ->
     gradient_to_janky(&from_hex, &to_hex, angle)
 }
 
-fn animation_frame_args(
-    from: &Rgba,
-    to: &Rgba,
-    angle: f64,
-    progress: f64,
-    generation: u64,
-) -> Option<Vec<String>> {
+fn send_animation_frame(generation: u64, active_color: &str) -> bool {
+    let _guard = get_animation_send_lock().lock();
+
     if ANIMATION_GENERATION.load(Ordering::SeqCst) != generation {
-        return None;
+        return false;
     }
 
-    let active_color = animated_gradient_color(from, to, angle, progress);
-    Some(vec![format!("active_color={active_color}")])
+    let args = vec![format!("active_color={active_color}")];
+    send_command(&args)
 }
 
 /// Converts a `BorderColor` to `JankyBorders` color string.
@@ -374,10 +378,10 @@ fn start_gradient_animation(
             let eased = apply_easing(raw_progress, easing);
             let progress = if forward { eased } else { 1.0 - eased };
 
-            let Some(args) = animation_frame_args(&from, &to, angle, progress, generation) else {
+            let active_color = animated_gradient_color(&from, &to, angle, progress);
+            if !send_animation_frame(generation, &active_color) {
                 break;
-            };
-            let _ = send_command(&args);
+            }
 
             if raw_progress >= 1.0 {
                 forward = !forward;
@@ -602,14 +606,15 @@ mod tests {
     }
 
     #[test]
-    fn test_animation_frame_args_are_not_built_after_cancellation() {
+    fn test_animation_frame_is_not_sent_after_cancellation() {
         let from = Rgba { r: 1.0, g: 0.0, b: 0.0, a: 1.0 };
         let to = Rgba { r: 0.0, g: 0.0, b: 1.0, a: 1.0 };
         let generation = ANIMATION_GENERATION.load(Ordering::SeqCst);
+        let active_color = animated_gradient_color(&from, &to, 180.0, 0.5);
 
         stop_animation();
 
-        assert!(animation_frame_args(&from, &to, 180.0, 0.5, generation).is_none());
+        assert!(!send_animation_frame(generation, &active_color));
     }
 
     #[test]

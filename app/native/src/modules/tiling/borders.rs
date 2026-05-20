@@ -86,15 +86,18 @@ pub fn init_animation_runner() {
 }
 
 /// Single persistent thread that processes border updates sequentially.
-/// Drains stale commands before applying each new one.
+/// Drains stale commands — only the latest focus/update matters.
 #[allow(clippy::needless_pass_by_value)]
 fn animation_runner(rx: mpsc::Receiver<AnimationCommand>) {
-    while let Ok(cmd) = rx.recv() {
+    while let Ok(mut cmd) = rx.recv() {
+        // Drain any newer commands that arrived while we were waiting;
+        // keep the most recent one (last in the drain).
+        while let Ok(newer) = rx.try_recv() {
+            cmd = newer;
+        }
+
         match cmd {
             AnimationCommand::Update { args, animation } => {
-                // Drain stale commands — only the latest focus/update matters
-                while rx.try_recv().is_ok() {}
-
                 // Bypass dedup cache so the new color is always sent
                 *get_last_command().lock() = String::new();
 

@@ -231,7 +231,7 @@ fn hex_to_janky(hex: &str) -> Option<String> {
 
 fn gradient_to_janky(from_hex: &str, to_hex: &str, angle: f64) -> String {
     let angle = ((angle % 360.0) + 360.0) % 360.0;
-    if (0.0..90.0).contains(&angle) || (180.0 < angle && angle < 270.0) {
+    if (0.0..90.0).contains(&angle) || (180.0..270.0).contains(&angle) {
         format!("gradient(top_right={from_hex},bottom_left={to_hex})")
     } else {
         format!("gradient(top_left={from_hex},bottom_right={to_hex})")
@@ -601,7 +601,17 @@ mod tests {
 
         assert_eq!(
             color,
-            "gradient(top_left=0xFF800080,bottom_right=0xFF800080)".to_string()
+            "gradient(top_right=0xFF800080,bottom_left=0xFF800080)".to_string()
+        );
+    }
+
+    #[test]
+    fn test_gradient_to_janky_preserves_180_degree_boundary() {
+        let color = gradient_to_janky("0xFFFF0000", "0xFF0000FF", 180.0);
+
+        assert_eq!(
+            color,
+            "gradient(top_right=0xFFFF0000,bottom_left=0xFF0000FF)".to_string()
         );
     }
 

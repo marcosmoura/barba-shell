@@ -43,9 +43,11 @@ pub struct BorderAnimationConfig {
     /// Duration in milliseconds for one color-swap leg.
     pub duration: u32,
     /// Easing function used for each color-swap leg.
-    #[serde(default)]
+    #[serde(default = "default_border_easing")]
     pub easing: EasingType,
 }
+
+const fn default_border_easing() -> EasingType { EasingType::Linear }
 
 /// Border state configuration - either disabled or with specific settings.
 ///
@@ -540,7 +542,7 @@ mod tests {
     }
 
     #[test]
-    fn test_animation_config_without_easing_defaults_to_ease_out() {
+    fn test_animation_config_without_easing_defaults_to_linear() {
         let json = r##"{
             "width": 6,
             "gradient": {
@@ -561,7 +563,7 @@ mod tests {
         assert_eq!(animation.duration, 350);
         assert_eq!(
             animation.easing,
-            crate::config::types::tiling::EasingType::EaseOut
+            crate::config::types::tiling::EasingType::Linear
         );
     }
 

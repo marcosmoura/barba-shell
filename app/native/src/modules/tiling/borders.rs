@@ -131,11 +131,11 @@ struct MachMsgBody {
 #[repr(C)]
 struct MachMsgOolDescriptor {
     address: *const u8,
-    size: u32,
     deallocate: u8,
     copy: u8,
     pad1: u8,
     type_: u8,
+    size: u32,
 }
 
 fn get_bootstrap_port() -> Option<u32> {
@@ -197,12 +197,12 @@ fn send_mach(args: &[String]) -> bool {
         body: MachMsgBody { descriptor_count: 1 },
         descriptor: MachMsgOolDescriptor {
             address: data.as_ptr(),
-            #[allow(clippy::cast_possible_truncation)]
-            size: data.len() as u32,
             deallocate: 0,
             copy: MACH_MSG_VIRTUAL_COPY,
             pad1: 0,
             type_: MACH_MSG_OOL_DESCRIPTOR,
+            #[allow(clippy::cast_possible_truncation)]
+            size: data.len() as u32,
         },
     };
 
@@ -734,11 +734,11 @@ mod tests {
     #[test]
     fn test_mach_ool_descriptor_layout_matches_macos() {
         assert_eq!(std::mem::offset_of!(MachMsgOolDescriptor, address), 0);
-        assert_eq!(std::mem::offset_of!(MachMsgOolDescriptor, size), 8);
-        assert_eq!(std::mem::offset_of!(MachMsgOolDescriptor, deallocate), 12);
-        assert_eq!(std::mem::offset_of!(MachMsgOolDescriptor, copy), 13);
-        assert_eq!(std::mem::offset_of!(MachMsgOolDescriptor, pad1), 14);
-        assert_eq!(std::mem::offset_of!(MachMsgOolDescriptor, type_), 15);
+        assert_eq!(std::mem::offset_of!(MachMsgOolDescriptor, deallocate), 8);
+        assert_eq!(std::mem::offset_of!(MachMsgOolDescriptor, copy), 9);
+        assert_eq!(std::mem::offset_of!(MachMsgOolDescriptor, pad1), 10);
+        assert_eq!(std::mem::offset_of!(MachMsgOolDescriptor, type_), 11);
+        assert_eq!(std::mem::offset_of!(MachMsgOolDescriptor, size), 12);
         assert_eq!(std::mem::size_of::<MachMsgOolDescriptor>(), 16);
     }
 

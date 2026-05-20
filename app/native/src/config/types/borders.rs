@@ -257,6 +257,30 @@ pub struct BordersConfig {
     /// Border configuration for floating windows.
     pub floating: BorderStateConfig,
 
+    /// Border configuration for windows in dwindle layout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dwindle: Option<BorderStateConfig>,
+
+    /// Border configuration for windows in master layout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub master: Option<BorderStateConfig>,
+
+    /// Border configuration for windows in grid layout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grid: Option<BorderStateConfig>,
+
+    /// Border configuration for windows in split layout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split: Option<BorderStateConfig>,
+
+    /// Border configuration for windows in vertical split layout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split_vertical: Option<BorderStateConfig>,
+
+    /// Border configuration for windows in horizontal split layout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split_horizontal: Option<BorderStateConfig>,
+
     /// Rules for windows that should not have borders.
     /// These rules are checked in addition to the global tiling ignore rules.
     #[serde(default)]
@@ -273,6 +297,12 @@ impl Default for BordersConfig {
             unfocused: BorderStateConfig::default_unfocused(),
             monocle: BorderStateConfig::default_monocle(),
             floating: BorderStateConfig::default_floating(),
+            dwindle: None,
+            master: None,
+            grid: None,
+            split: None,
+            split_vertical: None,
+            split_horizontal: None,
             ignore: Vec::new(),
         }
     }
@@ -294,6 +324,32 @@ impl BordersConfig {
             "floating" => &self.floating,
             _ => &self.unfocused,
         }
+    }
+
+    #[must_use]
+    pub fn focused_state_config(
+        &self,
+        layout: super::tiling::LayoutType,
+        is_window_floating: bool,
+    ) -> &BorderStateConfig {
+        if (layout == super::tiling::LayoutType::Floating || is_window_floating)
+            && self.floating.is_enabled()
+        {
+            return &self.floating;
+        }
+
+        let layout_config = match layout {
+            super::tiling::LayoutType::Monocle => Some(&self.monocle),
+            super::tiling::LayoutType::Dwindle => self.dwindle.as_ref(),
+            super::tiling::LayoutType::Master => self.master.as_ref(),
+            super::tiling::LayoutType::Grid => self.grid.as_ref(),
+            super::tiling::LayoutType::Split => self.split.as_ref(),
+            super::tiling::LayoutType::SplitVertical => self.split_vertical.as_ref(),
+            super::tiling::LayoutType::SplitHorizontal => self.split_horizontal.as_ref(),
+            super::tiling::LayoutType::Floating => Some(&self.floating),
+        };
+
+        layout_config.filter(|config| config.is_enabled()).unwrap_or(&self.focused)
     }
 }
 
@@ -411,6 +467,48 @@ mod tests {
         assert!(!config.is_enabled());
         assert!(config.focused.is_enabled());
         assert!(config.unfocused.is_enabled());
+    }
+
+    #[test]
+    fn test_borders_config_selects_monocle_for_focused_monocle_workspace() {
+        let config = BordersConfig {
+            enabled: true,
+            focused: BorderStateConfig::SolidColor {
+                width: 6,
+                color: "#cba6f7".to_string(),
+            },
+            monocle: BorderStateConfig::SolidColor {
+                width: 6,
+                color: "#f38ba8".to_string(),
+            },
+            ..BordersConfig::default()
+        };
+
+        let selected =
+            config.focused_state_config(crate::config::types::tiling::LayoutType::Monocle, false);
+
+        assert_eq!(selected.color().as_deref(), Some("#f38ba8"));
+    }
+
+    #[test]
+    fn test_borders_config_falls_back_to_focused_for_dwindle() {
+        let config = BordersConfig {
+            enabled: true,
+            focused: BorderStateConfig::SolidColor {
+                width: 6,
+                color: "#cba6f7".to_string(),
+            },
+            monocle: BorderStateConfig::SolidColor {
+                width: 6,
+                color: "#f38ba8".to_string(),
+            },
+            ..BordersConfig::default()
+        };
+
+        let selected =
+            config.focused_state_config(crate::config::types::tiling::LayoutType::Dwindle, false);
+
+        assert_eq!(selected.color().as_deref(), Some("#cba6f7"));
     }
 
     #[test]

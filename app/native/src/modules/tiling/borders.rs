@@ -18,6 +18,7 @@ use std::sync::OnceLock;
 
 use parking_lot::Mutex;
 
+use crate::config::types::tiling::LayoutType as ConfigLayoutType;
 use crate::config::{BorderColor, BorderStateConfig, Rgba, get_config, parse_hex_color};
 use crate::modules::tiling::rules::{SKIP_TILING_APP_NAMES, SKIP_TILING_BUNDLE_IDS};
 use crate::modules::tiling::state::LayoutType;
@@ -399,16 +400,19 @@ pub fn on_focus_changed(layout: LayoutType, is_window_floating: bool) {
         return;
     }
 
-    // Determine which config to use for active color
-    let active_config = if layout == LayoutType::Monocle && borders.monocle.is_enabled() {
-        &borders.monocle
-    } else if (layout == LayoutType::Floating || is_window_floating)
-        && borders.floating.is_enabled()
-    {
-        &borders.floating
-    } else {
-        &borders.focused
+    let config_layout = match layout {
+        LayoutType::Floating => ConfigLayoutType::Floating,
+        LayoutType::Dwindle => ConfigLayoutType::Dwindle,
+        LayoutType::Monocle => ConfigLayoutType::Monocle,
+        LayoutType::Master => ConfigLayoutType::Master,
+        LayoutType::Split => ConfigLayoutType::Split,
+        LayoutType::SplitVertical => ConfigLayoutType::SplitVertical,
+        LayoutType::SplitHorizontal => ConfigLayoutType::SplitHorizontal,
+        LayoutType::Grid => ConfigLayoutType::Grid,
     };
+
+    // Determine which config to use for active color
+    let active_config = borders.focused_state_config(config_layout, is_window_floating);
 
     // Get colors and width
     let (active_color, width) = get_border_settings(active_config);

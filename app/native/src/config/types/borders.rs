@@ -43,6 +43,7 @@ pub struct BorderAnimationConfig {
     /// Duration in milliseconds for one color-swap leg.
     pub duration: u32,
     /// Easing function used for each color-swap leg.
+    #[serde(default)]
     pub easing: EasingType,
 }
 
@@ -535,6 +536,32 @@ mod tests {
         assert_eq!(
             animation.easing,
             crate::config::types::tiling::EasingType::EaseOutExpo
+        );
+    }
+
+    #[test]
+    fn test_animation_config_without_easing_defaults_to_ease_out() {
+        let json = r##"{
+            "width": 6,
+            "gradient": {
+                "from": "#cba6f7",
+                "to": "#a6e3a1",
+                "angle": 180
+            },
+            "animation": {
+                "duration": 350
+            }
+        }"##;
+
+        let config: BorderStateConfig = serde_json::from_str(json).unwrap();
+
+        let Some(animation) = config.animation() else {
+            panic!("expected gradient animation config");
+        };
+        assert_eq!(animation.duration, 350);
+        assert_eq!(
+            animation.easing,
+            crate::config::types::tiling::EasingType::EaseOut
         );
     }
 

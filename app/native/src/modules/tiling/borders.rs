@@ -230,12 +230,12 @@ fn gradient_to_janky(from_hex: &str, to_hex: &str, angle: f64) -> String {
     }
 }
 
-fn animated_gradient_color(from: &Rgba, to: &Rgba, angle: f64, progress: f64) -> Option<String> {
+fn animated_gradient_color(from: &Rgba, to: &Rgba, angle: f64, progress: f64) -> String {
     let animated_from = lerp_rgba(from, to, progress);
     let animated_to = lerp_rgba(to, from, progress);
     let from_hex = rgba_to_hex(&animated_from);
     let to_hex = rgba_to_hex(&animated_to);
-    Some(gradient_to_janky(&from_hex, &to_hex, angle))
+    gradient_to_janky(&from_hex, &to_hex, angle)
 }
 
 /// Converts a `BorderColor` to `JankyBorders` color string.
@@ -314,8 +314,8 @@ fn send_command(args: &[String]) -> bool {
 
 #[allow(dead_code)]
 fn start_gradient_animation(
-    gradient: GradientConfig,
-    animation: BorderAnimationConfig,
+    gradient: &GradientConfig,
+    animation: &BorderAnimationConfig,
     generation: u64,
 ) {
     let Ok(from) = parse_hex_color(&gradient.from) else {
@@ -326,6 +326,7 @@ fn start_gradient_animation(
     };
 
     let duration = Duration::from_millis(u64::from(animation.duration.max(16)));
+    let easing = animation.easing;
     let frame_duration = Duration::from_millis(16);
     let angle = gradient.angle;
 
@@ -339,13 +340,12 @@ fn start_gradient_animation(
             }
 
             let raw_progress = (start.elapsed().as_secs_f64() / duration.as_secs_f64()).min(1.0);
-            let eased = apply_easing(raw_progress, animation.easing);
+            let eased = apply_easing(raw_progress, easing);
             let progress = if forward { eased } else { 1.0 - eased };
 
-            if let Some(active_color) = animated_gradient_color(&from, &to, angle, progress) {
-                let args = vec![format!("active_color={active_color}")];
-                let _ = send_command(&args);
-            }
+            let active_color = animated_gradient_color(&from, &to, angle, progress);
+            let args = vec![format!("active_color={active_color}")];
+            let _ = send_command(&args);
 
             if raw_progress >= 1.0 {
                 forward = !forward;
@@ -558,7 +558,7 @@ mod tests {
 
         assert_eq!(
             color,
-            Some("gradient(top_left=0xFF800080,bottom_right=0xFF800080)".to_string())
+            "gradient(top_left=0xFF800080,bottom_right=0xFF800080)".to_string()
         );
     }
 

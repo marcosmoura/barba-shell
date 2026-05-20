@@ -242,10 +242,11 @@
         },
         "easing": {
           "description": "Easing function used for each color-swap leg.",
-          "$ref": "#/$defs/EasingType"
+          "$ref": "#/$defs/EasingType",
+          "default": "linear"
         }
       },
-      "required": ["duration", "easing"]
+      "required": ["duration"]
     },
     "BorderStateConfig": {
       "description": "Border state configuration - either disabled or with specific settings.\n\nCan be:\n- `false` to disable borders for this state\n- An object with `width` and either `color` (solid), `gradient`, or `glow`",

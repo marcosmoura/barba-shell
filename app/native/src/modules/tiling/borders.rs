@@ -52,7 +52,6 @@ static MACH_PORT: OnceLock<Mutex<Option<u32>>> = OnceLock::new();
 static ANIMATION_GENERATION: AtomicU64 = AtomicU64::new(0);
 static ANIMATION_SEND_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
-#[allow(dead_code)]
 fn stop_animation() {
     let _guard = get_animation_send_lock().lock();
     ANIMATION_GENERATION.fetch_add(1, Ordering::SeqCst);
@@ -106,7 +105,7 @@ const MACH_SEND_MSG: i32 = 1;
 const MACH_MSG_TIMEOUT_NONE: u32 = 0;
 const MACH_PORT_NULL: u32 = 0;
 
-#[repr(C)]
+#[repr(C, packed)]
 struct MachMessage {
     header: MachMsgHeader,
     body: MachMsgBody,
@@ -392,7 +391,6 @@ fn send_command_with(
     false
 }
 
-#[allow(dead_code)]
 fn start_gradient_animation(
     gradient: &GradientConfig,
     animation: &BorderAnimationConfig,
@@ -555,6 +553,7 @@ pub fn on_focus_changed(layout: LayoutType, is_window_floating: bool) {
     let borders = &config.tiling.borders;
 
     if !borders.is_enabled() {
+        tracing::debug!("tiling: borders not enabled, skipping focus change");
         return;
     }
 
@@ -576,6 +575,14 @@ pub fn on_focus_changed(layout: LayoutType, is_window_floating: bool) {
     let (active_color, width) = get_border_settings(active_config);
     let (inactive_color, _) = get_border_settings(&borders.unfocused);
 
+    tracing::debug!(
+        "tiling: focus changed layout={:?} floating={is_window_floating} \
+         config={:?} has_animation={}",
+        config_layout,
+        active_config,
+        animated_gradient_parts(active_config).is_some(),
+    );
+
     // Build and send command
     let args = vec![
         format!("width={width}"),
@@ -586,9 +593,17 @@ pub fn on_focus_changed(layout: LayoutType, is_window_floating: bool) {
     stop_animation();
     let generation = ANIMATION_GENERATION.load(Ordering::SeqCst);
 
-    if send_command(&args)
-        && let Some((gradient, animation)) = animated_gradient_parts(active_config)
-    {
+    let sent = send_command(&args);
+    let anim = animated_gradient_parts(active_config);
+
+    tracing::debug!("tiling: sent={sent} will_animate={}", anim.is_some(),);
+
+    if sent && let Some((gradient, animation)) = anim {
+        tracing::debug!(
+            "tiling: starting gradient animation duration={}ms easing={:?}",
+            animation.duration,
+            animation.easing,
+        );
         start_gradient_animation(gradient, animation, generation);
     }
 }
@@ -740,6 +755,14 @@ mod tests {
         assert_eq!(std::mem::offset_of!(MachMsgOolDescriptor, type_), 11);
         assert_eq!(std::mem::offset_of!(MachMsgOolDescriptor, size), 12);
         assert_eq!(std::mem::size_of::<MachMsgOolDescriptor>(), 16);
+    }
+
+    #[test]
+    fn test_mach_message_size_matches_kernel_expectation() {
+        assert_eq!(std::mem::size_of::<MachMsgHeader>(), 24);
+        assert_eq!(std::mem::size_of::<MachMsgBody>(), 4);
+        // Kernel reads descriptors immediately after body (no alignment padding)
+        assert_eq!(std::mem::size_of::<MachMessage>(), 44);
     }
 
     #[test]

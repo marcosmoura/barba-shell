@@ -315,21 +315,32 @@
       // Default: true
       "hidpi": true,
 
-      // Focused window border (solid color)
+      // Focused window border (animated gradient)
       "focused": {
         "width": 6,
-        "color": "#cba6f7", // Catppuccin Mauve
+        "gradient": {
+          "from": "#cba6f7", // Catppuccin Mauve
+          "to": "#a6e3a1", // Catppuccin Green
+          "angle": 180,
+        },
+        "animation": {
+          "duration": 350,
+          "easing": "ease-out-expo",
+        },
       },
 
       // Unfocused window border
       // Set to `false` to hide borders on unfocused windows
       "unfocused": false,
 
-      // Monocle layout border (glow effect)
-      // Glow creates a soft outer glow around the window
+      // Monocle layout border (static gradient)
       "monocle": {
         "width": 6,
-        "glow": "#89b4fa", // Catppuccin Blue
+        "gradient": {
+          "from": "#f38ba8", // Catppuccin Red
+          "to": "#fab387", // Catppuccin Peach
+          "angle": 180,
+        },
       },
 
       // Floating window border (gradient)

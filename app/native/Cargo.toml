@@ -25,27 +25,19 @@ path = "src/main.rs"
 default = []
 
 [dependencies]
-
-# Utilities
 base64 = { version = "0.22.1", default-features = false, features = ["std"] }
-
-# CLI dependencies
 clap = { version = "4.6.1", features = ["derive", "env", "string"] }
 clap_complete = "4.6.5"
 colored = { version = "3.1.1", default-features = false }
 core-foundation = { version = "0.10.1", default-features = false }
 core-foundation-sys = { version = "0.8.7", default-features = false }
 core-graphics = { version = "0.25.0", default-features = false }
-
-# macOS native APIs
 coreaudio-rs = { version = "0.14.2", default-features = false, features = [
     "audio_toolbox",
 ] }
 dashmap = { version = "6.2.1", default-features = false }
 dirs = "6.0"
 dotenvy = "0.15.7"
-
-# Reactive state management (tiling v2)
 eyeball = { version = "0.8.8", default-features = false }
 eyeball-im = { version = "0.8", default-features = false }
 image = { version = "0.25.10", default-features = false, features = [
@@ -68,7 +60,7 @@ rayon = { version = "1.12.0", default-features = false }
 regex = { version = "1.12.3", default-features = false, features = ["std"] }
 schemars = { version = "1.2.1", default-features = true }
 serde = { version = "1.0.228", default-features = false, features = ["derive"] }
-serde_json = { version = "1.0.149", default-features = false, features = [
+serde_json = { version = "1.0.150", default-features = false, features = [
     "std",
 ] }
 shellexpand = { version = "3.1.2", default-features = false, features = [
@@ -81,7 +73,7 @@ smallvec = { version = "1.15.1", default-features = false, features = [
 ] }
 smc = "0.2.4"
 starship-battery = { version = "0.11.0", default-features = false }
-sysinfo = { version = "0.38.4", default-features = false, features = [
+sysinfo = { version = "0.39.2", default-features = false, features = [
     "system",
 ] }
 tabled = { version = "0.20", default-features = false, features = [
@@ -89,8 +81,6 @@ tabled = { version = "0.20", default-features = false, features = [
     "derive",
     "ansi",
 ] }
-
-# Tauri and plugins
 tauri = { version = "2.11.2", default-features = false, features = [
     "macos-private-api",
     "tray-icon",
@@ -119,7 +109,7 @@ uuid = { version = "1.23.1", default-features = false, features = [
 wallpaper = "3.2"
 
 [build-dependencies]
-serde_json = "1.0.149"
+serde_json = "1.0.150"
 tauri-build = { version = "2.6.2", features = [] }
 
 [lints]

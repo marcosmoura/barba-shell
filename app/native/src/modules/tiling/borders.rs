@@ -37,11 +37,11 @@ use crate::platform::command::resolve_binary;
 /// Mach service name for `JankyBorders`.
 const JANKY_BORDERS_SERVICE: &str = "git.felix.borders";
 
-/// Low-rate animation avoids flooding JankyBorders' FIFO Mach queue.
+/// Low-rate animation avoids flooding `JankyBorders`' FIFO Mach queue.
 const BORDER_ANIMATION_FPS: u64 = 8;
 const BORDER_ANIMATION_FRAME_DURATION_MS: u64 = 1_000 / BORDER_ANIMATION_FPS;
 
-fn animation_frame_duration() -> Duration {
+const fn animation_frame_duration() -> Duration {
     Duration::from_millis(BORDER_ANIMATION_FRAME_DURATION_MS)
 }
 

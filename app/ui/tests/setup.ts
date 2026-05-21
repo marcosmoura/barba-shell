@@ -21,6 +21,7 @@ const defaultInvokeMocks: Record<string, unknown> = {
   get_current_media_info: {},
   get_battery_info: { percentage: 100, state: 'Full' },
   get_cpu_info: { usage: 25, temperature: 50 },
+  get_wifi_info: { status: 'Connected', networkName: 'TestWiFi', signalStrength: -50 },
   is_system_awake: false,
   get_weather_config: {},
   get_tiling_workspaces: [

@@ -40,9 +40,14 @@ const JANKY_BORDERS_SERVICE: &str = "git.felix.borders";
 /// Low-rate animation avoids flooding `JankyBorders`' FIFO Mach queue.
 const BORDER_ANIMATION_FPS: u64 = 8;
 const BORDER_ANIMATION_FRAME_DURATION_MS: u64 = 1_000 / BORDER_ANIMATION_FPS;
+const BORDER_FOCUS_PRIORITY_PAUSE_MS: u64 = 150;
 
 const fn animation_frame_duration() -> Duration {
     Duration::from_millis(BORDER_ANIMATION_FRAME_DURATION_MS)
+}
+
+fn focus_priority_pause_duration() -> Duration {
+    Duration::from_millis(BORDER_FOCUS_PRIORITY_PAUSE_MS)
 }
 
 // ============================================================================
@@ -190,6 +195,14 @@ fn wait_for_animation_command(
         Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
         Err(err @ mpsc::RecvTimeoutError::Disconnected) => Err(err),
     }
+}
+
+fn wait_for_focus_priority_pause(
+    rx: &mpsc::Receiver<AnimationCommand>,
+) -> Option<AnimationCommand> {
+    wait_for_animation_command(rx, focus_priority_pause_duration())
+        .ok()
+        .flatten()
 }
 
 // ============================================================================
@@ -923,5 +936,26 @@ mod tests {
     fn test_animation_frame_duration_is_low_rate() {
         assert_eq!(BORDER_ANIMATION_FPS, 8);
         assert_eq!(animation_frame_duration(), Duration::from_millis(125));
+    }
+
+    #[test]
+    fn test_focus_priority_pause_duration_is_short() {
+        assert_eq!(focus_priority_pause_duration(), Duration::from_millis(150));
+    }
+
+    #[test]
+    fn test_focus_priority_pause_returns_queued_command() {
+        let (tx, rx) = mpsc::channel();
+        tx.send(AnimationCommand::Update {
+            args: vec!["active_color=0xFFFF0000".to_string()],
+            animation: None,
+        })
+        .unwrap();
+
+        let command = wait_for_focus_priority_pause(&rx).expect("queued command should interrupt pause");
+
+        let AnimationCommand::Update { args, animation } = command;
+        assert_eq!(args, vec!["active_color=0xFFFF0000".to_string()]);
+        assert!(animation.is_none());
     }
 }

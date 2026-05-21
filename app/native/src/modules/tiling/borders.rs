@@ -46,7 +46,7 @@ const fn animation_frame_duration() -> Duration {
     Duration::from_millis(BORDER_ANIMATION_FRAME_DURATION_MS)
 }
 
-fn focus_priority_pause_duration() -> Duration {
+const fn focus_priority_pause_duration() -> Duration {
     Duration::from_millis(BORDER_FOCUS_PRIORITY_PAUSE_MS)
 }
 
@@ -153,24 +153,25 @@ fn run_animation(
 
     let duration = Duration::from_millis(u64::from(animation.duration.max(16)));
     let easing = animation.easing;
-    let frame_duration = Duration::from_millis(16);
+    let frame_duration = animation_frame_duration();
     let angle = gradient.angle;
 
     let mut forward = true;
     let mut start = Instant::now();
 
-    loop {
-        // If a newer command is queued, return it so the runner processes it
-        // without blocking on the next recv().
-        if let Ok(cmd) = rx.try_recv() {
-            return Some(cmd);
-        }
+    if let Some(cmd) = wait_for_focus_priority_pause(rx) {
+        return Some(cmd);
+    }
 
+    loop {
         let raw_progress = (start.elapsed().as_secs_f64() / duration.as_secs_f64()).min(1.0);
         let eased = apply_easing(raw_progress, easing);
         let progress = if forward { eased } else { 1.0 - eased };
 
         let active_color = animated_gradient_color(&from, &to, angle, progress);
+        if let Some(cmd) = take_queued_animation_command(rx) {
+            return Some(cmd);
+        }
         let _ = send_animation_frame(&[format!("active_color={active_color}")]);
 
         if raw_progress >= 1.0 {
@@ -200,9 +201,13 @@ fn wait_for_animation_command(
 fn wait_for_focus_priority_pause(
     rx: &mpsc::Receiver<AnimationCommand>,
 ) -> Option<AnimationCommand> {
-    wait_for_animation_command(rx, focus_priority_pause_duration())
-        .ok()
-        .flatten()
+    wait_for_animation_command(rx, focus_priority_pause_duration()).ok().flatten()
+}
+
+fn take_queued_animation_command(
+    rx: &mpsc::Receiver<AnimationCommand>,
+) -> Option<AnimationCommand> {
+    rx.try_recv().ok()
 }
 
 // ============================================================================
@@ -952,7 +957,24 @@ mod tests {
         })
         .unwrap();
 
-        let command = wait_for_focus_priority_pause(&rx).expect("queued command should interrupt pause");
+        let command =
+            wait_for_focus_priority_pause(&rx).expect("queued command should interrupt pause");
+
+        let AnimationCommand::Update { args, animation } = command;
+        assert_eq!(args, vec!["active_color=0xFFFF0000".to_string()]);
+        assert!(animation.is_none());
+    }
+
+    #[test]
+    fn test_take_queued_animation_command_returns_pending_update() {
+        let (tx, rx) = mpsc::channel();
+        tx.send(AnimationCommand::Update {
+            args: vec!["active_color=0xFFFF0000".to_string()],
+            animation: None,
+        })
+        .unwrap();
+
+        let command = take_queued_animation_command(&rx).expect("queued command should be returned");
 
         let AnimationCommand::Update { args, animation } = command;
         assert_eq!(args, vec!["active_color=0xFFFF0000".to_string()]);

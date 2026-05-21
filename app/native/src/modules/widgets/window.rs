@@ -208,13 +208,11 @@ fn get_window_frame(window: &tauri::WebviewWindow) -> WindowFrame {
 
     let position = window
         .outer_position()
-        .map(|p| (f64::from(p.x) / scale, f64::from(p.y) / scale))
-        .unwrap_or((0.0, 0.0));
+        .map_or((0.0, 0.0), |p| (f64::from(p.x) / scale, f64::from(p.y) / scale));
 
-    let size = window
-        .outer_size()
-        .map(|s| (f64::from(s.width) / scale, f64::from(s.height) / scale))
-        .unwrap_or((0.0, 0.0));
+    let size = window.outer_size().map_or((0.0, 0.0), |s| {
+        (f64::from(s.width) / scale, f64::from(s.height) / scale)
+    });
 
     WindowFrame {
         x: position.0,

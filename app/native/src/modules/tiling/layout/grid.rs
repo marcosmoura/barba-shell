@@ -351,7 +351,7 @@ fn layout_master_stack(
         let cell_height = available_height / rows as f64;
 
         // W1: first column, spans all rows
-        let master_height = cell_height * rows as f64 + gaps.inner_v * (rows - 1) as f64;
+        let master_height = gaps.inner_v.mul_add((rows - 1) as f64, cell_height * rows as f64);
         result.push((
             window_ids[0],
             Rect::new(screen_frame.x, screen_frame.y, master_width, master_height),
@@ -400,7 +400,8 @@ fn layout_master_stack(
         let cell_width = available_width / stack_cols as f64;
 
         // W1: first row, spans all columns
-        let master_width = cell_width * stack_cols as f64 + gaps.inner_h * (stack_cols - 1) as f64;
+        let master_width =
+            gaps.inner_h.mul_add((stack_cols - 1) as f64, cell_width * stack_cols as f64);
         result.push((
             window_ids[0],
             Rect::new(screen_frame.x, screen_frame.y, master_width, master_height),
@@ -473,7 +474,8 @@ fn layout_master_3x4(
     let mut result: LayoutResult = SmallVec::with_capacity(count.min(LAYOUT_INLINE_CAP));
 
     // W1: spans master_span rows in the first column
-    let master_height = cell_height * master_span as f64 + gaps.inner_v * (master_span - 1) as f64;
+    let master_height =
+        gaps.inner_v.mul_add((master_span - 1) as f64, cell_height * master_span as f64);
     result.push((
         window_ids[0],
         Rect::new(screen_frame.x, screen_frame.y, master_width, master_height),

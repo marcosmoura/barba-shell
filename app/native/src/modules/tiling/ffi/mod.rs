@@ -53,7 +53,8 @@ macro_rules! ffi_try_opt_v2 {
     };
 }
 
-pub use {ffi_try_opt_v2, ffi_try_v2};
+pub use ffi_try_opt_v2;
+pub use ffi_try_v2;
 
 // ============================================================================
 // Tests

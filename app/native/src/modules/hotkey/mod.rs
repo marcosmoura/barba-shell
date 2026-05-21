@@ -102,7 +102,7 @@ fn collect_planned_shortcuts(
     let mut caps_bindings = HashMap::new();
     let mut sorted_keybindings: Vec<_> = keybindings.iter().collect();
 
-    sorted_keybindings.sort_by(|(left, _), (right, _)| left.cmp(right));
+    sorted_keybindings.sort_by_key(|(left, _)| *left);
 
     for (shortcut_key, commands) in sorted_keybindings {
         let shortcut_str = normalize_shortcut(shortcut_key);

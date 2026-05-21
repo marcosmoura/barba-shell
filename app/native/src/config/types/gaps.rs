@@ -27,7 +27,7 @@ impl DimensionValue {
             Self::Pixels(px) => f64::from(*px),
             Self::Percentage(s) => {
                 let trimmed = s.trim().trim_end_matches('%');
-                trimmed.parse::<f64>().map(|pct| (pct / 100.0) * reference_size).unwrap_or(0.0)
+                trimmed.parse::<f64>().map_or(0.0, |pct| (pct / 100.0) * reference_size)
             }
         }
     }

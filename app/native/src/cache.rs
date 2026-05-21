@@ -105,7 +105,7 @@ fn calculate_dir_size(path: &std::path::Path) -> std::io::Result<u64> {
             if path.is_dir() {
                 total += calculate_dir_size(&path)?;
             } else {
-                total += entry.metadata().map(|m| m.len()).unwrap_or(0);
+                total += entry.metadata().map_or(0, |m| m.len());
             }
         }
     }

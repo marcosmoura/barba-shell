@@ -4,11 +4,11 @@
   "version": "0.22.0",
   "identifier": "com.marcosmoura.stache",
   "build": {
+    "devUrl": "http://localhost:1420",
     "beforeDevCommand": {
       "script": "killall stache 2>/dev/null || true; pnpm dev",
       "cwd": "../.."
     },
-    "devUrl": "http://localhost:1420",
     "beforeBuildCommand": {
       "script": "./scripts/generate-schema.sh && pnpm format && pnpm build",
       "cwd": "../.."

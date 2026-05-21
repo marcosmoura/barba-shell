@@ -7,6 +7,7 @@
     "build": "tsc && vite build",
     "build:app": "pnpm tauri:build",
     "dev": "vite",
+    "generate-schema": "./scripts/generate-schema.sh",
     "format": "pnpm format:ui && pnpm format:native",
     "format:native": "cargo fmt --all",
     "format:ui": "oxfmt",

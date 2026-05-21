@@ -1,4 +1,5 @@
 use std::ffi::c_void;
+use std::sync::mpsc;
 use std::thread;
 
 pub fn spawn_named_thread<F>(name: &str, task: F)
@@ -38,6 +39,7 @@ unsafe extern "C" {
     );
     #[allow(dead_code)] // Used by dispatch_on_high_priority
     fn dispatch_get_global_queue(identifier: isize, flags: usize) -> DispatchQueue;
+    fn pthread_main_np() -> i32;
 }
 
 /// Returns the main dispatch queue.
@@ -59,6 +61,31 @@ extern "C" fn dispatch_trampoline<F: FnOnce() + Send + 'static>(context: *mut c_
             closure();
         }
     }
+}
+
+/// Dispatches a closure to run on the main thread synchronously, blocking the
+/// calling thread until the closure completes.
+///
+/// If already on the main thread, the closure is executed directly to avoid
+/// deadlock. Uses Grand Central Dispatch (GCD) to schedule work on the main
+/// queue when called from a background thread.
+///
+/// # Panics
+///
+/// Panics if the main thread dispatch fails to return a result.
+pub fn dispatch_on_main_sync<F, T>(closure: F) -> T
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static, {
+    if unsafe { pthread_main_np() != 0 } {
+        return closure();
+    }
+
+    let (tx, rx) = mpsc::channel();
+    dispatch_on_main(move || {
+        let _ = tx.send(closure());
+    });
+    rx.recv().expect("dispatch_on_main_sync: main thread task failed")
 }
 
 /// Dispatches a closure to run on the main thread asynchronously.

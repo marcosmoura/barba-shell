@@ -974,7 +974,8 @@ mod tests {
         })
         .unwrap();
 
-        let command = take_queued_animation_command(&rx).expect("queued command should be returned");
+        let command =
+            take_queued_animation_command(&rx).expect("queued command should be returned");
 
         let AnimationCommand::Update { args, animation } = command;
         assert_eq!(args, vec!["active_color=0xFFFF0000".to_string()]);

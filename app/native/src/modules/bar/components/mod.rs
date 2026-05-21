@@ -7,6 +7,7 @@ pub mod keepawake;
 pub mod media;
 pub mod tiling;
 pub mod weather;
+pub mod wifi;
 
 pub fn init(window: &WebviewWindow) {
     keepawake::init(window);

@@ -38,7 +38,7 @@ impl AppEntry {
 }
 
 /// Allowed macOS application display names that can be opened via the Tauri command.
-const ALLOWED_APPS: [AppEntry; 7] = [
+const ALLOWED_APPS: [AppEntry; 8] = [
     AppEntry::app("Activity Monitor"),
     AppEntry::app("Clock"),
     AppEntry::app("Microsoft Edge Dev"),
@@ -48,6 +48,10 @@ const ALLOWED_APPS: [AppEntry; 7] = [
     AppEntry::url(
         "Battery",
         "x-apple.systempreferences:com.apple.Battery-Settings.extension",
+    ),
+    AppEntry::url(
+        "Wi-Fi",
+        "x-apple.systempreferences:com.apple.wifi-settings-extension",
     ),
 ];
 
@@ -139,6 +143,19 @@ mod tests {
                 "x-apple.systempreferences:com.apple.Battery-Settings.extension"
             ),
             LaunchTarget::Application(_) => panic!("Battery shortcut should resolve to a URL"),
+        }
+    }
+
+    #[test]
+    fn resolve_allowed_app_finds_wifi_url_entry() {
+        let entry = resolve_allowed_app("Wi-Fi").expect("Wi-Fi should be allowed");
+        assert_eq!(entry.display_name, "Wi-Fi");
+
+        match entry.target {
+            LaunchTarget::Url(url) => {
+                assert!(url.contains("wifi") || url.contains("Wi-Fi"), "url: {url}");
+            }
+            LaunchTarget::Application(_) => panic!("Wi-Fi should resolve to a URL"),
         }
     }
 

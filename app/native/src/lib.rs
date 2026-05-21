@@ -190,6 +190,7 @@ pub fn run() {
             bar::components::tiling::get_tiling_workspaces,
             bar::components::tiling::is_tiling_enabled,
             bar::components::weather::get_weather_config,
+            bar::components::wifi::get_wifi_info,
             bar::window::get_bar_window_frame,
         ])
         .setup(move |app| {

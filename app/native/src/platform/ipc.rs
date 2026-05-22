@@ -113,6 +113,26 @@ impl StacheNotification {
         }
     }
 
+    /// Returns all possible notification name strings.
+    fn all_notification_names() -> Vec<String> {
+        let variants = [
+            Self::WindowFocusChanged,
+            Self::WorkspaceChanged(String::new()),
+            Self::Reload,
+            Self::TilingFocusWorkspace(String::new()),
+            Self::TilingSetLayout(String::new()),
+            Self::TilingWindowFocus(String::new()),
+            Self::TilingWindowSwap(String::new()),
+            Self::TilingWindowResize { dimension: String::new(), amount: 0 },
+            Self::TilingWindowPreset(String::new()),
+            Self::TilingWindowSendToWorkspace(String::new()),
+            Self::TilingWindowSendToScreen(String::new()),
+            Self::TilingWorkspaceBalance,
+            Self::TilingWorkspaceSendToScreen(String::new()),
+        ];
+        variants.iter().map(|v| v.notification_name()).collect()
+    }
+
     /// Parses a notification from its name and user info.
     fn from_notification(
         name: &str,
@@ -297,24 +317,7 @@ pub fn start_notification_listener() {
         // Create observer object
         let observer = create_notification_observer();
 
-        // Register for all Stache notifications using a wildcard-like approach
-        // We'll register for each specific notification type
-        let notifications = [
-            format!("{NOTIFICATION_PREFIX}window-focus-changed"),
-            format!("{NOTIFICATION_PREFIX}workspace-changed"),
-            format!("{NOTIFICATION_PREFIX}reload"),
-            // Tiling notifications
-            format!("{NOTIFICATION_PREFIX}tiling-focus-workspace"),
-            format!("{NOTIFICATION_PREFIX}tiling-set-layout"),
-            format!("{NOTIFICATION_PREFIX}tiling-window-focus"),
-            format!("{NOTIFICATION_PREFIX}tiling-window-swap"),
-            format!("{NOTIFICATION_PREFIX}tiling-window-resize"),
-            format!("{NOTIFICATION_PREFIX}tiling-window-preset"),
-            format!("{NOTIFICATION_PREFIX}tiling-window-send-to-workspace"),
-            format!("{NOTIFICATION_PREFIX}tiling-window-send-to-screen"),
-            format!("{NOTIFICATION_PREFIX}tiling-workspace-balance"),
-            format!("{NOTIFICATION_PREFIX}tiling-workspace-send-to-screen"),
-        ];
+        let notifications = StacheNotification::all_notification_names();
 
         for notification_name in &notifications {
             let name = nsstring(notification_name);

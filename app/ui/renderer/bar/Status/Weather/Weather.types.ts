@@ -1,49 +1,11 @@
-export interface CurrentConditions {
-  datetime: string;
-  temp: number;
-  feelslike: number;
-  humidity: number;
-  dew: number;
-  windspeed: number;
-  winddir: number;
-  windgust: number;
-  precip: number;
-  preciptype: string[] | null;
-  snow: number;
-  pressure: number;
-  visibility: number;
-  cloudcover: number;
-  solarradiation: number;
-  solarenergy?: number | null;
-  conditions: string;
-  icon: string;
-  moonphase: number;
-}
+import type { RefObject } from 'react';
 
-export interface WeatherData {
-  queryCost: number;
-  latitude: number;
-  longitude: number;
-  resolvedAddress: string;
-  address: string;
-  timezone: string;
-  tzoffset: number;
-  currentConditions: CurrentConditions;
-}
+import type { AnyIcon } from '@/components/Icon';
 
-export interface IpApiResponse {
-  city?: string;
-  region?: string;
-  country_name?: string;
-}
-
-export interface IpInfoResponse {
-  city?: string;
-  region?: string;
-  country?: string;
-}
-
-export interface WeatherConfig {
-  visualCrossingApiKey: string;
-  defaultLocation: string;
-}
+export type WeatherState = {
+  label: string;
+  icon: AnyIcon;
+  ref: RefObject<HTMLButtonElement | null>;
+  onClick: () => void;
+  isConfigured: boolean;
+};

@@ -6,6 +6,6 @@ export const label = css`
   max-width: 256px;
 
   ${CSS_LAPTOP_MEDIA_QUERY} {
-    max-width: 128px;
+    max-width: 160px;
   }
 `;

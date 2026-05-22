@@ -1,20 +1,31 @@
 import { useWidgetToggle } from '@/hooks';
-import { getWeatherIcon, useWeatherStore } from '@/stores/WeatherStore';
+import {
+  getWeatherIcon,
+  useWeatherStore,
+  type NormalizedCurrentConditions,
+} from '@/stores/WeatherStore';
 
-export const useWeather = () => {
+import type { WeatherState } from './Weather.types';
+
+function getLabel(currentConditions: NormalizedCurrentConditions | undefined, isLoading: boolean) {
+  if (isLoading || !currentConditions) {
+    return 'Loading...';
+  }
+
+  return `${Math.ceil(currentConditions.feelslike || 0)}°C`;
+}
+
+export function useWeather(): WeatherState {
   const { ref, onClick } = useWidgetToggle('weather');
   const { weather, isLoading, isConfigured } = useWeatherStore();
 
   const currentConditions = weather?.currentConditions;
 
   return {
-    label:
-      isLoading || !currentConditions
-        ? 'Loading weather...'
-        : `${Math.ceil(currentConditions.feelslike || 0)}°C`,
+    label: getLabel(currentConditions, isLoading),
     icon: getWeatherIcon(currentConditions?.icon ?? 'clearDay'),
     ref,
     onClick,
     isConfigured,
   };
-};
+}

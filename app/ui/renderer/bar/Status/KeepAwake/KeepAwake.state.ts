@@ -6,9 +6,13 @@ import { invoke } from '@tauri-apps/api/core';
 import { useTauriEvent } from '@/hooks';
 import { KeepAwakeEvents } from '@/types';
 
-const fetchKeepAwake = async (): Promise<boolean> => invoke<boolean>('is_system_awake');
+import type { KeepAwakeState } from './KeepAwake.types';
 
-export const useKeepAwake = () => {
+function fetchKeepAwake(): Promise<boolean> {
+  return invoke<boolean>('is_system_awake');
+}
+
+export function useKeepAwake(): KeepAwakeState {
   const queryClient = useQueryClient();
   const { data: isSystemAwake } = useSuspenseQuery({
     queryKey: ['keep-awake'],
@@ -21,10 +25,10 @@ export const useKeepAwake = () => {
     queryClient.setQueryData(['keep-awake'], payload);
   });
 
-  const onKeepAwakeClick = useCallback(
-    async () => queryClient.setQueryData(['keep-awake'], await invoke('toggle_system_awake')),
-    [queryClient],
-  );
+  const onKeepAwakeClick = useCallback<() => Promise<void>>(async () => {
+    const result = await invoke<boolean>('toggle_system_awake');
+    queryClient.setQueryData(['keep-awake'], result);
+  }, [queryClient]);
 
   return { isSystemAwake, onKeepAwakeClick };
-};
+}

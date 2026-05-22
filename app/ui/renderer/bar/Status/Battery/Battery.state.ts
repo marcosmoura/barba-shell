@@ -1,10 +1,10 @@
-import { useMemo } from 'react';
-
 import { colors } from '@/design-system';
 import { useWidgetToggle } from '@/hooks';
 import { getBatteryIcon, useBatteryStore } from '@/stores/BatteryStore';
 
-const getColor = (state?: string) => {
+import type { BatteryState } from './Battery.types';
+
+function getColor(state?: string): string {
   switch (state) {
     case 'Charging':
       return colors.green;
@@ -15,9 +15,9 @@ const getColor = (state?: string) => {
     default:
       return colors.text;
   }
-};
+}
 
-const getLabel = (percentage?: number, state?: string) => {
+function getLabel(percentage?: number, state?: string): string {
   if (typeof percentage !== 'number' || !state) {
     return 'Loading...';
   }
@@ -31,23 +31,20 @@ const getLabel = (percentage?: number, state?: string) => {
   }
 
   return `${percentage}% (${state})`;
-};
+}
 
-export const useBattery = () => {
+export function useBattery(): BatteryState {
   const { ref, onClick } = useWidgetToggle('battery');
 
   const { battery } = useBatteryStore();
   const { state, percentage } = battery || {};
 
-  const batteryData = useMemo(
-    () => ({
-      icon: getBatteryIcon(percentage, state),
-      label: getLabel(percentage, state),
-      color: getColor(state),
-      percentage,
-    }),
-    [percentage, state],
-  );
-
-  return { ...batteryData, ref, onClick };
-};
+  return {
+    icon: getBatteryIcon(percentage, state),
+    label: getLabel(percentage, state),
+    color: getColor(state),
+    percentage,
+    ref,
+    onClick,
+  };
+}

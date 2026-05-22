@@ -7,6 +7,7 @@ export type WifiInfo = {
   networkName: string | null;
   signalStrength: number | null;
 };
+
 export type WifiState = {
   status: WifiStatus;
   label: string | null;

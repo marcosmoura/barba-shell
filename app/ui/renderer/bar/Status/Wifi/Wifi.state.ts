@@ -23,17 +23,19 @@ const STATUS_LABELS: Record<WifiStatus, string | null> = {
   Connected: null,
 };
 
-const fetchWifi = (): Promise<WifiInfo> => invoke<WifiInfo>('get_wifi_info');
+function fetchWifi(): Promise<WifiInfo> {
+  return invoke<WifiInfo>('get_wifi_info');
+}
 
-const getWifiLabel = (status: WifiStatus, networkName: string | null): string | null => {
+function getWifiLabel(status: WifiStatus, networkName: string | null): string | null {
   if (status === 'Connected') {
     return networkName;
   }
 
   return STATUS_LABELS[status];
-};
+}
 
-export const getSignalIcon = (signalStrength: number | null): AnyIcon => {
+export function getSignalIcon(signalStrength: number | null): AnyIcon {
   if (signalStrength == null) {
     return Wifi01Icon;
   }
@@ -51,9 +53,9 @@ export const getSignalIcon = (signalStrength: number | null): AnyIcon => {
   }
 
   return Wifi01Icon;
-};
+}
 
-const getWifiIcon = (status: WifiStatus, signalStrength: number | null): AnyIcon => {
+function getWifiIcon(status: WifiStatus, signalStrength: number | null): AnyIcon {
   switch (status) {
     case 'Off':
       return WifiOff02Icon;
@@ -62,9 +64,9 @@ const getWifiIcon = (status: WifiStatus, signalStrength: number | null): AnyIcon
     default:
       return getSignalIcon(signalStrength);
   }
-};
+}
 
-const getWifiColor = (status: WifiStatus): string => {
+function getWifiColor(status: WifiStatus): string {
   switch (status) {
     case 'Connected':
       return colors.sky;
@@ -75,7 +77,7 @@ const getWifiColor = (status: WifiStatus): string => {
     default:
       return colors.text;
   }
-};
+}
 
 export function useWifi(): WifiState {
   const { data: wifi } = useSuspenseQuery({

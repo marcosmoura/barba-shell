@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react';
+
 import { Stack } from '@/components/Stack';
 
 import { Battery } from './Battery';
@@ -7,7 +9,7 @@ import { KeepAwake } from './KeepAwake';
 import { Weather } from './Weather';
 import { Wifi } from './Wifi';
 
-export const Status = () => {
+export function Status(): ReactNode {
   return (
     <Stack data-testid="status-container">
       <Weather />
@@ -18,4 +20,4 @@ export const Status = () => {
       <Clock />
     </Stack>
   );
-};
+}

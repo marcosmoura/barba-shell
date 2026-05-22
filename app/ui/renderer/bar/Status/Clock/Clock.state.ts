@@ -2,9 +2,12 @@ import { useSuspenseQuery } from '@tanstack/react-query';
 
 import { useWidgetToggle } from '@/hooks';
 
+import type { ClockState } from './Clock.types';
+
 function getClock(): string {
-  const findDatePart = (parts: Intl.DateTimeFormatPart[], part: string) =>
-    parts.find((p) => p.type === part)?.value || '';
+  function findDatePart(parts: Intl.DateTimeFormatPart[], part: string): string {
+    return parts.find((p) => p.type === part)?.value ?? '';
+  }
 
   const options: Intl.DateTimeFormatOptions = {
     hour12: false,
@@ -30,7 +33,7 @@ function getClock(): string {
   return `${weekday} ${month} ${day} ${hour}:${minute}:${second}`;
 }
 
-export const useClock = () => {
+export function useClock(): ClockState {
   const { data: clock } = useSuspenseQuery({
     queryKey: ['clock'],
     queryFn: getClock,
@@ -41,4 +44,4 @@ export const useClock = () => {
   const { ref, onClick } = useWidgetToggle('calendar');
 
   return { clock, ref, onClick };
-};
+}

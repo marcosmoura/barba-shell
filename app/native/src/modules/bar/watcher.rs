@@ -1,4 +1,4 @@
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
+use std::sync::mpsc::{RecvTimeoutError, Sender, channel};
 use std::time::Duration;
 
 /// Starts a best-effort refresh watcher.
@@ -21,11 +21,16 @@ pub fn start_best_effort_refresh_watcher<FSetup, FRefresh>(
     }
 
     refresh();
-    run_refresh_loop(rx, fallback_poll_interval, &mut refresh);
+    run_refresh_loop(&rx, fallback_poll_interval, &mut refresh);
 }
 
-fn run_refresh_loop<F>(rx: Receiver<()>, fallback_poll_interval: Duration, mut refresh: F)
-where F: FnMut() {
+fn run_refresh_loop<F>(
+    rx: &std::sync::mpsc::Receiver<()>,
+    fallback_poll_interval: Duration,
+    mut refresh: F,
+) where
+    F: FnMut(),
+{
     loop {
         match rx.recv_timeout(fallback_poll_interval) {
             Ok(()) | Err(RecvTimeoutError::Timeout) => refresh(),

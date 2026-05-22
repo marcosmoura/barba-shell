@@ -164,15 +164,13 @@ pub fn init(window: &tauri::WebviewWindow) {
 
     let app_handle = app_handle.clone();
     spawn_named_thread("lock-watcher", move || {
-        if let Err(err) = watch_system_lock_state(&app_handle) {
-            tracing::error!(error = %err, "failed to start system lock watcher");
-        }
+        watch_system_lock_state(&app_handle);
     });
 }
 
 const SCREEN_LOCKED_KEY: &str = "CGSSessionScreenIsLocked";
 
-fn watch_system_lock_state(app_handle: &tauri::AppHandle) -> Result<(), String> {
+fn watch_system_lock_state(app_handle: &tauri::AppHandle) {
     let last_state = RefCell::new(None);
 
     start_best_effort_refresh_watcher(
@@ -190,8 +188,6 @@ fn watch_system_lock_state(app_handle: &tauri::AppHandle) -> Result<(), String> 
             refresh_lock_state(app_handle, &mut last_state);
         },
     );
-
-    Ok(())
 }
 
 fn refresh_lock_state(app_handle: &tauri::AppHandle, last_state: &mut Option<bool>) {

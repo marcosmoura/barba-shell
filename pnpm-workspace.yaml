@@ -68,3 +68,15 @@ minimumReleaseAgeExclude:
   - oxlint@1.66.0
   - postcss@8.5.15
   - stylelint-config-clean-order@8.0.2
+  - '@typescript/native-preview-darwin-arm64@7.0.0-dev.20260521.1'
+  - '@typescript/native-preview-darwin-x64@7.0.0-dev.20260521.1'
+  - '@typescript/native-preview-linux-arm64@7.0.0-dev.20260521.1'
+  - '@typescript/native-preview-linux-arm@7.0.0-dev.20260521.1'
+  - '@typescript/native-preview-linux-x64@7.0.0-dev.20260521.1'
+  - '@typescript/native-preview-win32-arm64@7.0.0-dev.20260521.1'
+  - '@typescript/native-preview-win32-x64@7.0.0-dev.20260521.1'
+  - '@typescript/native-preview@7.0.0-dev.20260521.1'
+  - framer-motion@12.40.0
+  - motion-dom@12.40.0
+  - motion@12.40.0
+  - vite@8.0.14

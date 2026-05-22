@@ -318,13 +318,25 @@ pub fn load_config_from_path(path: &PathBuf) -> Result<(StacheConfig, PathBuf), 
 /// Returns `ConfigError::IoError` if a configuration file exists but could not be read.
 /// Returns `ConfigError::ParseError` if the configuration file contains invalid JSON.
 pub fn load_config() -> Result<(StacheConfig, PathBuf), ConfigError> {
-    for path in config_paths() {
-        if path.exists() {
-            return load_config_from_path(&path);
+    let existing_paths: Vec<PathBuf> = config_paths().into_iter().filter(|p| p.exists()).collect();
+
+    match existing_paths.len() {
+        0 => Err(ConfigError::NotFound),
+        1 => {
+            let path = &existing_paths[0];
+            tracing::debug!("Using config file: {:?}", path);
+            load_config_from_path(path)
+        }
+        _ => {
+            let first = &existing_paths[0];
+            tracing::warn!(
+                "Multiple config files found: {:?}. Using {:?}",
+                existing_paths,
+                first
+            );
+            load_config_from_path(first)
         }
     }
-
-    Err(ConfigError::NotFound)
 }
 
 #[cfg(test)]

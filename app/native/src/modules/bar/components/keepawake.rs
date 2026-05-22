@@ -1,6 +1,6 @@
 use std::ffi::c_void;
+use std::sync::mpsc::{RecvTimeoutError, Sender, channel};
 use std::sync::{Mutex, MutexGuard, OnceLock};
-use std::thread;
 use std::time::Duration;
 
 use core_foundation::base::TCFType;
@@ -9,14 +9,22 @@ use core_foundation_sys::base::{CFRelease, CFTypeRef};
 use core_foundation_sys::dictionary::{CFDictionaryGetValue, CFDictionaryRef};
 use core_foundation_sys::number::{CFBooleanGetValue, CFBooleanRef};
 use keepawake::{Builder, KeepAwake};
+use objc::declare::ClassDecl;
+use objc::runtime::{Class, Object, Sel};
+use objc::{class, msg_send, sel, sel_impl};
 use serde::Serialize;
 use tauri::{Emitter, Manager};
 
 use crate::error::StacheError;
+use crate::platform::objc::{nsstring, nsstring_to_string};
 use crate::platform::thread::spawn_named_thread;
 use crate::{constants, events};
 
 const KEEP_AWAKE_REASON: &str = "Stache requested system wake lock";
+const LOCK_NOTIFICATION_NAMES: [&str; 2] =
+    ["com.apple.screenIsLocked", "com.apple.screenIsUnlocked"];
+const LOCK_FALLBACK_POLL_INTERVAL: Duration = Duration::from_secs(2);
+static LOCK_REFRESH_SIGNAL: OnceLock<Sender<()>> = OnceLock::new();
 
 #[derive(Debug, Serialize, Clone)]
 struct KeepAwakeChangedPayload {
@@ -162,23 +170,105 @@ pub fn init(window: &tauri::WebviewWindow) {
 
 const SCREEN_LOCKED_KEY: &str = "CGSSessionScreenIsLocked";
 
-const LOCK_POLL_INTERVAL: Duration = Duration::from_millis(500);
-
 fn watch_system_lock_state(app_handle: &tauri::AppHandle) -> Result<(), String> {
+    let (tx, rx) = channel::<()>();
+    LOCK_REFRESH_SIGNAL
+        .set(tx)
+        .map_err(|_| "lock refresh signal already initialized".to_string())?;
+
+    register_lock_state_observer()?;
+
     let mut last_state: Option<bool> = None;
+    refresh_lock_state(app_handle, &mut last_state);
 
     loop {
-        match is_session_locked() {
-            Ok(is_locked) => {
-                if Some(is_locked) != last_state {
-                    last_state = Some(is_locked);
-                    apply_lock_state(app_handle, is_locked);
-                }
+        match rx.recv_timeout(LOCK_FALLBACK_POLL_INTERVAL) {
+            Ok(()) | Err(RecvTimeoutError::Timeout) => {
+                refresh_lock_state(app_handle, &mut last_state)
             }
-            Err(err) => tracing::warn!(error = %err, "failed to poll session lock state"),
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err("lock refresh signal disconnected".to_string());
+            }
+        }
+    }
+}
+
+fn refresh_lock_state(app_handle: &tauri::AppHandle, last_state: &mut Option<bool>) {
+    match is_session_locked() {
+        Ok(is_locked) => {
+            if Some(is_locked) != *last_state {
+                *last_state = Some(is_locked);
+                apply_lock_state(app_handle, is_locked);
+            }
+        }
+        Err(err) => tracing::warn!(error = %err, "failed to poll session lock state"),
+    }
+}
+
+fn register_lock_state_observer() -> Result<(), String> {
+    unsafe {
+        let center: *mut Object = msg_send![class!(NSDistributedNotificationCenter), defaultCenter];
+        if center.is_null() {
+            return Err("failed to get NSDistributedNotificationCenter".to_string());
         }
 
-        thread::sleep(LOCK_POLL_INTERVAL);
+        let observer = create_lock_state_observer();
+
+        for notification_name in LOCK_NOTIFICATION_NAMES {
+            let name = nsstring(notification_name);
+            let _: () = msg_send![
+                center,
+                addObserver: observer
+                selector: sel!(handleLockStateNotification:)
+                name: name
+                object: std::ptr::null::<Object>()
+            ];
+        }
+    }
+
+    Ok(())
+}
+
+fn create_lock_state_observer() -> *mut Object {
+    unsafe {
+        let superclass = class!(NSObject);
+        let class_name = "StacheKeepAwakeObserver";
+
+        let existing_class = Class::get(class_name);
+        let observer_class = existing_class.unwrap_or_else(|| {
+            let mut decl = ClassDecl::new(class_name, superclass)
+                .expect("Failed to create StacheKeepAwakeObserver class");
+
+            decl.add_method(
+                sel!(handleLockStateNotification:),
+                handle_lock_state_notification as extern "C" fn(&Object, Sel, *mut Object),
+            );
+
+            decl.register()
+        });
+
+        let instance: *mut Object = msg_send![observer_class, alloc];
+        msg_send![instance, init]
+    }
+}
+
+extern "C" fn handle_lock_state_notification(_self: &Object, _cmd: Sel, notification: *mut Object) {
+    unsafe {
+        if !notification.is_null() {
+            let name_obj: *mut Object = msg_send![notification, name];
+            let name = nsstring_to_string(name_obj);
+            if !name.is_empty() {
+                tracing::debug!(notification = %name, "keepawake: received lock state notification");
+            }
+        }
+    }
+
+    signal_lock_refresh();
+}
+
+fn signal_lock_refresh() {
+    if let Some(sender) = LOCK_REFRESH_SIGNAL.get() {
+        let _ = sender.send(());
     }
 }
 
@@ -292,8 +382,16 @@ mod tests {
     }
 
     #[test]
-    fn test_lock_poll_interval() {
-        assert_eq!(LOCK_POLL_INTERVAL.as_millis(), 500);
+    fn test_lock_notification_names() {
+        assert_eq!(LOCK_NOTIFICATION_NAMES, [
+            "com.apple.screenIsLocked",
+            "com.apple.screenIsUnlocked"
+        ]);
+    }
+
+    #[test]
+    fn test_lock_fallback_poll_interval() {
+        assert_eq!(LOCK_FALLBACK_POLL_INTERVAL.as_secs(), 2);
     }
 
     #[test]
@@ -488,7 +586,7 @@ mod tests {
     #[test]
     fn test_lock_poll_interval_is_reasonable() {
         // Poll interval should be between 100ms and 5 seconds
-        let millis = LOCK_POLL_INTERVAL.as_millis();
+        let millis = LOCK_FALLBACK_POLL_INTERVAL.as_millis();
         assert!(millis >= 100);
         assert!(millis <= 5000);
     }

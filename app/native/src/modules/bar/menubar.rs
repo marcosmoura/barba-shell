@@ -1,7 +1,9 @@
 // Hacky workaround to approximate menu bar visibility in the absence of proper APIs.
 
 use std::ffi::c_void;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{RecvTimeoutError, Sender, channel};
 use std::thread;
 use std::time::Duration;
 
@@ -10,17 +12,32 @@ use core_foundation::base::TCFType;
 use core_foundation::dictionary::CFDictionary;
 use core_foundation::number::CFNumber;
 use core_foundation::string::CFString;
-use objc::runtime::Object;
-use objc::{msg_send, sel, sel_impl};
+use objc::declare::ClassDecl;
+use objc::runtime::{Class, Object, Sel};
+use objc::{class, msg_send, sel, sel_impl};
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
 use crate::events;
+use crate::platform::objc::{nsstring, nsstring_to_string};
 
 /// Flag indicating if menu visibility watcher is running.
 static MENU_VISIBILITY_WATCHER_RUNNING: AtomicBool = AtomicBool::new(false);
 
 /// Current menu bar visibility state.
 static MENU_BAR_VISIBLE: AtomicBool = AtomicBool::new(false);
+
+const MENU_BAR_FALLBACK_POLL_INTERVAL: Duration = Duration::from_secs(2);
+const WORKSPACE_REFRESH_NOTIFICATION_NAMES: [&str; 3] = [
+    "NSWorkspaceActiveSpaceDidChangeNotification",
+    "NSWorkspaceDidActivateApplicationNotification",
+    "NSWorkspaceDidDeactivateApplicationNotification",
+];
+const APPLICATION_REFRESH_NOTIFICATION_NAMES: [&str; 3] = [
+    "NSApplicationDidBecomeActiveNotification",
+    "NSApplicationDidResignActiveNotification",
+    "NSApplicationDidChangeScreenParametersNotification",
+];
+static MENU_BAR_REFRESH_SIGNAL: OnceLock<Sender<()>> = OnceLock::new();
 
 fn emit_menubar_visibility_event(
     app_handle: &AppHandle,
@@ -45,6 +62,15 @@ pub fn start_menu_bar_visibility_watcher(window: &WebviewWindow) {
 }
 
 fn register_menu_bar_visibility_observer(app_handle: AppHandle, window_label: String) {
+    let (tx, rx) = channel::<()>();
+    if MENU_BAR_REFRESH_SIGNAL.set(tx).is_err() {
+        tracing::warn!("menubar refresh signal was already initialized");
+    }
+
+    if let Err(err) = register_menu_bar_visibility_observers() {
+        tracing::warn!(error = %err, "failed to register menubar notification observers");
+    }
+
     let initial_state = query_menu_bar_visible().unwrap_or(false);
     MENU_BAR_VISIBLE.store(initial_state, Ordering::Release);
 
@@ -52,34 +78,149 @@ fn register_menu_bar_visibility_observer(app_handle: AppHandle, window_label: St
         tracing::warn!(error = %e, "failed to emit initial menubar visibility");
     }
 
-    // Start polling mechanism to detect menubar visibility changes
-    start_polling_mechanism(app_handle, window_label);
-}
+    let mut last_visible = initial_state;
 
-fn start_polling_mechanism(app_handle: AppHandle, window_label: String) {
     thread::spawn(move || {
         loop {
-            thread::sleep(Duration::from_millis(300));
-
-            match query_menu_bar_visible() {
-                Ok(visible) => {
-                    let previous = MENU_BAR_VISIBLE.load(Ordering::Acquire);
-                    if visible != previous {
-                        MENU_BAR_VISIBLE.store(visible, Ordering::Release);
-
-                        if let Err(e) =
-                            emit_menubar_visibility_event(&app_handle, &window_label, visible)
-                        {
-                            tracing::warn!(error = %e, "failed to emit menubar visibility");
-                        }
-                    }
+            match rx.recv_timeout(MENU_BAR_FALLBACK_POLL_INTERVAL) {
+                Ok(()) | Err(RecvTimeoutError::Timeout) => {
+                    refresh_menu_bar_visibility(&app_handle, &window_label, &mut last_visible)
                 }
-                Err(e) => {
-                    tracing::debug!(error = %e, "failed to query menubar visibility");
+                Err(RecvTimeoutError::Disconnected) => {
+                    tracing::warn!("menubar refresh signal disconnected");
+                    return;
                 }
             }
         }
     });
+}
+
+fn refresh_menu_bar_visibility(
+    app_handle: &AppHandle,
+    window_label: &str,
+    last_visible: &mut bool,
+) {
+    match query_menu_bar_visible() {
+        Ok(visible) => {
+            if visible != *last_visible {
+                *last_visible = visible;
+                MENU_BAR_VISIBLE.store(visible, Ordering::Release);
+
+                if let Err(e) = emit_menubar_visibility_event(app_handle, window_label, visible) {
+                    tracing::warn!(error = %e, "failed to emit menubar visibility");
+                }
+            }
+        }
+        Err(e) => {
+            tracing::debug!(error = %e, "failed to query menubar visibility");
+        }
+    }
+}
+
+fn register_menu_bar_visibility_observers() -> Result<(), String> {
+    unsafe {
+        let workspace: *mut Object = msg_send![class!(NSWorkspace), sharedWorkspace];
+        if workspace.is_null() {
+            return Err("failed to get NSWorkspace shared workspace".to_string());
+        }
+
+        let workspace_center: *mut Object = msg_send![workspace, notificationCenter];
+        if workspace_center.is_null() {
+            return Err("failed to get NSWorkspace notification center".to_string());
+        }
+
+        let default_center: *mut Object = msg_send![class!(NSNotificationCenter), defaultCenter];
+        if default_center.is_null() {
+            return Err("failed to get NSNotificationCenter default center".to_string());
+        }
+
+        let observer = create_menu_bar_observer();
+
+        for notification_name in WORKSPACE_REFRESH_NOTIFICATION_NAMES {
+            register_notification_observer(
+                workspace_center,
+                observer,
+                notification_name,
+                sel!(handleMenuBarRefreshNotification:),
+            );
+        }
+
+        for notification_name in APPLICATION_REFRESH_NOTIFICATION_NAMES {
+            register_notification_observer(
+                default_center,
+                observer,
+                notification_name,
+                sel!(handleMenuBarRefreshNotification:),
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn register_notification_observer(
+    center: *mut Object,
+    observer: *mut Object,
+    notification_name: &str,
+    selector: Sel,
+) {
+    unsafe {
+        let name = nsstring(notification_name);
+        let _: () = msg_send![
+            center,
+            addObserver: observer
+            selector: selector
+            name: name
+            object: std::ptr::null::<Object>()
+        ];
+    }
+}
+
+fn create_menu_bar_observer() -> *mut Object {
+    unsafe {
+        let superclass = class!(NSObject);
+        let class_name = "StacheMenuBarObserver";
+
+        let existing_class = Class::get(class_name);
+        let observer_class = existing_class.unwrap_or_else(|| {
+            let mut decl = ClassDecl::new(class_name, superclass)
+                .expect("Failed to create StacheMenuBarObserver class");
+
+            decl.add_method(
+                sel!(handleMenuBarRefreshNotification:),
+                handle_menu_bar_refresh_notification as extern "C" fn(&Object, Sel, *mut Object),
+            );
+
+            decl.register()
+        });
+
+        let instance: *mut Object = msg_send![observer_class, alloc];
+        msg_send![instance, init]
+    }
+}
+
+extern "C" fn handle_menu_bar_refresh_notification(
+    _self: &Object,
+    _cmd: Sel,
+    notification: *mut Object,
+) {
+    unsafe {
+        if !notification.is_null() {
+            let name_obj: *mut Object = msg_send![notification, name];
+            let name = nsstring_to_string(name_obj);
+            if !name.is_empty() {
+                tracing::debug!(notification = %name, "menubar: received refresh notification");
+            }
+        }
+    }
+
+    signal_menu_bar_refresh();
+}
+
+fn signal_menu_bar_refresh() {
+    if let Some(sender) = MENU_BAR_REFRESH_SIGNAL.get() {
+        let _ = sender.send(());
+    }
 }
 
 fn query_menu_bar_visible() -> Result<bool, String> {
@@ -192,6 +333,25 @@ mod tests {
             events::menubar::VISIBILITY_CHANGED,
             "stache://menubar/visibility-changed"
         );
+    }
+
+    #[test]
+    fn menu_bar_refresh_notification_names_cover_workspace_and_application_events() {
+        assert_eq!(WORKSPACE_REFRESH_NOTIFICATION_NAMES, [
+            "NSWorkspaceActiveSpaceDidChangeNotification",
+            "NSWorkspaceDidActivateApplicationNotification",
+            "NSWorkspaceDidDeactivateApplicationNotification",
+        ]);
+        assert_eq!(APPLICATION_REFRESH_NOTIFICATION_NAMES, [
+            "NSApplicationDidBecomeActiveNotification",
+            "NSApplicationDidResignActiveNotification",
+            "NSApplicationDidChangeScreenParametersNotification",
+        ]);
+    }
+
+    #[test]
+    fn menu_bar_fallback_poll_interval_is_slower_than_hot_polling() {
+        assert_eq!(MENU_BAR_FALLBACK_POLL_INTERVAL.as_secs(), 2);
     }
 
     #[test]

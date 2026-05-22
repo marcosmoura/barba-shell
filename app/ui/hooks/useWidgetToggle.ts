@@ -15,9 +15,9 @@ import { emitTauriEvent } from '@/utils/emitTauriEvent';
  * @param widgetName - The name of the widget to toggle
  * @returns Object containing ref and onClick handler
  */
-export const useWidgetToggle = <T extends HTMLElement = HTMLButtonElement>(
+export function useWidgetToggle<T extends HTMLElement = HTMLButtonElement>(
   widgetName: WidgetNames,
-) => {
+) {
   const ref = useRef<T>(null);
 
   const onClick = useCallback(() => {
@@ -38,4 +38,4 @@ export const useWidgetToggle = <T extends HTMLElement = HTMLButtonElement>(
   }, [widgetName]);
 
   return { ref, onClick };
-};
+}

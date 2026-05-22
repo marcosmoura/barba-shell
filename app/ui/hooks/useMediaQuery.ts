@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 class MediaQueryRegistry {
   private queries = new Map<
     string,
-    { mql: MediaQueryList; listeners: Set<(matches: boolean) => void> }
+    { mql: MediaQueryList; listeners: Set<(matches: boolean) => void>; handler: () => void }
   >();
 
   subscribe(query: string, callback: (matches: boolean) => void): () => void {
@@ -20,7 +20,7 @@ class MediaQueryRegistry {
 
       mql.addEventListener('change', handler);
 
-      entry = { mql, listeners };
+      entry = { mql, listeners, handler };
       this.queries.set(query, entry);
     }
 
@@ -41,6 +41,7 @@ class MediaQueryRegistry {
 
       // Clean up if no more listeners
       if (entry.listeners.size === 0) {
+        entry.mql.removeEventListener('change', entry.handler);
         this.queries.delete(query);
       }
     };
@@ -57,10 +58,10 @@ const getInitialValue = (query: string): boolean => {
   return window.matchMedia(query).matches;
 };
 
-export const useMediaQuery = (query: string) => {
+export function useMediaQuery(query: string) {
   const [matches, setMatches] = useState(() => getInitialValue(query));
 
   useEffect(() => registry.subscribe(query, setMatches), [query]);
 
   return matches;
-};
+}

@@ -5,7 +5,7 @@ use crate::config::get_config;
 use crate::error::StacheError;
 use crate::platform::window::{get_screen_size, set_position};
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WindowFrame {
     pub x: f64,

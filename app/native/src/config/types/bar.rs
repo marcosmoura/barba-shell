@@ -85,9 +85,8 @@ impl WeatherConfig {
 /// Contains settings for bar-specific features like weather and dimensions.
 /// The bar dimensions are used by the tiling window manager to account for
 /// the status bar when calculating window layouts on the main screen.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default, rename_all = "camelCase")]
-#[derive(Default)]
 pub struct BarConfig {
     /// Whether the status bar is enabled.
     /// Default: false

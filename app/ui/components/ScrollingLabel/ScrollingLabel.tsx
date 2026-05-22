@@ -5,12 +5,12 @@ import { cx } from '@linaria/core';
 import * as styles from './ScrollingLabel.styles';
 import type { ScrollingLabelProps, ScrollState } from './ScrollingLabel.types';
 
-export const ScrollingLabel = ({
+export function ScrollingLabel({
   children,
   className,
   scrollSpeed = 60,
   ...props
-}: ScrollingLabelProps) => {
+}: ScrollingLabelProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const labelRef = useRef<HTMLSpanElement>(null);
   const [scrollState, setScrollState] = useState<ScrollState>({ start: 0, end: 0, distance: 0 });
@@ -74,4 +74,4 @@ export const ScrollingLabel = ({
       </span>
     </div>
   );
-};
+}

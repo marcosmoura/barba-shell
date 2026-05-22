@@ -53,7 +53,7 @@ export const scrollingLabel = css`
 
   padding-left: 8px;
 
-  animation: scroll-text var(--scroll-duration, 5s) linear infinite alternate;
+  animation: scroll-text var(--scroll-duration, 5s) linear infinite;
 
   /* Hack to add spacing at the end of the scrolling text */
   &::after {
@@ -67,13 +67,12 @@ export const scrollingLabel = css`
 
   @keyframes scroll-text {
     0%,
-    15% {
-      transform: translateX(0);
+    10% {
+      transform: translateX(var(--scroll-start));
     }
 
-    85%,
     100% {
-      transform: translateX(var(--scroll-distance, 0px));
+      transform: translateX(var(--scroll-end));
     }
   }
 `;

@@ -55,8 +55,9 @@ describe('ScrollingLabel Component', () => {
     await vi.waitFor(() => {
       const label = container.querySelector('span');
       const style = label?.getAttribute('style');
-      // Check that scroll distance is 0 for short content
-      expect(style).toContain('--scroll-distance: 0px');
+      // Check that scroll state is 0 for short content
+      expect(style).toContain('--scroll-start: 0px');
+      expect(style).toContain('--scroll-end: 0px');
     });
   });
 
@@ -92,7 +93,7 @@ describe('ScrollingLabel Component', () => {
     await vi.waitFor(() => {
       const label = container.querySelector('span');
       const style = label?.getAttribute('style');
-      expect(style).toContain('--scroll-distance');
+      expect(style).toContain('--scroll-start');
       expect(style).toContain('--scroll-duration');
     });
   });

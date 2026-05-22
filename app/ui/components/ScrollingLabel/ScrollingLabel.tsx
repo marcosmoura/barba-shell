@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { cx } from '@linaria/core';
 
 import * as styles from './ScrollingLabel.styles';
-import type { ScrollingLabelProps } from './ScrollingLabel.types';
+import type { ScrollingLabelProps, ScrollState } from './ScrollingLabel.types';
 
 export const ScrollingLabel = ({
   children,
@@ -13,7 +13,7 @@ export const ScrollingLabel = ({
 }: ScrollingLabelProps) => {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const labelRef = useRef<HTMLSpanElement>(null);
-  const [scrollDistance, setScrollDistance] = useState(0);
+  const [scrollState, setScrollState] = useState<ScrollState>({ start: 0, end: 0, distance: 0 });
 
   useEffect(() => {
     const wrapper = wrapperRef.current;
@@ -23,33 +23,41 @@ export const ScrollingLabel = ({
       return;
     }
 
-    const calculateScrollDistance = () => {
+    const calculateScrollState = () => {
       const wrapperWidth = wrapper.offsetWidth;
       const labelWidth = label.scrollWidth;
       const overflow = labelWidth - wrapperWidth;
 
-      setScrollDistance(overflow > 0 ? -overflow : 0);
+      if (overflow > 0) {
+        setScrollState({
+          start: wrapperWidth,
+          end: -labelWidth,
+          distance: wrapperWidth + labelWidth,
+        });
+      } else {
+        setScrollState({ start: 0, end: 0, distance: 0 });
+      }
     };
 
-    calculateScrollDistance();
+    calculateScrollState();
 
-    const resizeObserver = new ResizeObserver(calculateScrollDistance);
+    const resizeObserver = new ResizeObserver(calculateScrollState);
     resizeObserver.observe(wrapper);
     resizeObserver.observe(label);
 
     return () => resizeObserver.disconnect();
   }, [children]);
 
-  const isScrolling = scrollDistance < 0;
+  const isScrolling = scrollState.distance > 0;
   const scrollStyles = useMemo(() => {
-    // Calculate duration: base 1s + scrollSpeed px per second for readable scrolling
-    const scrollDuration = Math.max(1, 1 + Math.abs(scrollDistance) / scrollSpeed);
+    const scrollDuration = Math.max(1, 1 + scrollState.distance / scrollSpeed);
 
     return {
-      '--scroll-distance': `${scrollDistance}px`,
+      '--scroll-start': `${scrollState.start}px`,
+      '--scroll-end': `${scrollState.end}px`,
       '--scroll-duration': `${scrollDuration}s`,
     };
-  }, [scrollDistance, scrollSpeed]);
+  }, [scrollState, scrollSpeed]);
 
   return (
     <div

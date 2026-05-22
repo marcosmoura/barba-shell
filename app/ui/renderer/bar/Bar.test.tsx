@@ -22,7 +22,7 @@ vi.mock('@tauri-apps/api/event', async (importOriginal) => {
 
 const mockInvoke = vi.mocked(invoke);
 
-const setupQueryClient = () => {
+const setupQueryClient = (overrides?: { menuHidden?: boolean }) => {
   const queryClient = createTestQueryClient();
   queryClient.setQueryData(['tiling_workspace_data'], {
     workspacesData: ['terminal', 'coding'],
@@ -38,6 +38,7 @@ const setupQueryClient = () => {
     bundleIdentifier: 'com.spotify.client',
     artwork: null,
   });
+  queryClient.setQueryData(['menubar-visibility'], overrides?.menuHidden ?? false);
   return queryClient;
 };
 
@@ -87,6 +88,17 @@ describe('Bar Component', () => {
 
     await expect.element(screen.getByTestId('spaces-container')).toBeVisible();
     await expect.element(screen.getByTestId('status-container')).toBeVisible();
+
+    queryClient.clear();
+  });
+
+  test('renders correctly when menu is hidden', async () => {
+    const queryClient = setupQueryClient({ menuHidden: true });
+    const screen = await render(<Bar />, {
+      wrapper: createQueryClientWrapper(queryClient),
+    });
+
+    await expect.element(screen.getByTestId('spaces-container')).toBeVisible();
 
     queryClient.clear();
   });

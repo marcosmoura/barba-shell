@@ -16,11 +16,11 @@ const queryClient = new QueryClient({
   defaultOptions: queryClientDefaults,
 });
 
-const BarContent = memo(() => {
+const BarContent = memo(function BarContent() {
   const { menuHidden } = useBar();
 
   return (
-    <div className={cx(styles.bar, menuHidden ? styles.barHidden : '')}>
+    <div className={cx(styles.bar, menuHidden && styles.barHidden)}>
       <Spaces />
       <Media />
       <Status />
@@ -28,14 +28,14 @@ const BarContent = memo(() => {
   );
 });
 
-BarContent.displayName = 'BarContent';
-
-export const Bar = () => (
-  <QueryClientProvider client={queryClient}>
-    <ErrorBoundary fallback={null}>
-      <Suspense fallback={null}>
-        <BarContent />
-      </Suspense>
-    </ErrorBoundary>
-  </QueryClientProvider>
-);
+export function Bar() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <ErrorBoundary fallback={null}>
+        <Suspense fallback={null}>
+          <BarContent />
+        </Suspense>
+      </ErrorBoundary>
+    </QueryClientProvider>
+  );
+}

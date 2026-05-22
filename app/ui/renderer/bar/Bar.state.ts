@@ -1,8 +1,9 @@
-import { useDisableRightClick } from '@/hooks';
-import { useTauri } from '@/hooks/useTauri';
+import { useDisableRightClick, useTauri } from '@/hooks';
 import { MenubarEvents } from '@/types';
 
-export const useBar = () => {
+import type { BarState } from './Bar.types';
+
+export function useBar(): BarState {
   const { data: menuHidden } = useTauri<boolean>({
     queryKey: ['menubar-visibility'],
     queryFn: async () => false,
@@ -13,4 +14,4 @@ export const useBar = () => {
   useDisableRightClick();
 
   return { menuHidden };
-};
+}

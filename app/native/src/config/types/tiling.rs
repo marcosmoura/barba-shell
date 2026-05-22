@@ -15,6 +15,7 @@ use super::workspaces::{WindowRule, WorkspaceConfig};
 #[serde(rename_all = "kebab-case")]
 pub enum LayoutType {
     /// Binary Space Partitioning - windows arranged in a tree structure.
+    #[default]
     Dwindle,
     /// Split layout - windows split based on screen orientation.
     Split,
@@ -29,7 +30,6 @@ pub enum LayoutType {
     /// Grid layout - windows arranged in a grid pattern.
     Grid,
     /// Floating layout - windows can be freely moved and resized.
-    #[default]
     Floating,
 }
 
@@ -154,7 +154,6 @@ pub struct FloatingConfig {
 #[serde(rename_all = "kebab-case")]
 pub enum MasterPosition {
     /// Master window on the left (landscape default).
-    #[default]
     Left,
     /// Master window on the right.
     Right,
@@ -165,6 +164,7 @@ pub enum MasterPosition {
     /// Automatically choose based on screen orientation.
     /// - Landscape screens: left
     /// - Portrait screens: top
+    #[default]
     Auto,
 }
 
@@ -184,7 +184,7 @@ impl Default for MasterConfig {
     fn default() -> Self {
         Self {
             ratio: 60,
-            position: MasterPosition::Auto,
+            position: MasterPosition::default(),
         }
     }
 }
@@ -195,6 +195,7 @@ impl Default for MasterConfig {
 /// configurable gaps, and window matching rules.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default, rename_all = "camelCase")]
+#[derive(Default)]
 pub struct TilingConfig {
     /// Whether the tiling window manager is enabled.
     /// Default: false
@@ -228,22 +229,6 @@ pub struct TilingConfig {
     pub borders: BordersConfig,
 }
 
-impl Default for TilingConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            default_layout: LayoutType::Dwindle,
-            workspaces: Vec::new(),
-            ignore: Vec::new(),
-            animations: AnimationConfig::default(),
-            gaps: GapsConfigValue::default(),
-            floating: FloatingConfig::default(),
-            master: MasterConfig::default(),
-            borders: BordersConfig::default(),
-        }
-    }
-}
-
 impl TilingConfig {
     /// Returns whether the tiling window manager is enabled.
     #[must_use]
@@ -255,8 +240,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_layout_type_default_is_floating() {
-        assert_eq!(LayoutType::default(), LayoutType::Floating);
+    fn test_layout_type_default_is_dwindle() {
+        assert_eq!(LayoutType::default(), LayoutType::Dwindle);
     }
 
     #[test]

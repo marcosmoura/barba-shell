@@ -12,9 +12,9 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "lowercase")]
 pub enum TargetMusicApp {
     /// Tidal music streaming service.
-    #[default]
     Tidal,
     /// Spotify music streaming service.
+    #[default]
     Spotify,
     /// Feishin self-hosted music player.
     Feishin,
@@ -64,6 +64,7 @@ impl TargetMusicApp {
 /// and optionally launches a preferred music player instead.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default, rename_all = "camelCase")]
+#[derive(Default)]
 pub struct NoTunesConfig {
     /// Whether noTunes functionality is enabled.
     /// Default: false
@@ -73,15 +74,6 @@ pub struct NoTunesConfig {
     /// Options: "tidal", "spotify", "feishin", "none"
     /// Default: "spotify"
     pub target_app: TargetMusicApp,
-}
-
-impl Default for NoTunesConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            target_app: TargetMusicApp::Spotify,
-        }
-    }
 }
 
 impl NoTunesConfig {
@@ -95,8 +87,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_target_music_app_default_is_tidal() {
-        assert_eq!(TargetMusicApp::default(), TargetMusicApp::Tidal);
+    fn test_target_music_app_default_is_spotify() {
+        assert_eq!(TargetMusicApp::default(), TargetMusicApp::Spotify);
     }
 
     #[test]

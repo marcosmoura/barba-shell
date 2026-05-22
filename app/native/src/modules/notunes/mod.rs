@@ -329,8 +329,8 @@ mod tests {
     }
 
     #[test]
-    fn test_target_app_default_is_tidal() {
+    fn test_target_app_default_is_spotify() {
         let app = TargetMusicApp::default();
-        assert_eq!(app, TargetMusicApp::Tidal);
+        assert_eq!(app, TargetMusicApp::Spotify);
     }
 }

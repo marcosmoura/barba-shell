@@ -7,11 +7,7 @@ type EmitOptions<T extends object> = {
   payload?: T;
 };
 
-export const emitTauriEvent = <T extends object>({
-  eventName,
-  target,
-  payload,
-}: EmitOptions<T>) => {
+export function emitTauriEvent<T extends object>({ eventName, target, payload }: EmitOptions<T>) {
   if (!target) {
     const window = getCurrentWindow();
 
@@ -19,4 +15,4 @@ export const emitTauriEvent = <T extends object>({
   } else {
     emitTo(target, eventName, payload);
   }
-};
+}

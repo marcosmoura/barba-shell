@@ -1,3 +1,5 @@
+import type { ComponentType } from 'react';
+
 /**
  * Creates a module resolver for dynamic imports with named exports.
  *
@@ -16,8 +18,8 @@
  * @param moduleName - The name of the exported component to resolve
  * @returns A function that extracts the named export and wraps it as a default export
  */
-export const resolveModule =
-  (moduleName: string) =>
-  (module: Record<string, React.ComponentType>): { default: React.ComponentType } => ({
+export function resolveModule(moduleName: string) {
+  return (module: Record<string, ComponentType>): { default: ComponentType } => ({
     default: module[moduleName],
   });
+}

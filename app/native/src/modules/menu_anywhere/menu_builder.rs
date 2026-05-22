@@ -6,6 +6,7 @@
 use std::cell::OnceCell;
 use std::ffi::c_void;
 use std::ptr;
+use std::sync::OnceLock;
 
 use core_foundation::base::TCFType;
 use core_foundation::string::CFString;
@@ -472,7 +473,7 @@ unsafe fn apply_bold_title(item: *mut Object, title: &str) {
 // Menu Action Handling
 // ============================================================================
 
-static mut AX_ELEMENT_KEY: u8 = 0;
+static AX_ELEMENT_KEY: u8 = 0;
 
 unsafe fn store_ax_element_for_item(item: *mut Object, element: AXUIElementRef) {
     let Some(value_class) = Class::get("NSValue") else {
@@ -481,13 +482,13 @@ unsafe fn store_ax_element_for_item(item: *mut Object, element: AXUIElementRef) 
 
     let value: *mut Object = unsafe { msg_send![value_class, valueWithPointer: element] };
     unsafe {
-        objc_setAssociatedObject(item, ptr::addr_of_mut!(AX_ELEMENT_KEY).cast(), value, 1);
+        objc_setAssociatedObject(item, ptr::addr_of!(AX_ELEMENT_KEY).cast(), value, 1);
     }
 }
 
 unsafe fn get_ax_element_for_item(item: *mut Object) -> Option<AXUIElementRef> {
     let value: *mut Object =
-        unsafe { objc_getAssociatedObject(item, ptr::addr_of_mut!(AX_ELEMENT_KEY).cast()) };
+        unsafe { objc_getAssociatedObject(item, ptr::addr_of!(AX_ELEMENT_KEY).cast()) };
 
     if value.is_null() {
         return None;
@@ -497,30 +498,28 @@ unsafe fn get_ax_element_for_item(item: *mut Object) -> Option<AXUIElementRef> {
     if ptr.is_null() { None } else { Some(ptr) }
 }
 
-static mut MENU_HANDLER: *mut Object = ptr::null_mut();
+struct ObjcPtr(*mut Object);
+unsafe impl Send for ObjcPtr {}
+unsafe impl Sync for ObjcPtr {}
+
+static MENU_HANDLER: OnceLock<ObjcPtr> = OnceLock::new();
 
 unsafe fn set_menu_item_action(item: *mut Object) {
-    let handler = unsafe { get_or_create_menu_handler() };
-    if !handler.is_null() {
-        let _: () = unsafe { msg_send![item, setTarget: handler] };
+    let handler_ptr = MENU_HANDLER.get_or_init(|| unsafe { ObjcPtr(get_or_create_menu_handler()) });
+    if !handler_ptr.0.is_null() {
+        let _: () = unsafe { msg_send![item, setTarget: handler_ptr.0] };
         let _: () = unsafe { msg_send![item, setAction: sel!(menuItemClicked:)] };
     }
 }
 
 #[allow(clippy::items_after_statements)]
 unsafe fn get_or_create_menu_handler() -> *mut Object {
-    if unsafe { !MENU_HANDLER.is_null() } {
-        return unsafe { MENU_HANDLER };
-    }
-
     use objc::declare::ClassDecl;
 
     let superclass = Class::get("NSObject").expect("NSObject not found");
 
     if let Some(existing) = Class::get("StacheMenuHandler") {
-        let handler: *mut Object = unsafe { msg_send![existing, new] };
-        unsafe { MENU_HANDLER = handler };
-        return handler;
+        return unsafe { msg_send![existing, new] };
     }
 
     let Some(mut decl) = ClassDecl::new("StacheMenuHandler", superclass) else {
@@ -544,9 +543,7 @@ unsafe fn get_or_create_menu_handler() -> *mut Object {
     }
 
     let handler_class = decl.register();
-    let handler: *mut Object = unsafe { msg_send![handler_class, new] };
-    unsafe { MENU_HANDLER = handler };
-    handler
+    unsafe { msg_send![handler_class, new] }
 }
 
 unsafe fn activate_frontmost_app() {

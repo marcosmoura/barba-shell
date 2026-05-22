@@ -18,7 +18,7 @@ const getBrowserLocation = async (): Promise<LocationData | null> => {
         });
       },
       () => resolve(null),
-      { timeout: 5000 },
+      { timeout: 2000 },
     );
   });
 };

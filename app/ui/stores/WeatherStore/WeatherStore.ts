@@ -1,4 +1,4 @@
-import { useTauri, useTauriSuspense } from '@/hooks/useTauri';
+import { useTauri, useTauriSuspense } from '@/hooks';
 
 import { fetchLocationData } from './location';
 import type { LocationData } from './location';
@@ -10,7 +10,7 @@ const REFETCH_INTERVAL = 20 * 60 * 1000; // 20 minutes
 /**
  * Hook-based Weather Store using React Query for data fetching.
  */
-export const useWeatherStore = () => {
+export function useWeatherStore() {
   const { data: config } = useTauriSuspense<WeatherConfig>({
     queryKey: ['weatherConfig'],
     command: 'get_weather_config',
@@ -18,8 +18,8 @@ export const useWeatherStore = () => {
   });
 
   const { data: location } = useTauri<LocationData>({
-    queryKey: ['weatherLocation', config?.defaultLocation],
-    queryFn: () => fetchLocationData(config!.defaultLocation),
+    queryKey: ['weatherLocation', config.defaultLocation],
+    queryFn: () => fetchLocationData(config.defaultLocation),
     refetchInterval: REFETCH_INTERVAL,
     refetchOnReconnect: true,
     enabled: !!config,
@@ -49,4 +49,4 @@ export const useWeatherStore = () => {
     isLoading,
     isConfigured,
   };
-};
+}

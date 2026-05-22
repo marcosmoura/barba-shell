@@ -2,17 +2,17 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { invoke } from '@tauri-apps/api/core';
 
-import { useTauri } from '@/hooks/useTauri';
+import { useTauri } from '@/hooks';
 import { MediaEvents } from '@/types';
 
 import { getPlayerIconProps, MEDIA_APPS_BY_BUNDLE_ID } from './Media.constants';
-import type { MediaPayload, TransformedMediaPayload } from './Media.types';
+import type { MediaPayload, MediaState, TransformedMediaPayload } from './Media.types';
 
 /**
  * Fetches the current media playback information from the Tauri backend.
  * Returns null if no media is playing or if the fetch fails.
  */
-const fetchCurrentMedia = async (): Promise<MediaPayload | null> => {
+async function fetchCurrentMedia(): Promise<MediaPayload | null> {
   try {
     const payload = await invoke<MediaPayload | null>('get_current_media_info');
     return payload ?? null;
@@ -21,13 +21,13 @@ const fetchCurrentMedia = async (): Promise<MediaPayload | null> => {
     console.warn('[Media] Failed to fetch media information:', error);
     return null;
   }
-};
+}
 
 /**
  * Transforms a raw media payload into a display-ready format.
  * Constructs the label from title and artist, and adds a prefix for paused state.
  */
-const parseMediaPayload = (media: MediaPayload | null): TransformedMediaPayload | null => {
+function parseMediaPayload(media: MediaPayload | null): TransformedMediaPayload | null {
   if (!media) return null;
 
   const { artist, title, artwork, playing, bundleIdentifier } = media;
@@ -42,7 +42,7 @@ const parseMediaPayload = (media: MediaPayload | null): TransformedMediaPayload 
     prefix,
     label,
   };
-};
+}
 
 /**
  * Hook that manages media playback state and artwork loading.
@@ -54,7 +54,7 @@ const parseMediaPayload = (media: MediaPayload | null): TransformedMediaPayload 
  * - Provides click handler to open the source app
  * - Returns appropriate icon based on the media source
  */
-export const useMedia = () => {
+export function useMedia(): MediaState {
   const [loadedArtwork, setLoadedArtwork] = useState<string | null>(null);
 
   const { data: rawMedia } = useTauri<MediaPayload | null>({
@@ -90,20 +90,27 @@ export const useMedia = () => {
     }
 
     const image = `data:image/png;base64,${artwork}`;
+    const controller = new AbortController();
     const imageLoader = new Image();
 
-    imageLoader.src = image;
-    imageLoader.onload = () => setLoadedArtwork(image);
-    imageLoader.onerror = () => setLoadedArtwork(null);
-
-    return () => {
-      imageLoader.src = '';
-      imageLoader.onload = null;
-      imageLoader.onerror = null;
+    imageLoader.onload = () => {
+      if (!controller.signal.aborted) {
+        setLoadedArtwork(image);
+      }
     };
+
+    imageLoader.onerror = () => {
+      if (!controller.signal.aborted) {
+        setLoadedArtwork(null);
+      }
+    };
+
+    imageLoader.src = image;
+
+    return () => controller.abort();
   }, [media?.artwork]);
 
   const mediaIconProps = getPlayerIconProps(media?.bundleIdentifier ?? '');
 
   return { media, loadedArtwork, onMediaClick, mediaIconProps };
-};
+}

@@ -83,11 +83,11 @@ const appIcons = {
   Zoom: ZoomIcon,
 } as const;
 
-export const getAppIcon = (name: string) => {
+export function getAppIcon(name: string): AnyIcon {
   const appName = name.trim() as keyof typeof appIcons;
 
   return appIcons[appName] || DashboardCircleIcon;
-};
+}
 
 export const ease = motionRaw.easing.split(',').map(Number) as [number, number, number, number];
 

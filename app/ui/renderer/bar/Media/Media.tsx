@@ -6,7 +6,7 @@ import { Surface } from '@/components/Surface';
 import { useMedia } from './Media.state';
 import * as styles from './Media.styles';
 
-export const Media = () => {
+export function Media() {
   const { media, loadedArtwork, onMediaClick, mediaIconProps } = useMedia();
 
   if (!media?.label) {
@@ -26,4 +26,4 @@ export const Media = () => {
       <ScrollingLabel className={styles.label}>{media.label}</ScrollingLabel>
     </Surface>
   );
-};
+}

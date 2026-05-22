@@ -1,4 +1,4 @@
-import { memo, useCallback } from 'react';
+import { memo } from 'react';
 
 import { LayoutGroup } from 'motion/react';
 
@@ -14,8 +14,6 @@ export const WorkspaceList = memo(function WorkspaceList({
   focusedWorkspace,
   onSpaceClick,
 }: WorkspaceListProps) {
-  const handleClick = useCallback((name: string) => onSpaceClick(name), [onSpaceClick]);
-
   return (
     <LayoutGroup id="workspaces">
       <Surface className={styles.workspaces}>
@@ -24,7 +22,7 @@ export const WorkspaceList = memo(function WorkspaceList({
             key={name}
             name={name}
             isFocused={focusedWorkspace === name}
-            onClick={handleClick(name)}
+            onClick={onSpaceClick(name)}
           />
         ))}
       </Surface>

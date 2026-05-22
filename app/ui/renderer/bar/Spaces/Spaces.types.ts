@@ -28,16 +28,40 @@ export type TilingWindow = {
 /**
  * Processed workspace data for UI rendering.
  */
-export type Workspaces = {
+type Workspace = {
   name: string;
   displayName: string;
-}[];
+};
+
+export type Workspaces = Workspace[];
 
 /**
  * Processed window data for UI rendering.
  */
-export type WorkspaceWindows = {
+type WorkspaceWindow = {
   appName: string;
   windowId: number;
   windowTitle: string;
-}[];
+};
+
+export type WorkspaceWindows = WorkspaceWindow[];
+
+/**
+ * Return type of the useSpaces hook.
+ */
+type SpaceApp = {
+  appName: string;
+  windowId: number;
+  windowTitle: string;
+  displayName: string;
+};
+
+export type SpacesState = {
+  apps: SpaceApp[];
+  workspaces: Workspaces;
+  focusedWorkspace: string | null | undefined;
+  focusedApp: Omit<SpaceApp, 'displayName'> | null | undefined;
+  onSpaceClick: (name: string) => () => Promise<void>;
+  onAppClick: (windowId: number) => () => Promise<void>;
+  isEnabled: boolean;
+};

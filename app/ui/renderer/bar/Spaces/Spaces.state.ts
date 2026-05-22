@@ -7,7 +7,7 @@ import { useMediaQuery, useTauriEvent } from '@/hooks';
 import { TilingEvents } from '@/types';
 import { LAPTOP_MEDIA_QUERY } from '@/utils/media-query';
 
-import type { TilingWorkspace, TilingWindow, Workspaces } from './Spaces.types';
+import type { SpacesState, TilingWorkspace, TilingWindow, Workspaces } from './Spaces.types';
 
 const workspaceOrder = [
   'terminal',
@@ -25,17 +25,24 @@ const workspaceOrder = [
 const emptyWorkspaces: Workspaces = [];
 const emptyApps: { appName: string; windowId: number; windowTitle: string }[] = [];
 
-const getSortedWorkspaces = (workspaces: TilingWorkspace[] | undefined) => {
+function getSortedWorkspaces(workspaces: TilingWorkspace[] | undefined): TilingWorkspace[] | null {
   if (!workspaces) {
     return null;
   }
 
-  return [...workspaces].sort(
-    (a, b) => workspaceOrder.indexOf(a.name) - workspaceOrder.indexOf(b.name),
-  );
-};
+  return [...workspaces].sort((a, b) => {
+    const indexA = workspaceOrder.indexOf(a.name);
+    const indexB = workspaceOrder.indexOf(b.name);
 
-const fetchWorkspacesData = async () => {
+    if (indexA === -1 && indexB === -1) return a.name.localeCompare(b.name);
+    if (indexA === -1) return 1;
+    if (indexB === -1) return -1;
+
+    return indexA - indexB;
+  });
+}
+
+async function fetchWorkspacesData() {
   try {
     const workspaces = await invoke<TilingWorkspace[]>('get_tiling_workspaces');
     const focusedWorkspace = await invoke<string | null>('get_tiling_focused_workspace');
@@ -47,11 +54,14 @@ const fetchWorkspacesData = async () => {
   } catch {
     // Tiling may not be initialized yet — return empty defaults.
     // The INITIALIZED event listener will invalidate queries once tiling is ready.
-    return { workspacesData: undefined, focusedWorkspace: null };
+    return {
+      workspacesData: undefined,
+      focusedWorkspace: null,
+    };
   }
-};
+}
 
-const fetchAppsData = async () => {
+async function fetchAppsData() {
   try {
     const windows = await invoke<TilingWindow[]>('get_tiling_current_workspace_windows');
     const focusedWindow = await invoke<TilingWindow | null>('get_tiling_focused_window');
@@ -79,13 +89,13 @@ const fetchAppsData = async () => {
     // The INITIALIZED event listener will invalidate queries once tiling is ready.
     return { appsList: [], focusedApp: null };
   }
-};
+}
 
-const invokeWithErrorHandling = async <T>(
+async function invokeWithErrorHandling<T>(
   command: string,
   args?: Record<string, unknown>,
   errorMessage?: string,
-): Promise<T> => {
+): Promise<T> {
   try {
     const result = await invoke<T>(command, args);
     return result;
@@ -93,23 +103,24 @@ const invokeWithErrorHandling = async <T>(
     console.error(`${errorMessage || 'Error invoking command'} "${command}":`, error);
     throw error;
   }
-};
+}
 
 const MAX_DISPLAY_LENGTH = 40;
 
-const truncateText = (text: string, maxLength: number = MAX_DISPLAY_LENGTH): string => {
+function truncateText(text: string, maxLength: number = MAX_DISPLAY_LENGTH): string {
   if (text.length <= maxLength) {
     return text;
   }
-  return `${text.slice(0, maxLength)}...`;
-};
 
-export const useSpaces = () => {
+  return `${text.slice(0, maxLength)}...`;
+}
+
+export function useSpaces(): SpacesState {
   const [isEnabled, setIsEnabled] = useState(false);
 
   const queryClient = useQueryClient();
   const isLaptopScreen = useMediaQuery(LAPTOP_MEDIA_QUERY);
-  const lastFocusChangedRefreshRef = useRef<Date | null>(null);
+  const focusDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { data: workspaceQueryData } = useSuspenseQuery({
     queryKey: ['tiling_workspace_data'],
@@ -159,19 +170,10 @@ export const useSpaces = () => {
   }, [workspacesData]);
 
   const onWindowFocusChanged = useCallback(() => {
-    // Debounce focus-changed events to avoid excessive refetching
-    const now = new Date();
-
-    if (
-      lastFocusChangedRefreshRef.current &&
-      now.getTime() - lastFocusChangedRefreshRef.current.getTime() < 100
-    ) {
-      return;
-    }
-
-    lastFocusChangedRefreshRef.current = now;
-
-    queryClient.invalidateQueries({ queryKey: ['tiling_workspace_apps'] });
+    clearTimeout(focusDebounceTimerRef.current || 0);
+    focusDebounceTimerRef.current = setTimeout(() => {
+      queryClient.invalidateQueries({ queryKey: ['tiling_workspace_apps'] });
+    }, 100);
   }, [queryClient]);
 
   const onWorkspaceChanged = useCallback(() => {
@@ -214,11 +216,13 @@ export const useSpaces = () => {
   // Fast-path: if tiling is already initialized (e.g. after a manual reload),
   // enable immediately without waiting for the INITIALIZED event.
   useLayoutEffect(() => {
-    invoke<boolean>('is_tiling_enabled').then((enabled) => {
+    (async () => {
+      const enabled = await invoke<boolean>('is_tiling_enabled');
+
       if (enabled) {
         setIsEnabled(true);
       }
-    });
+    })();
   }, []);
 
   return {
@@ -230,4 +234,4 @@ export const useSpaces = () => {
     onAppClick,
     isEnabled,
   };
-};
+}

@@ -1,3 +1,5 @@
+import type { IconProps } from '@/components/Icon';
+
 export interface MediaPayload {
   album?: string | null;
   artist: string;
@@ -18,4 +20,11 @@ export interface TransformedMediaPayload {
 export type MediaApp = {
   bundleIdentifier: string;
   name: string;
+};
+
+export type MediaState = {
+  media: TransformedMediaPayload | null;
+  loadedArtwork: string | null;
+  onMediaClick: () => Promise<void>;
+  mediaIconProps: IconProps;
 };

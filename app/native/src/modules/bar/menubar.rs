@@ -1,9 +1,10 @@
 // Hacky workaround to approximate menu bar visibility in the absence of proper APIs.
 
+use std::cell::RefCell;
 use std::ffi::c_void;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{RecvTimeoutError, Sender, channel};
+use std::sync::mpsc::Sender;
 use std::thread;
 use std::time::Duration;
 
@@ -18,6 +19,7 @@ use objc::{class, msg_send, sel, sel_impl};
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
 use crate::events;
+use crate::modules::bar::watcher::start_best_effort_refresh_watcher;
 use crate::platform::objc::{nsstring, nsstring_to_string};
 
 /// Flag indicating if menu visibility watcher is running.
@@ -62,15 +64,6 @@ pub fn start_menu_bar_visibility_watcher(window: &WebviewWindow) {
 }
 
 fn register_menu_bar_visibility_observer(app_handle: AppHandle, window_label: String) {
-    let (tx, rx) = channel::<()>();
-    if MENU_BAR_REFRESH_SIGNAL.set(tx).is_err() {
-        tracing::warn!("menubar refresh signal was already initialized");
-    }
-
-    if let Err(err) = register_menu_bar_visibility_observers() {
-        tracing::warn!(error = %err, "failed to register menubar notification observers");
-    }
-
     let initial_state = query_menu_bar_visible().unwrap_or(false);
     MENU_BAR_VISIBLE.store(initial_state, Ordering::Release);
 
@@ -78,20 +71,24 @@ fn register_menu_bar_visibility_observer(app_handle: AppHandle, window_label: St
         tracing::warn!(error = %e, "failed to emit initial menubar visibility");
     }
 
-    let mut last_visible = initial_state;
+    let last_visible = RefCell::new(initial_state);
 
     thread::spawn(move || {
-        loop {
-            match rx.recv_timeout(MENU_BAR_FALLBACK_POLL_INTERVAL) {
-                Ok(()) | Err(RecvTimeoutError::Timeout) => {
-                    refresh_menu_bar_visibility(&app_handle, &window_label, &mut last_visible);
+        start_best_effort_refresh_watcher(
+            "menubar-watcher",
+            MENU_BAR_FALLBACK_POLL_INTERVAL,
+            |sender| {
+                if MENU_BAR_REFRESH_SIGNAL.set(sender).is_err() {
+                    tracing::warn!("menubar refresh signal was already initialized");
                 }
-                Err(RecvTimeoutError::Disconnected) => {
-                    tracing::warn!("menubar refresh signal disconnected");
-                    return;
-                }
-            }
-        }
+
+                register_menu_bar_visibility_observers()
+            },
+            || {
+                let mut last_visible = last_visible.borrow_mut();
+                refresh_menu_bar_visibility(&app_handle, &window_label, &mut last_visible);
+            },
+        );
     });
 }
 

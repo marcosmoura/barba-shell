@@ -2,6 +2,7 @@ pub mod components;
 mod ipc_listener;
 mod menubar;
 mod screen;
+mod watcher;
 pub mod window;
 
 use tauri::{App, Manager};

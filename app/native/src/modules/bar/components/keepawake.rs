@@ -1,5 +1,6 @@
+use std::cell::RefCell;
 use std::ffi::c_void;
-use std::sync::mpsc::{RecvTimeoutError, Sender, channel};
+use std::sync::mpsc::Sender;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
@@ -16,6 +17,7 @@ use serde::Serialize;
 use tauri::{Emitter, Manager};
 
 use crate::error::StacheError;
+use crate::modules::bar::watcher::start_best_effort_refresh_watcher;
 use crate::platform::objc::{nsstring, nsstring_to_string};
 use crate::platform::thread::spawn_named_thread;
 use crate::{constants, events};
@@ -171,26 +173,25 @@ pub fn init(window: &tauri::WebviewWindow) {
 const SCREEN_LOCKED_KEY: &str = "CGSSessionScreenIsLocked";
 
 fn watch_system_lock_state(app_handle: &tauri::AppHandle) -> Result<(), String> {
-    let (tx, rx) = channel::<()>();
-    LOCK_REFRESH_SIGNAL
-        .set(tx)
-        .map_err(|_| "lock refresh signal already initialized".to_string())?;
+    let last_state = RefCell::new(None);
 
-    register_lock_state_observer()?;
-
-    let mut last_state: Option<bool> = None;
-    refresh_lock_state(app_handle, &mut last_state);
-
-    loop {
-        match rx.recv_timeout(LOCK_FALLBACK_POLL_INTERVAL) {
-            Ok(()) | Err(RecvTimeoutError::Timeout) => {
-                refresh_lock_state(app_handle, &mut last_state);
+    start_best_effort_refresh_watcher(
+        "lock-watcher",
+        LOCK_FALLBACK_POLL_INTERVAL,
+        |sender| {
+            if LOCK_REFRESH_SIGNAL.set(sender).is_err() {
+                tracing::warn!("lock refresh signal was already initialized");
             }
-            Err(RecvTimeoutError::Disconnected) => {
-                return Err("lock refresh signal disconnected".to_string());
-            }
-        }
-    }
+
+            register_lock_state_observer()
+        },
+        || {
+            let mut last_state = last_state.borrow_mut();
+            refresh_lock_state(app_handle, &mut last_state);
+        },
+    );
+
+    Ok(())
 }
 
 fn refresh_lock_state(app_handle: &tauri::AppHandle, last_state: &mut Option<bool>) {

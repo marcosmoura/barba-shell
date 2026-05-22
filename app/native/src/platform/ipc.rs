@@ -123,14 +123,17 @@ impl StacheNotification {
             Self::TilingSetLayout(String::new()),
             Self::TilingWindowFocus(String::new()),
             Self::TilingWindowSwap(String::new()),
-            Self::TilingWindowResize { dimension: String::new(), amount: 0 },
+            Self::TilingWindowResize {
+                dimension: String::new(),
+                amount: 0,
+            },
             Self::TilingWindowPreset(String::new()),
             Self::TilingWindowSendToWorkspace(String::new()),
             Self::TilingWindowSendToScreen(String::new()),
             Self::TilingWorkspaceBalance,
             Self::TilingWorkspaceSendToScreen(String::new()),
         ];
-        variants.iter().map(|v| v.notification_name()).collect()
+        variants.iter().map(StacheNotification::notification_name).collect()
     }
 
     /// Parses a notification from its name and user info.

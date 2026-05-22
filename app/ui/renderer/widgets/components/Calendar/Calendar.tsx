@@ -13,17 +13,19 @@ import type { AnimationDirection, DayProps, SlideAnimationProps } from './Calend
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-const Day = ({ day, isToday }: DayProps) => (
-  <div
-    className={cx(
-      styles.day,
-      isToday && styles.dayToday,
-      day.isOutsideMonth && styles.dayOutsideMonth,
-    )}
-  >
-    {day.day}
-  </div>
-);
+function Day({ day, isToday }: DayProps) {
+  return (
+    <div
+      className={cx(
+        styles.day,
+        isToday && styles.dayToday,
+        day.isOutsideMonth && styles.dayOutsideMonth,
+      )}
+    >
+      {day.day}
+    </div>
+  );
+}
 
 const SLIDE_DISTANCE = 60;
 
@@ -48,12 +50,12 @@ const springTransition = {
   duration: motionRaw.durationSlower,
 } as const;
 
-const SlideAnimation = ({
+function SlideAnimation({
   element = 'div',
   direction,
   animationKey,
   ...rest
-}: SlideAnimationProps) => {
+}: SlideAnimationProps) {
   const MotionElement = element === 'span' ? motion.span : motion.div;
 
   return (
@@ -70,9 +72,9 @@ const SlideAnimation = ({
       />
     </AnimatePresence>
   );
-};
+}
 
-export const Calendar = () => {
+export function Calendar() {
   const {
     getKeyForDay,
     days,
@@ -145,4 +147,4 @@ export const Calendar = () => {
       </motion.div>
     </Surface>
   );
-};
+}

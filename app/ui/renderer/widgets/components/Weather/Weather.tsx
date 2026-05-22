@@ -32,7 +32,7 @@ interface CircularProgressProps {
   progressClass: string;
 }
 
-const CircularProgress = ({
+function CircularProgress({
   percentage,
   color,
   size,
@@ -42,7 +42,7 @@ const CircularProgress = ({
   backgroundClass,
   fillClass,
   progressClass,
-}: CircularProgressProps) => {
+}: CircularProgressProps) {
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
   const offset = circumference - (percentage / 100) * circumference;
@@ -64,13 +64,13 @@ const CircularProgress = ({
       {children}
     </div>
   );
-};
+}
 
 interface StatCardProps {
   stat: WeatherStat;
 }
 
-const StatCard = ({ stat }: StatCardProps) => {
+function StatCard({ stat }: StatCardProps) {
   return (
     <div className={styles.statCard}>
       <CircularProgress
@@ -97,14 +97,14 @@ const StatCard = ({ stat }: StatCardProps) => {
       </div>
     </div>
   );
-};
+}
 
 interface RainForecastProps {
   forecast: HourlyRainData[];
   nextPrecipitation: NextPrecipitationEvent | null;
 }
 
-const getPrecipIcon = (precipType: 'rain' | 'snow' | 'mixed') => {
+function getPrecipIcon(precipType: 'rain' | 'snow' | 'mixed') {
   switch (precipType) {
     case 'snow':
       return SnowIcon;
@@ -113,9 +113,9 @@ const getPrecipIcon = (precipType: 'rain' | 'snow' | 'mixed') => {
     default:
       return CloudAngledRainIcon;
   }
-};
+}
 
-const getPrecipTypeLabel = (precipType: 'rain' | 'snow' | 'mixed') => {
+function getPrecipTypeLabel(precipType: 'rain' | 'snow' | 'mixed') {
   switch (precipType) {
     case 'snow':
       return 'Snow';
@@ -124,9 +124,9 @@ const getPrecipTypeLabel = (precipType: 'rain' | 'snow' | 'mixed') => {
     default:
       return 'Rain';
   }
-};
+}
 
-const getPrecipColors = (precipType: 'rain' | 'snow' | 'mixed') => {
+function getPrecipColors(precipType: 'rain' | 'snow' | 'mixed') {
   switch (precipType) {
     case 'snow':
       return { bg: 'rgba(137, 220, 235, 0.15)', color: colors.sky };
@@ -135,9 +135,9 @@ const getPrecipColors = (precipType: 'rain' | 'snow' | 'mixed') => {
     default:
       return { bg: 'rgba(116, 199, 236, 0.15)', color: colors.sapphire };
   }
-};
+}
 
-const RainForecast = ({ forecast, nextPrecipitation }: RainForecastProps) => {
+function RainForecast({ forecast, nextPrecipitation }: RainForecastProps) {
   const hasRainChance = forecast.some((hour) => hour.precipProb > 10);
 
   return (
@@ -205,13 +205,13 @@ const RainForecast = ({ forecast, nextPrecipitation }: RainForecastProps) => {
       )}
     </div>
   );
-};
+}
 
 interface NextPrecipitationCardProps {
   event: NextPrecipitationEvent;
 }
 
-const NextPrecipitationCard = ({ event }: NextPrecipitationCardProps) => {
+function NextPrecipitationCard({ event }: NextPrecipitationCardProps) {
   const precipColors = getPrecipColors(event.precipType);
   const PrecipIcon = getPrecipIcon(event.precipType);
 
@@ -236,9 +236,9 @@ const NextPrecipitationCard = ({ event }: NextPrecipitationCardProps) => {
       <span className={styles.nextPrecipProb}>{Math.round(event.precipProb)}%</span>
     </div>
   );
-};
+}
 
-export const Weather = () => {
+export function Weather() {
   const { weather, onOpenWeatherClick } = useWeatherWidget();
 
   if (!weather) {
@@ -327,4 +327,4 @@ export const Weather = () => {
       </div>
     </Surface>
   );
-};
+}

@@ -3,8 +3,9 @@ import { useCallback, useMemo, useState } from 'react';
 import { DAY_HEIGHT, DAY_ROW_GAP } from './Calendar.constants';
 import type { AnimationDirection, CalendarDay } from './Calendar.types';
 
-export const calculateMonthHeight = (weeks: number) =>
-  weeks * DAY_HEIGHT + (weeks - 1) * DAY_ROW_GAP;
+export function calculateMonthHeight(weeks: number): number {
+  return weeks * DAY_HEIGHT + (weeks - 1) * DAY_ROW_GAP;
+}
 
 export function useCalendar() {
   const [currentDate, setCurrentDate] = useState(() => new Date());

@@ -18,7 +18,7 @@ const queryClient = new QueryClient({
   defaultOptions: queryClientDefaults,
 });
 
-const WidgetsContent = memo(() => {
+const WidgetsContent = memo(function WidgetsContent() {
   const { isAnimatingIn, transition, contentRef, activeWidget } = useWidgets();
 
   return (
@@ -36,14 +36,14 @@ const WidgetsContent = memo(() => {
   );
 });
 
-WidgetsContent.displayName = 'WidgetsContent';
-
-export const Widgets = () => (
-  <QueryClientProvider client={queryClient}>
-    <ErrorBoundary fallback={null}>
-      <Suspense fallback={null}>
-        <WidgetsContent />
-      </Suspense>
-    </ErrorBoundary>
-  </QueryClientProvider>
-);
+export function Widgets() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <ErrorBoundary fallback={null}>
+        <Suspense fallback={null}>
+          <WidgetsContent />
+        </Suspense>
+      </ErrorBoundary>
+    </QueryClientProvider>
+  );
+}

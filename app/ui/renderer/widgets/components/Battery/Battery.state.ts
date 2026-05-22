@@ -4,7 +4,7 @@ import { colors } from '@/design-system';
 import { useBatteryStore } from '@/stores/BatteryStore';
 import type { BatteryState } from '@/stores/BatteryStore';
 
-const formatTime = (seconds: number): string => {
+function formatTime(seconds: number): string {
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
 
@@ -13,29 +13,29 @@ const formatTime = (seconds: number): string => {
   }
 
   return `${minutes}m`;
-};
+}
 
-const formatTemperature = (celsius: number | null): string => {
+function formatTemperature(celsius: number | null): string {
   if (celsius === null) {
     return 'N/A';
   }
 
   return `${celsius.toFixed(1)}°C`;
-};
+}
 
-const formatVoltage = (volts: number): string => {
+function formatVoltage(volts: number): string {
   return `${volts.toFixed(2)}V`;
-};
+}
 
-const formatCycles = (cycles: number | null): string => {
+function formatCycles(cycles: number | null): string {
   if (cycles === null) {
     return 'N/A';
   }
 
   return cycles.toLocaleString();
-};
+}
 
-const getStateLabel = (state: BatteryState): string => {
+function getStateLabel(state: BatteryState): string {
   switch (state) {
     case 'Charging':
       return 'Charging';
@@ -48,9 +48,9 @@ const getStateLabel = (state: BatteryState): string => {
     default:
       return 'Unknown';
   }
-};
+}
 
-const getProgressColor = (percentage: number, state: BatteryState): string => {
+function getProgressColor(percentage: number, state: BatteryState): string {
   if (state === 'Charging') {
     return colors.green;
   }
@@ -68,9 +68,9 @@ const getProgressColor = (percentage: number, state: BatteryState): string => {
   }
 
   return colors.green;
-};
+}
 
-const getHealthColor = (health: number): string => {
+function getHealthColor(health: number): string {
   if (health >= 80) {
     return colors.green;
   }
@@ -84,9 +84,9 @@ const getHealthColor = (health: number): string => {
   }
 
   return colors.red;
-};
+}
 
-export const useBatteryWidget = () => {
+export function useBatteryWidget() {
   // Get state from hook-based store (uses React Query internally)
   const { battery } = useBatteryStore();
 
@@ -106,12 +106,12 @@ export const useBatteryWidget = () => {
       time_to_empty,
     } = battery;
 
-    const timeRemaining =
-      state === 'Charging' && time_to_full
-        ? `${formatTime(time_to_full)} until full`
-        : state === 'Discharging' && time_to_empty
-          ? `${formatTime(time_to_empty)} remaining`
-          : null;
+    let timeRemaining: string | null = null;
+    if (state === 'Charging' && time_to_full) {
+      timeRemaining = `${formatTime(time_to_full)} until full`;
+    } else if (state === 'Discharging' && time_to_empty) {
+      timeRemaining = `${formatTime(time_to_empty)} remaining`;
+    }
 
     return {
       percentage,
@@ -129,4 +129,4 @@ export const useBatteryWidget = () => {
   }, [battery]);
 
   return formattedData;
-};
+}

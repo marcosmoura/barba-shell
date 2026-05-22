@@ -29,7 +29,7 @@ const transition = {
  * 3. ResizeObserver detects content size and repositions/resizes window
  * 4. If open: animate out, then hide window and clear state
  */
-export const useWidgets = () => {
+export function useWidgets() {
   // The widget currently being rendered (null when closed)
   const [activeWidget, setActiveWidget] = useState<WidgetNames | null>(null);
   // The rect of the element that triggered the widget (for positioning)
@@ -168,4 +168,4 @@ export const useWidgets = () => {
     /** The widget name to render */
     activeWidget,
   };
-};
+}

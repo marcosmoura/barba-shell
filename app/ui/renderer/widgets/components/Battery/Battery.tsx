@@ -6,7 +6,7 @@ import { Surface } from '@/components/Surface';
 import { useBatteryWidget } from './Battery.state';
 import * as styles from './Battery.styles';
 
-export const Battery = () => {
+export function Battery() {
   const battery = useBatteryWidget();
 
   if (!battery) {
@@ -97,4 +97,4 @@ export const Battery = () => {
       )}
     </Surface>
   );
-};
+}

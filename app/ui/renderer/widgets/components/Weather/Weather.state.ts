@@ -5,14 +5,14 @@ import { invoke } from '@tauri-apps/api/core';
 import { colors } from '@/design-system';
 import { getWeatherIcon, useWeatherStore } from '@/stores/WeatherStore';
 
-const getWindDirection = (degrees: number | null | undefined): string => {
+function getWindDirection(degrees: number | null | undefined): string {
   if (degrees == null) return '';
   const directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
   const index = Math.round(degrees / 45) % 8;
   return directions[index];
-};
+}
 
-const getMoonPhaseLabel = (phase: number): string => {
+function getMoonPhaseLabel(phase: number): string {
   if (phase === 0 || phase === 1) return 'New Moon';
   if (phase < 0.25) return 'Waxing Crescent';
   if (phase === 0.25) return 'First Quarter';
@@ -21,9 +21,9 @@ const getMoonPhaseLabel = (phase: number): string => {
   if (phase < 0.75) return 'Waning Gibbous';
   if (phase === 0.75) return 'Last Quarter';
   return 'Waning Crescent';
-};
+}
 
-const getTemperatureColor = (temp: number | null | undefined): string => {
+function getTemperatureColor(temp: number | null | undefined): string {
   if (temp == null) return colors.text;
   if (temp <= 0) return colors.sky;
   if (temp <= 10) return colors.sapphire;
@@ -31,9 +31,9 @@ const getTemperatureColor = (temp: number | null | undefined): string => {
   if (temp <= 30) return colors.yellow;
   if (temp <= 35) return colors.peach;
   return colors.red;
-};
+}
 
-const getTemperatureStatus = (temp: number | null | undefined): string => {
+function getTemperatureStatus(temp: number | null | undefined): string {
   if (temp == null) return 'Unknown';
   if (temp <= 0) return 'Freezing';
   if (temp <= 10) return 'Cold';
@@ -42,9 +42,9 @@ const getTemperatureStatus = (temp: number | null | undefined): string => {
   if (temp <= 30) return 'Warm';
   if (temp <= 35) return 'Hot';
   return 'Very Hot';
-};
+}
 
-const getTemperatureDescription = (temp: number | null | undefined, conditions: string): string => {
+function getTemperatureDescription(temp: number | null | undefined, conditions: string): string {
   if (temp == null) return 'Weather data is being loaded...';
 
   const status = getTemperatureStatus(temp);
@@ -66,12 +66,12 @@ const getTemperatureDescription = (temp: number | null | undefined, conditions: 
     return `${status} conditions with ${conditionsLower}. Stay hydrated and seek shade when needed.`;
   }
   return `${status} temperature with ${conditionsLower}. Limit outdoor exposure and stay cool.`;
-};
+}
 
-const getStatStatus = (
+function getStatStatus(
   value: number | null | undefined,
   type: 'humidity' | 'wind' | 'visibility' | 'cloudCover' | 'pressure',
-): { label: string; color: string } => {
+): { label: string; color: string } {
   if (value == null) return { label: 'N/A', color: colors.overlay1 };
 
   switch (type) {
@@ -107,7 +107,7 @@ const getStatStatus = (
     default:
       return { label: 'N/A', color: colors.overlay1 };
   }
-};
+}
 
 export interface WeatherStat {
   id: string;
@@ -146,15 +146,15 @@ export interface NextPrecipitationEvent {
   daysFromNow: number;
 }
 
-const getPrecipColor = (precipProb: number): string => {
+function getPrecipColor(precipProb: number): string {
   if (precipProb <= 10) return colors.green;
   if (precipProb <= 30) return colors.sapphire;
   if (precipProb <= 50) return colors.yellow;
   if (precipProb <= 70) return colors.peach;
   return colors.sky;
-};
+}
 
-const formatHour = (datetime: string): { hour: string; time: string } => {
+function formatHour(datetime: string): { hour: string; time: string } {
   const [hourStr] = datetime.split(':');
   const hour = parseInt(hourStr, 10);
   const period = hour >= 12 ? 'PM' : 'AM';
@@ -163,22 +163,22 @@ const formatHour = (datetime: string): { hour: string; time: string } => {
     hour: `${displayHour}`,
     time: `${displayHour}:00 ${period}`,
   };
-};
+}
 
-const getDayName = (dateStr: string, daysFromNow: number): string => {
+function getDayName(dateStr: string, daysFromNow: number): string {
   if (daysFromNow === 0) return 'Today';
   if (daysFromNow === 1) return 'Tomorrow';
 
   const date = new Date(dateStr);
   return date.toLocaleDateString('en-US', { weekday: 'long' });
-};
+}
 
-const formatDate = (dateStr: string): string => {
+function formatDate(dateStr: string): string {
   const date = new Date(dateStr);
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-};
+}
 
-export const useWeatherWidget = () => {
+export function useWeatherWidget() {
   const { weather } = useWeatherStore();
 
   const formattedData = useMemo(() => {
@@ -316,8 +316,14 @@ export const useWeatherWidget = () => {
 
       // Consider significant precipitation (>20% chance)
       if (precipProb >= 20 && (hasRain || hasSnow)) {
-        const precipType: 'rain' | 'snow' | 'mixed' =
-          hasSnow && hasRain ? 'mixed' : hasSnow ? 'snow' : 'rain';
+        let precipType: 'rain' | 'snow' | 'mixed';
+        if (hasSnow && hasRain) {
+          precipType = 'mixed';
+        } else if (hasSnow) {
+          precipType = 'snow';
+        } else {
+          precipType = 'rain';
+        }
 
         nextPrecipitation = {
           date: formatDate(day.datetime),
@@ -362,4 +368,4 @@ export const useWeatherWidget = () => {
     weather: formattedData,
     onOpenWeatherClick,
   };
-};
+}

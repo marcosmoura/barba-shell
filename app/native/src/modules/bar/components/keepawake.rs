@@ -184,7 +184,7 @@ fn watch_system_lock_state(app_handle: &tauri::AppHandle) -> Result<(), String> 
     loop {
         match rx.recv_timeout(LOCK_FALLBACK_POLL_INTERVAL) {
             Ok(()) | Err(RecvTimeoutError::Timeout) => {
-                refresh_lock_state(app_handle, &mut last_state)
+                refresh_lock_state(app_handle, &mut last_state);
             }
             Err(RecvTimeoutError::Disconnected) => {
                 return Err("lock refresh signal disconnected".to_string());

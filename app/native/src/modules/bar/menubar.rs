@@ -84,7 +84,7 @@ fn register_menu_bar_visibility_observer(app_handle: AppHandle, window_label: St
         loop {
             match rx.recv_timeout(MENU_BAR_FALLBACK_POLL_INTERVAL) {
                 Ok(()) | Err(RecvTimeoutError::Timeout) => {
-                    refresh_menu_bar_visibility(&app_handle, &window_label, &mut last_visible)
+                    refresh_menu_bar_visibility(&app_handle, &window_label, &mut last_visible);
                 }
                 Err(RecvTimeoutError::Disconnected) => {
                     tracing::warn!("menubar refresh signal disconnected");

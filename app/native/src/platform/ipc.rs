@@ -133,7 +133,7 @@ impl StacheNotification {
             Self::TilingWorkspaceBalance,
             Self::TilingWorkspaceSendToScreen(String::new()),
         ];
-        variants.iter().map(StacheNotification::notification_name).collect()
+        variants.iter().map(Self::notification_name).collect()
     }
 
     /// Parses a notification from its name and user info.

@@ -1,3 +1,6 @@
+mod parser;
+mod state;
+
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::ptr;
@@ -11,6 +14,13 @@ use core_foundation::mach_port::CFMachPort;
 use core_foundation::number::CFNumber;
 use core_foundation::runloop::{CFRunLoop, kCFRunLoopCommonModes};
 use core_foundation::string::CFString;
+pub(crate) use parser::parse_shortcut;
+#[cfg(test)]
+use state::CapsState;
+use state::{
+    CapsDecision, CapsInput, STATE, SYNTHETIC_CAPS_EVENTS, SyntheticCapsEventAllowance,
+    action_for_input,
+};
 
 use crate::config::ShortcutCommands;
 use crate::modules::hotkey::execute_shortcut_commands;
@@ -112,14 +122,6 @@ static BINDINGS: Mutex<Option<CapsBindings>> = Mutex::new(None);
 static EVENT_TAP: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 static HID_MANAGER: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 static CAPS_RESTORE_GENERATION: AtomicU64 = AtomicU64::new(0);
-static SYNTHETIC_CAPS_EVENTS: Mutex<SyntheticCapsEventAllowance> =
-    Mutex::new(SyntheticCapsEventAllowance { remaining: 0, expires_at: None });
-static STATE: Mutex<CapsState> = Mutex::new(CapsState {
-    mode: CapsMode::Idle,
-    active_key: None,
-    stable_caps_on: false,
-    press_started_caps_on: false,
-});
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 pub(super) type CapsBindings = HashMap<CapsKey, CapsBinding>;
@@ -162,30 +164,6 @@ impl std::fmt::Display for CapsShortcutError {
             Self::UnknownKey(key) => write!(formatter, "unknown CapsLock key: {key}"),
         }
     }
-}
-
-pub(super) fn parse_shortcut(shortcut: &str) -> CapsShortcut {
-    let mut parts = shortcut.split('+');
-    let Some(first) = parts.next() else {
-        return CapsShortcut::NotCaps;
-    };
-
-    if first != "CapsLock" {
-        return CapsShortcut::NotCaps;
-    }
-
-    let Some(key_name) = parts.next() else {
-        return CapsShortcut::Invalid(CapsShortcutError::MissingKey);
-    };
-
-    if parts.next().is_some() {
-        return CapsShortcut::Invalid(CapsShortcutError::UnsupportedShape);
-    }
-
-    keycode_for_name(key_name).map_or_else(
-        || CapsShortcut::Invalid(CapsShortcutError::UnknownKey(key_name.to_string())),
-        |keycode| CapsShortcut::Binding(CapsKey::new(keycode)),
-    )
 }
 
 pub(super) fn start(bindings: CapsBindings) -> bool {
@@ -626,250 +604,6 @@ unsafe fn mark_synthetic_caps_event(event: CGEventRef) {
             K_CG_EVENT_SOURCE_USER_DATA,
             STACHE_SYNTHETIC_CAPS_MARKER,
         );
-    }
-}
-
-fn keycode_for_name(key_name: &str) -> Option<i64> {
-    let normalized = key_name.to_ascii_uppercase();
-    match normalized.as_str() {
-        "A" => Some(0),
-        "S" => Some(1),
-        "D" => Some(2),
-        "F" => Some(3),
-        "H" => Some(4),
-        "G" => Some(5),
-        "Z" => Some(6),
-        "X" => Some(7),
-        "C" => Some(8),
-        "V" => Some(9),
-        "B" => Some(11),
-        "Q" => Some(12),
-        "W" => Some(13),
-        "E" => Some(14),
-        "R" => Some(15),
-        "Y" => Some(16),
-        "T" => Some(17),
-        "1" | "DIGIT1" => Some(18),
-        "2" | "DIGIT2" => Some(19),
-        "3" | "DIGIT3" => Some(20),
-        "4" | "DIGIT4" => Some(21),
-        "6" | "DIGIT6" => Some(22),
-        "5" | "DIGIT5" => Some(23),
-        "EQUAL" => Some(24),
-        "9" | "DIGIT9" => Some(25),
-        "7" | "DIGIT7" => Some(26),
-        "MINUS" => Some(27),
-        "8" | "DIGIT8" => Some(28),
-        "0" | "DIGIT0" => Some(29),
-        "RIGHTBRACKET" => Some(30),
-        "O" => Some(31),
-        "U" => Some(32),
-        "LEFTBRACKET" => Some(33),
-        "I" => Some(34),
-        "P" => Some(35),
-        "ENTER" | "RETURN" => Some(36),
-        "L" => Some(37),
-        "J" => Some(38),
-        "QUOTE" => Some(39),
-        "K" => Some(40),
-        "SEMICOLON" => Some(41),
-        "BACKSLASH" => Some(42),
-        "COMMA" => Some(43),
-        "SLASH" => Some(44),
-        "N" => Some(45),
-        "M" => Some(46),
-        "PERIOD" => Some(47),
-        "TAB" => Some(48),
-        "SPACE" => Some(49),
-        "BACKQUOTE" | "GRAVE" => Some(50),
-        "BACKSPACE" | "DELETE" => Some(51),
-        "ESCAPE" => Some(53),
-        "LEFT" | "ARROWLEFT" => Some(123),
-        "RIGHT" | "ARROWRIGHT" => Some(124),
-        "DOWN" | "ARROWDOWN" => Some(125),
-        "UP" | "ARROWUP" => Some(126),
-        _ => None,
-    }
-}
-
-#[derive(Debug, Default)]
-struct CapsState {
-    mode: CapsMode,
-    active_key: Option<CapsKey>,
-    stable_caps_on: bool,
-    press_started_caps_on: bool,
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-enum CapsMode {
-    #[default]
-    Idle,
-    CapsHeld,
-    ChordUsed,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CapsInput {
-    CapsDown,
-    CapsUp,
-    KeyDown(CapsKey, bool),
-    KeyUp(CapsKey),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CapsDecision {
-    Pass,
-    Suppress,
-    Execute(CapsKey),
-    EnsureCapsState(bool),
-}
-
-impl CapsState {
-    fn set_caps_lock_state(&mut self, caps_on: bool) {
-        self.stable_caps_on = caps_on;
-        if self.mode == CapsMode::Idle {
-            self.press_started_caps_on = caps_on;
-        }
-    }
-
-    fn handle_input(
-        &mut self,
-        input: CapsInput,
-        has_binding: impl Fn(CapsKey) -> bool,
-    ) -> CapsDecision {
-        match input {
-            CapsInput::CapsDown => {
-                if self.mode == CapsMode::Idle {
-                    self.mode = CapsMode::CapsHeld;
-                    self.active_key = None;
-                    self.press_started_caps_on = self.stable_caps_on;
-                }
-                CapsDecision::Pass
-            }
-            CapsInput::CapsUp => match self.mode {
-                CapsMode::CapsHeld => {
-                    let target_on = !self.press_started_caps_on;
-                    self.mode = CapsMode::Idle;
-                    self.active_key = None;
-                    self.stable_caps_on = target_on;
-                    CapsDecision::EnsureCapsState(target_on)
-                }
-                CapsMode::ChordUsed => {
-                    let target_on = self.press_started_caps_on;
-                    self.mode = CapsMode::Idle;
-                    self.stable_caps_on = target_on;
-                    CapsDecision::EnsureCapsState(target_on)
-                }
-                CapsMode::Idle => CapsDecision::Pass,
-            },
-            CapsInput::KeyDown(key, _) if key == CapsKey::new(KEY_CAPS_LOCK) => {
-                CapsDecision::Suppress
-            }
-            CapsInput::KeyDown(key, true) if self.active_key == Some(key) => CapsDecision::Suppress,
-            CapsInput::KeyDown(key, is_repeat) => match self.mode {
-                CapsMode::CapsHeld
-                    if has_binding(key) && !is_repeat && self.active_key.is_none() =>
-                {
-                    self.mode = CapsMode::ChordUsed;
-                    self.active_key = Some(key);
-                    CapsDecision::Execute(key)
-                }
-                CapsMode::CapsHeld if !is_repeat && self.active_key.is_none() => {
-                    self.mode = CapsMode::ChordUsed;
-                    CapsDecision::Pass
-                }
-                CapsMode::ChordUsed
-                    if has_binding(key) && !is_repeat && self.active_key.is_none() =>
-                {
-                    self.active_key = Some(key);
-                    CapsDecision::Execute(key)
-                }
-                CapsMode::ChordUsed if self.active_key == Some(key) => CapsDecision::Suppress,
-                _ => CapsDecision::Pass,
-            },
-            CapsInput::KeyUp(key) => {
-                if self.active_key == Some(key) {
-                    self.active_key = None;
-                    CapsDecision::Suppress
-                } else {
-                    CapsDecision::Pass
-                }
-            }
-        }
-    }
-}
-
-#[derive(Debug, Default)]
-struct CapsAction {
-    suppress: bool,
-    ensure_caps_on: Option<bool>,
-    commands: Option<ShortcutCommands>,
-}
-
-#[derive(Debug, Default)]
-struct SyntheticCapsEventAllowance {
-    remaining: u8,
-    expires_at: Option<Instant>,
-}
-
-impl SyntheticCapsEventAllowance {
-    fn arm(&mut self, now: Instant, event_count: u8) {
-        if event_count == 0 {
-            self.clear();
-            return;
-        }
-
-        self.remaining = event_count;
-        self.expires_at = Some(now + Duration::from_millis(SYNTHETIC_CAPS_EVENT_ALLOWANCE_MILLIS));
-    }
-
-    fn consume(&mut self, now: Instant) -> bool {
-        let Some(expires_at) = self.expires_at else {
-            return false;
-        };
-
-        if self.remaining == 0 || now > expires_at {
-            self.clear();
-            return false;
-        }
-
-        self.remaining -= 1;
-        if self.remaining == 0 {
-            self.expires_at = None;
-        }
-
-        true
-    }
-
-    const fn clear(&mut self) {
-        self.remaining = 0;
-        self.expires_at = None;
-    }
-}
-
-fn action_for_input(
-    state: &mut CapsState,
-    input: CapsInput,
-    bindings: &CapsBindings,
-) -> CapsAction {
-    let decision = state.handle_input(input, |key| bindings.contains_key(&key));
-
-    match decision {
-        CapsDecision::Pass => CapsAction::default(),
-        CapsDecision::Suppress => CapsAction {
-            suppress: true,
-            ..CapsAction::default()
-        },
-        CapsDecision::EnsureCapsState(target_on) => CapsAction {
-            suppress: false,
-            ensure_caps_on: Some(target_on),
-            commands: None,
-        },
-        CapsDecision::Execute(key) => CapsAction {
-            suppress: true,
-            ensure_caps_on: Some(state.press_started_caps_on),
-            commands: bindings.get(&key).map(|binding| binding.commands.clone()),
-        },
     }
 }
 

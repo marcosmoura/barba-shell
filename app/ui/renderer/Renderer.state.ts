@@ -9,10 +9,10 @@ const windowName = getCurrentWindow().label;
 
 console.log('App mounted for window:', windowName);
 
-export const useRenderer = () => {
+export function useRenderer() {
   const onAppReload = useCallback(() => window.location.reload(), []);
 
   useTauriEvent(AppEvents.RELOAD, onAppReload);
 
   return { windowName };
-};
+}

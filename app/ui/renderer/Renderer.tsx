@@ -7,7 +7,7 @@ import { useRenderer } from './Renderer.state';
 const Bar = lazy(() => import('./bar').then(resolveModule('Bar')));
 const Widgets = lazy(() => import('./widgets').then(resolveModule('Widgets')));
 
-export const Renderer = () => {
+export function Renderer() {
   const { windowName } = useRenderer();
 
   return (
@@ -16,4 +16,4 @@ export const Renderer = () => {
       {windowName === 'widgets' && <Widgets />}
     </Suspense>
   );
-};
+}

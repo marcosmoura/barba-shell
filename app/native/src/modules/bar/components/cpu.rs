@@ -7,7 +7,6 @@ use std::sync::{LazyLock, Mutex, PoisonError};
 
 use serde::Serialize;
 use sysinfo::System;
-use tauri_plugin_shell::ShellExt;
 
 /// Minimum valid temperature in Celsius.
 const TEMP_MIN: f64 = 0.0;
@@ -28,10 +27,9 @@ static SYS: LazyLock<Mutex<System>> = LazyLock::new(|| Mutex::new(System::new_al
 
 /// Fetch current CPU metrics (usage and temperature) on demand.
 #[tauri::command]
-#[allow(clippy::needless_pass_by_value)]
-pub fn get_cpu_info(app: tauri::AppHandle) -> CpuInfo {
+pub fn get_cpu_info() -> CpuInfo {
     let usage = get_cpu_usage().round();
-    let temperature = get_cpu_temperature(&app).map(f32::round);
+    let temperature = get_cpu_temperature().map(f32::round);
 
     CpuInfo { usage, temperature }
 }
@@ -50,14 +48,21 @@ fn get_cpu_usage() -> f32 {
 /// Get CPU temperature using multiple methods in order of preference:
 /// 1. Direct SMC access via smc crate (most accurate, requires proper entitlements)
 /// 2. External tools (ismc or smctemp) if installed via Homebrew
-fn get_cpu_temperature(app: &tauri::AppHandle) -> Option<f32> {
+fn get_cpu_temperature() -> Option<f32> {
     // Try direct SMC access first
     if let Some(temp) = get_smc_cpu_temperature() {
+        tracing::debug!(temperature = temp, "cpu: got temperature from SMC");
         return Some(temp);
     }
 
     // Fall back to external tools
-    get_shell_cpu_temperature(app)
+    let temp = get_shell_cpu_temperature();
+    if temp.is_some() {
+        tracing::debug!(temperature = temp, "cpu: got temperature from shell");
+    } else {
+        tracing::debug!("cpu: no temperature available from any source");
+    }
+    temp
 }
 
 /// Check if a temperature reading is within valid range.
@@ -72,7 +77,13 @@ fn average_temps(temps: &[f64]) -> f64 { temps.iter().sum::<f64>() / temps.len()
 /// Read CPU temperature directly from SMC using the smc crate.
 #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
 fn get_smc_cpu_temperature() -> Option<f32> {
-    let smc = smc::SMC::new().ok()?;
+    let smc = match smc::SMC::new() {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::debug!(error = %e, "smc: failed to open SMC connection");
+            return None;
+        }
+    };
 
     // Try the built-in cpus_temperature method
     if let Ok(temps) = smc.cpus_temperature() {
@@ -104,51 +115,104 @@ fn get_smc_cpu_temperature() -> Option<f32> {
         }
     }
 
+    tracing::debug!("smc: no CPU temperature sensors found");
     None
 }
 
 /// Get CPU temperature using external CLI tools (ismc or smctemp).
 /// These must be installed by the user via Homebrew.
 #[allow(clippy::cast_possible_truncation)]
-fn get_shell_cpu_temperature(app: &tauri::AppHandle) -> Option<f32> {
+fn get_shell_cpu_temperature() -> Option<f32> {
     // Try ismc first (outputs JSON with detailed sensor data)
-    if let Ok(output) = run_shell_command(app, "ismc", &["temp", "-o", "json"])
-        && let Some(temp) = parse_ismc_cpu_temps(&output)
-    {
-        return Some(temp);
+    match run_shell_command("ismc", &["temp", "-o", "json"]) {
+        Ok(output) => {
+            if let Some(temp) = parse_ismc_cpu_temps(&output) {
+                tracing::debug!(
+                    temperature = temp,
+                    tool = "ismc",
+                    "cpu: got temperature from shell tool"
+                );
+                return Some(temp);
+            }
+            tracing::debug!(
+                output_len = output.len(),
+                "cpu: ismc output didn't contain CPU sensors"
+            );
+        }
+        Err(e) => {
+            tracing::debug!(error = %e, tool = "ismc", "cpu: ismc command failed");
+        }
     }
 
     // Fall back to smctemp (outputs just the temperature value)
-    if let Ok(output) = run_shell_command(app, "smctemp", &["-c"])
-        && let Ok(temp) = output.trim().parse::<f32>()
-        && is_valid_temp(f64::from(temp))
-    {
-        return Some(temp);
+    match run_shell_command("smctemp", &["-c"]) {
+        Ok(output) => match output.trim().parse::<f32>() {
+            Ok(temp) if is_valid_temp(f64::from(temp)) => {
+                tracing::debug!(
+                    temperature = temp,
+                    tool = "smctemp",
+                    "cpu: got temperature from shell tool"
+                );
+                return Some(temp);
+            }
+            Ok(temp) => {
+                tracing::debug!(temperature = temp, "cpu: smctemp value out of valid range");
+            }
+            Err(e) => {
+                tracing::debug!(error = %e, output = output.trim(), "cpu: smctemp parse failed");
+            }
+        },
+        Err(e) => {
+            tracing::debug!(error = %e, tool = "smctemp", "cpu: smctemp command failed");
+        }
     }
 
     None
 }
 
-fn run_shell_command(
-    app: &tauri::AppHandle,
-    program: &str,
-    args: &[&str],
-) -> Result<String, String> {
-    tauri::async_runtime::block_on(async { app.shell().command(program).args(args).output().await })
-        .map_err(|err| format!("Failed to run {program}: {err}"))
-        .and_then(|output| {
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(format!(
-                    "{program} exited with status {:?}: {}",
-                    output.status.code(),
-                    stderr.trim()
-                ));
-            }
+/// Resolve a binary name to an absolute path by searching known locations.
+///
+/// macOS GUI apps (launched from Finder or Dock) inherit a minimal PATH from
+/// launchd (`/usr/bin:/bin:/usr/sbin:/sbin`) that excludes Homebrew directories.
+/// This function probes known Homebrew prefixes so tools like `smctemp` and
+/// `ismc` are found regardless of how the app was launched.
+fn resolve_binary_path(name: &str) -> std::path::PathBuf {
+    let search_dirs = [
+        "/opt/homebrew/bin", // Apple Silicon Homebrew
+        "/usr/local/bin",    // Intel Homebrew / manual installs
+        "/usr/bin",
+        "/bin",
+    ];
 
-            String::from_utf8(output.stdout)
-                .map_err(|err| format!("{program} returned invalid UTF-8: {err}"))
-        })
+    for dir in search_dirs {
+        let path = std::path::Path::new(dir).join(name);
+        if path.exists() {
+            return path;
+        }
+    }
+
+    // Fall back to bare name — let the OS use whatever PATH it has
+    std::path::PathBuf::from(name)
+}
+
+fn run_shell_command(program: &str, args: &[&str]) -> Result<String, String> {
+    let path = resolve_binary_path(program);
+    let output = std::process::Command::new(&path)
+        .args(args)
+        .output()
+        .map_err(|err| format!("Failed to run {program}: {err}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "{program} exited with status {:?}: {}",
+            output.status.code(),
+            stderr.trim()
+        ));
+    }
+
+    String::from_utf8(output.stdout)
+        .map_err(|err| format!("{program} returned invalid UTF-8: {err}"))
 }
 
 /// Parse CPU temperature readings from ismc JSON output.

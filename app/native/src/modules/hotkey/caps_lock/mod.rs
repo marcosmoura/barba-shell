@@ -14,7 +14,7 @@ use core_foundation::mach_port::CFMachPort;
 use core_foundation::number::CFNumber;
 use core_foundation::runloop::{CFRunLoop, kCFRunLoopCommonModes};
 use core_foundation::string::CFString;
-pub(crate) use parser::parse_shortcut;
+pub use parser::parse_shortcut;
 #[cfg(test)]
 use state::CapsState;
 use state::{

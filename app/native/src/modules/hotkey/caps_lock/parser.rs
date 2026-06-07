@@ -1,6 +1,6 @@
 use super::{CapsKey, CapsShortcut, CapsShortcutError};
 
-pub(crate) fn parse_shortcut(shortcut: &str) -> CapsShortcut {
+pub fn parse_shortcut(shortcut: &str) -> CapsShortcut {
     let mut parts = shortcut.split('+');
     let Some(first) = parts.next() else {
         return CapsShortcut::NotCaps;

@@ -1,6 +1,7 @@
 import { colors } from '@/design-system';
-import { useWidgetToggle } from '@/hooks';
+import { useMediaQuery, useWidgetToggle } from '@/hooks';
 import { getBatteryIcon, useBatteryStore } from '@/stores/BatteryStore';
+import { LAPTOP_MEDIA_QUERY } from '@/utils/media-query';
 
 import type { BatteryState } from './Battery.types';
 
@@ -17,7 +18,7 @@ function getColor(state?: string): string {
   }
 }
 
-function getLabel(percentage?: number, state?: string): string {
+function getLabel(percentage?: number, state?: string, isCompact?: boolean): string {
   if (typeof percentage !== 'number' || !state) {
     return 'Loading...';
   }
@@ -26,7 +27,7 @@ function getLabel(percentage?: number, state?: string): string {
     return '100%';
   }
 
-  if (state === 'Unknown') {
+  if (state === 'Unknown' || isCompact) {
     return `${percentage}%`;
   }
 
@@ -35,13 +36,14 @@ function getLabel(percentage?: number, state?: string): string {
 
 export function useBattery(): BatteryState {
   const { ref, onClick } = useWidgetToggle('battery');
+  const isCompact = useMediaQuery(LAPTOP_MEDIA_QUERY);
 
   const { battery } = useBatteryStore();
   const { state, percentage } = battery || {};
 
   return {
     icon: getBatteryIcon(percentage, state),
-    label: getLabel(percentage, state),
+    label: getLabel(percentage, state, isCompact),
     color: getColor(state),
     percentage,
     ref,

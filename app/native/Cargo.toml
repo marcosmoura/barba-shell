@@ -57,7 +57,7 @@ rand = { version = "0.10.1", default-features = false, features = [
     "thread_rng",
 ] }
 rayon = { version = "1.12.0", default-features = false }
-regex = { version = "1.12.3", default-features = false, features = ["std"] }
+regex = { version = "1.12.4", default-features = false, features = ["std"] }
 schemars = { version = "1.2.1", default-features = true }
 serde = { version = "1.0.228", default-features = false, features = ["derive"] }
 serde_json = { version = "1.0.150", default-features = false, features = [
@@ -73,10 +73,10 @@ smallvec = { version = "1.15.1", default-features = false, features = [
 ] }
 smc = "0.2.4"
 starship-battery = { version = "0.11.0", default-features = false }
-sysinfo = { version = "0.39.2", default-features = false, features = [
+sysinfo = { version = "0.39.3", default-features = false, features = [
     "system",
 ] }
-tabled = { version = "0.20", default-features = false, features = [
+tabled = { version = "0.21", default-features = false, features = [
     "std",
     "derive",
     "ansi",
@@ -86,7 +86,7 @@ tauri = { version = "2.11.2", default-features = false, features = [
     "tray-icon",
     "wry",
 ] }
-tauri-plugin-global-shortcut = "2.3.1"
+tauri-plugin-global-shortcut = "2.3.2"
 tauri-plugin-process = "2.3.1"
 tauri-plugin-shell = "2.3.5"
 tauri-plugin-single-instance = "2.4.2"
@@ -101,7 +101,7 @@ tokio = { version = "1.52.3", default-features = false, features = [
 ] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-uuid = { version = "1.23.1", default-features = false, features = [
+uuid = { version = "1.23.3", default-features = false, features = [
     "v7",
     "serde",
     "std",

@@ -44,28 +44,33 @@ debug tracing conventions once confirmed.
 Both remaining bugs currently have only hypotheses, not confirmed root causes:
 
 - **Ghostty windows intermittently ignored**: possible causes include `AXUnknown`
-  subrole filtering in `tiling/window.rs` excluding Ghostty windows, tab
-  misclassification in `tiling/tabs.rs`, or an observer/init race in `tiling/init.rs`.
-- **Floating windows undetectable after switching workspace**: `tiling/effects/
-subscriber.rs::handle_visibility_changed` only processes non-floating/layoutable
-  windows, but `TilingState` itself still retains floating windows, so this alone does
-  not fully explain the reported symptom. Root cause is unclear.
+  subrole filtering in `modules/tiling/window.rs` excluding Ghostty windows, tab
+  misclassification in `modules/tiling/tabs.rs`, or an observer/init race in
+  `modules/tiling/init.rs`.
+- **Floating windows undetectable after switching workspace**: layout is applied to
+  all windows on workspace visibility change, with floating windows excluded via
+  `is_layoutable()` rather than in `handle_visibility_changed` itself. The exact
+  interaction between that exclusion and workspace-switch visibility handling in
+  `modules/tiling/effects/subscriber.rs` is not yet understood — root cause is unclear
+  and the tracing below targets this path directly rather than assuming a mechanism.
 
 **Scope of this phase:** add targeted, low-noise `tracing::debug!` spans only —
 no behavior changes. Instrument:
 
 - Window enumeration: subrole, size-filter, and PiP-filter decisions per window
-  (`tiling/window.rs`).
-- Tab classification decisions (`tiling/tabs.rs`), specifically
+  (`modules/tiling/window.rs`).
+- Tab classification decisions (`modules/tiling/tabs.rs`), specifically
   `is_new_window_a_tab()`.
 - AXObserver registration ordering relative to initial window batch registration
-  (`tiling/init.rs`).
-- `effects/subscriber.rs::handle_visibility_changed` behavior for floating windows
-  specifically across a workspace switch (log window id, floating flag, and whether it
-  was included/excluded from the visibility pass).
+  (`modules/tiling/init.rs`).
+- `modules/tiling/effects/subscriber.rs::handle_visibility_changed` and the
+  `is_layoutable()` check specifically for floating windows across a workspace switch
+  (log window id, floating flag, and whether it was included/excluded from the
+  layout/visibility pass).
 
-Ship this phase alone. The user will reproduce both bugs with `STACHE_LOG=debug`,
-capture logs, and share them before Phase 3 begins.
+Ship this phase alone. The user will reproduce both bugs with `RUST_LOG=stache=debug`
+(the existing logging convention — debug builds already default to this level; no new
+env var is introduced), capture logs, and share them before Phase 3 begins.
 
 ## Phase 3 — Fix Ghostty + Floating-Window Bugs
 
@@ -84,7 +89,7 @@ UI-facing flag, otherwise OS resources (event taps, listeners, observers) keep r
 even when the tray shows a module as paused.
 
 **Design:** Define a new, minimal trait (not reusing the existing but unused
-`services/traits.rs` `Module`/`BackgroundService` definitions):
+`modules/services/traits.rs` `Module`/`BackgroundService` definitions):
 
 ```rust
 pub trait LifecycleModule {
@@ -102,17 +107,33 @@ pub enum ModuleStatus {
 }
 ```
 
-Each module implements this trait, wrapping its existing internals behind
+**Handle retention requirement:** Today, several modules never retain a handle to their
+own OS resource after registering it (e.g. `commandQuit`/`menuAnywhere` call
+`CGEventTapEnable(tap, true)` once at init with no stored tap handle reachable later;
+`notunes` registers an NSWorkspace observer with no stored reference to unregister it;
+`proxyAudio` has zero `AudioObjectRemovePropertyListener` calls anywhere in the
+codebase today — listeners are registered and never removed). Implementing this trait
+is not simply wrapping an existing call — each module's struct must be changed to
+**store** its tap/observer/listener handle(s) so `pause()`/`resume()` have something to
+act on. This handle-plumbing is required, real work for every module below, not just
+tiling.
+
+Each module implements this trait, wrapping its (now handle-retaining) internals behind
 `start`/`pause`/`resume` instead of module-specific one-off logic:
 
-| Module       | `pause()` behavior                                      | `resume()` behavior                                                            |
-| ------------ | ------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| wallpapers   | Stop cycling timer (existing `stop_timer()`)            | Restart timer                                                                  |
-| commandQuit  | `CGEventTapEnable(tap, false)`                          | `CGEventTapEnable(tap, true)`                                                  |
-| notunes      | Unregister NSWorkspace observer                         | Re-register observer                                                           |
-| proxyAudio   | `AudioObjectRemovePropertyListener` for all 3 listeners | Re-add listeners                                                               |
-| menuAnywhere | `CGEventTapEnable(tap, false)`                          | `CGEventTapEnable(tap, true)`                                                  |
-| tiling       | Full `shutdown()` (existing)                            | Full re-run of `init.rs` sequence (screens → workspaces → windows → observers) |
+| Module       | `pause()` behavior                                                                                                              | `resume()` behavior                                                                                                                                                                        |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| wallpapers   | Stop cycling timer (existing `stop_timer()`)                                                                                    | Restart timer                                                                                                                                                                              |
+| commandQuit  | Retain the `CGEventTap` handle at creation; `CGEventTapEnable(tap, false)`                                                      | `CGEventTapEnable(tap, true)` on the retained handle                                                                                                                                       |
+| notunes      | Retain the NSWorkspace observer reference; unregister it                                                                        | Re-register the observer                                                                                                                                                                   |
+| proxyAudio   | Retain the 3 listener callback references; add matching `AudioObjectRemovePropertyListener` calls (new code — none exist today) | Re-add listeners with `AudioObjectAddPropertyListener`, using the same retained callback references                                                                                        |
+| menuAnywhere | Retain the `CGEventTap` handle at creation; `CGEventTapEnable(tap, false)`                                                      | `CGEventTapEnable(tap, true)` on the retained handle                                                                                                                                       |
+| tiling       | Full `shutdown()` (existing)                                                                                                    | Add a `reset()` that clears the `INITIALIZED: OnceLock<bool>` guard (and any other init-once state), then fully re-run the `init.rs` sequence (screens → workspaces → windows → observers) |
+
+Tiling is the highest-risk module: `init()` currently refuses re-entry outright when
+`INITIALIZED` is already set, so `resume()` cannot just call `init()` again as-is. This
+phase must add an explicit reset/teardown of that guard as part of implementing
+`resume()` for tiling — this is new work beyond the existing `shutdown()`.
 
 **State transitions:**
 
@@ -132,7 +153,8 @@ uniformly without per-module special-casing.
 
 ## Phase 5 — Tray UI
 
-- Retain the `TrayIcon` handle (currently discarded in `tray::init()`) and create one
+- Retain the `TrayIcon` handle (currently discarded in `modules/tray/mod.rs::init()`)
+  and create one
   `CheckMenuItem` per module using the Phase 4 registry.
 - Initial item state is derived from each module's `status()` at tray-build time:
   - `ConfiguredOff` → `enabled: false`, unchecked, locked (cannot be toggled).
@@ -144,22 +166,27 @@ uniformly without per-module special-casing.
   `enabled`/`text` via the retained `CheckMenuItem` handle (`set_checked`,
   `set_enabled`, `set_text`) — no full menu rebuild needed for state changes.
 - Existing "Reload Stache" / "Quit" items are unchanged and unaffected by this work.
+  Note: "Reload Stache" only exists in release builds (`#[cfg(not(debug_assertions))]`)
+  — it will not appear when manually testing tray toggles in a debug build.
 
 ## Out of Scope
 
 - Hot config reload without process restart.
-- Adopting/refactoring the existing dead `services/traits.rs` code (left as-is,
+- Adopting/refactoring the existing dead `modules/services/traits.rs` code (left as-is,
   unrelated to the new trait).
 - Any UI change beyond the tray menu (no changes to the bar/status widgets).
 - Ghostty/floating-window fixes beyond what Phase 2 evidence supports (Phase 3 scope is
   intentionally left open pending that evidence).
+- `menuAnywhere`'s `IS_RUNNING` flag is currently set but never checked as a guard
+  (unlike other modules' init guards); this inconsistency is noted but not fixed here
+  since it doesn't block the trait wrapping.
 
 ## Verification Summary
 
-| Phase | Verification                                                                                                                                                                                                       |
-| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1     | Timestamp logging around visibility flip → event emission; manual repro; p95 ≤200ms                                                                                                                                |
-| 2     | Confirm tracing spans emit expected data under `STACHE_LOG=debug` during manual repro of both bugs; no behavior change (existing test suite still passes)                                                          |
-| 3     | TBD once root cause is confirmed; will include a regression test/repro case per fixed bug                                                                                                                          |
-| 4     | Unit tests per module's `pause`/`resume` where OS calls can be exercised or mocked; existing test suite must still pass; manual check that OS resources are actually released/reacquired (e.g. event tap disabled) |
-| 5     | Manual tray interaction test: toggle each module, confirm menu item state updates and underlying module actually pauses/resumes; confirm config-off items are locked and unavailable items show reason text        |
+| Phase | Verification                                                                                                                                                                                                                                                                       |
+| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | Timestamp logging around visibility flip → event emission; manual repro; p95 ≤200ms                                                                                                                                                                                                |
+| 2     | Confirm tracing spans emit expected data under `RUST_LOG=stache=debug` during manual repro of both bugs; no behavior change (existing test suite still passes)                                                                                                                     |
+| 3     | TBD once root cause is confirmed; will include a regression test/repro case per fixed bug                                                                                                                                                                                          |
+| 4     | Unit tests per module's `pause`/`resume` where OS calls can be exercised or mocked; existing test suite must still pass; manual check that OS resources are actually released/reacquired (e.g. event tap disabled, tiling `reset()` actually clears init guard so resume succeeds) |
+| 5     | Manual tray interaction test: toggle each module, confirm menu item state updates and underlying module actually pauses/resumes; confirm config-off items are locked and unavailable items show reason text                                                                        |

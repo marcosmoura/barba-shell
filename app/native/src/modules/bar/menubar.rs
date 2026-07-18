@@ -65,7 +65,7 @@ pub fn start_menu_bar_visibility_watcher(window: &WebviewWindow) {
 
 fn register_menu_bar_visibility_observer(app_handle: AppHandle, window_label: String) {
     let initial_state =
-        resolve_menu_bar_visible(query_nsmenu_visible(), query_menu_bar_visible(), None)
+        resolve_menu_bar_visible(query_nsmenu_visible(), query_menu_bar_visible, None)
             .unwrap_or(false);
     MENU_BAR_VISIBLE.store(initial_state, Ordering::Release);
 
@@ -101,7 +101,7 @@ fn refresh_menu_bar_visibility(
 ) {
     let visible = resolve_menu_bar_visible(
         query_nsmenu_visible(),
-        query_menu_bar_visible(),
+        query_menu_bar_visible,
         Some(*last_visible),
     )
     .unwrap_or(*last_visible);
@@ -322,23 +322,31 @@ fn query_menu_bar_visible() -> Result<bool, String> {
 
 /// Select the best-available menu-bar visibility, falling back from the
 /// primary `NSMenu` query to the `CGWindowList` heuristic, then to prior state.
-/// Returns `None` only when all sources fail and there is no prior state.
+/// The `cg` fallback is lazily evaluated — it is only called when the primary
+/// `NSMenu` result is `None`. Returns `None` only when all sources fail and
+/// there is no prior state.
 fn resolve_menu_bar_visible(
     nsmenu: Option<bool>,
-    cg: Result<bool, String>,
+    cg: impl FnOnce() -> Result<bool, String>,
     prior: Option<bool>,
 ) -> Option<bool> {
-    nsmenu.or_else(|| cg.ok()).or(prior)
+    nsmenu.or_else(|| cg().ok()).or(prior)
 }
 
 /// Query system menu bar visibility via the documented `+[NSMenu menuBarVisible]`
-/// class method. This is the official cheap way to detect auto-hide/show. Returns
-/// `None` if the `ObjC` runtime call cannot produce a value.
-#[allow(clippy::unnecessary_wraps)]
+/// class method. The query is dispatched to the macOS main thread because `AppKit`
+/// calls must execute there. Returns `None` if dispatch fails or the runtime call
+/// panics.
 fn query_nsmenu_visible() -> Option<bool> {
-    // SAFETY: Calling a class method on NSMenu which is always available on macOS.
-    let visible: BOOL = unsafe { msg_send![class!(NSMenu), menuBarVisible] };
-    Some(visible != NO)
+    let result = std::panic::catch_unwind(|| {
+        crate::platform::thread::dispatch_on_main_sync(|| {
+            // SAFETY: Calling a class method on NSMenu which is always available
+            // on macOS. We are on the main thread so the AppKit call is valid.
+            let visible: BOOL = unsafe { msg_send![class!(NSMenu), menuBarVisible] };
+            visible != NO
+        })
+    });
+    result.ok()
 }
 
 #[cfg(test)]
@@ -371,19 +379,6 @@ mod tests {
     #[test]
     fn menu_bar_fallback_poll_interval_is_slower_than_hot_polling() {
         assert_eq!(MENU_BAR_FALLBACK_POLL_INTERVAL.as_secs(), 2);
-    }
-
-    #[test]
-    fn menu_bar_visible_default_is_false() {
-        // The static defaults to false
-        // Note: This test may be affected by other tests that modify the state
-        let _ = MENU_BAR_VISIBLE.load(Ordering::Acquire);
-    }
-
-    #[test]
-    fn menu_visibility_watcher_running_is_atomic() {
-        // Verify the atomic can be read
-        let _ = MENU_VISIBILITY_WATCHER_RUNNING.load(Ordering::Acquire);
     }
 
     #[test]
@@ -447,46 +442,73 @@ mod tests {
 
     #[test]
     fn resolve_uses_primary_when_available() {
-        assert_eq!(resolve_menu_bar_visible(Some(true), Ok(false), None), Some(true));
         assert_eq!(
-            resolve_menu_bar_visible(Some(false), Ok(true), None),
+            resolve_menu_bar_visible(Some(true), || Ok(false), None),
+            Some(true)
+        );
+        assert_eq!(
+            resolve_menu_bar_visible(Some(false), || Ok(true), None),
             Some(false)
         );
     }
 
     #[test]
     fn resolve_falls_back_when_primary_none() {
-        assert_eq!(resolve_menu_bar_visible(None, Ok(true), None), Some(true));
-        assert_eq!(resolve_menu_bar_visible(None, Ok(false), None), Some(false));
+        assert_eq!(
+            resolve_menu_bar_visible(None, || Ok(true), None),
+            Some(true)
+        );
+        assert_eq!(
+            resolve_menu_bar_visible(None, || Ok(false), None),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn resolve_does_not_call_fallback_when_primary_succeeds() {
+        let mut fallback_called = false;
+        let result = resolve_menu_bar_visible(Some(true), || {
+            fallback_called = true;
+            Ok(false)
+        }, None);
+        assert_eq!(result, Some(true));
+        assert!(
+            !fallback_called,
+            "fallback should not be invoked when primary succeeds"
+        );
+    }
+
+    #[test]
+    fn resolve_calls_fallback_when_primary_none() {
+        let mut fallback_called = false;
+        let result = resolve_menu_bar_visible(None, || {
+            fallback_called = true;
+            Ok(true)
+        }, None);
+        assert_eq!(result, Some(true));
+        assert!(
+            fallback_called,
+            "fallback should be invoked when primary is None"
+        );
     }
 
     #[test]
     fn resolve_preserves_prior_when_both_fail() {
         assert_eq!(
-            resolve_menu_bar_visible(None, Err("fail".into()), Some(true)),
+            resolve_menu_bar_visible(None, || Err("fail".into()), Some(true)),
             Some(true)
         );
         assert_eq!(
-            resolve_menu_bar_visible(None, Err("fail".into()), Some(false)),
+            resolve_menu_bar_visible(None, || Err("fail".into()), Some(false)),
             Some(false)
         );
     }
 
     #[test]
     fn resolve_returns_none_when_all_fail_and_no_prior() {
-        assert_eq!(resolve_menu_bar_visible(None, Err("fail".into()), None), None);
-    }
-
-    #[test]
-    fn resolve_prior_trumps_cg_fallback_when_primary_none() {
-        // When primary is None and CG fails, preserve prior even if CG would have returned something
         assert_eq!(
-            resolve_menu_bar_visible(None, Err("fail".into()), Some(true)),
-            Some(true)
-        );
-        assert_eq!(
-            resolve_menu_bar_visible(None, Err("fail".into()), Some(false)),
-            Some(false)
+            resolve_menu_bar_visible(None, || Err("fail".into()), None),
+            None
         );
     }
 }

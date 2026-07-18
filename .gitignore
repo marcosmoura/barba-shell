@@ -34,3 +34,6 @@ app/native/binaries/*
 !app/native/binaries/.gitkeep
 app/native/resources/lib/
 app/native/resources/Frameworks/
+
+# Local deepwork orchestration state
+.slim/deepwork/

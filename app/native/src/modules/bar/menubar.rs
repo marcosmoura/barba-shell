@@ -333,20 +333,24 @@ fn resolve_menu_bar_visible(
     nsmenu.or_else(|| cg().ok()).or(prior)
 }
 
+/// Wrap an NSMenu visibility query in `catch_unwind` so that a panic inside
+/// the Objective‑C runtime call is contained **inside** the main‑thread
+/// dispatch closure, before it can reach the `extern "C"` dispatch trampoline.
+fn try_nsmenu_query(query: impl FnOnce() -> bool) -> Option<bool> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(query)).ok()
+}
+
 /// Query system menu bar visibility via the documented `+[NSMenu menuBarVisible]`
 /// class method. The query is dispatched to the macOS main thread because `AppKit`
 /// calls must execute there. Returns `None` if dispatch fails or the runtime call
 /// panics.
 fn query_nsmenu_visible() -> Option<bool> {
-    let result = std::panic::catch_unwind(|| {
-        crate::platform::thread::dispatch_on_main_sync(|| {
-            // SAFETY: Calling a class method on NSMenu which is always available
-            // on macOS. We are on the main thread so the AppKit call is valid.
-            let visible: BOOL = unsafe { msg_send![class!(NSMenu), menuBarVisible] };
-            visible != NO
-        })
-    });
-    result.ok()
+    crate::platform::thread::dispatch_on_main_sync(|| try_nsmenu_query(|| {
+        // SAFETY: Calling a class method on NSMenu which is always available
+        // on macOS. We are on the main thread so the AppKit call is valid.
+        let visible: BOOL = unsafe { msg_send![class!(NSMenu), menuBarVisible] };
+        visible != NO
+    }))
 }
 
 #[cfg(test)]
@@ -510,5 +514,19 @@ mod tests {
             resolve_menu_bar_visible(None, || Err("fail".into()), None),
             None
         );
+    }
+
+    // --- try_nsmenu_query ---
+
+    #[test]
+    fn try_nsmenu_query_returns_none_on_panic() {
+        let result = try_nsmenu_query(|| panic!("simulated query failure"));
+        assert_eq!(result, None, "panic should be contained as None");
+    }
+
+    #[test]
+    fn try_nsmenu_query_returns_some_on_success() {
+        assert_eq!(try_nsmenu_query(|| true), Some(true));
+        assert_eq!(try_nsmenu_query(|| false), Some(false));
     }
 }

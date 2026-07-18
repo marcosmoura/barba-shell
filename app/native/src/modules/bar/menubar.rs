@@ -395,7 +395,7 @@ mod tests {
 
     #[test]
     fn menu_bar_fallback_poll_interval_is_100ms() {
-        assert_eq!(MENU_BAR_FALLBACK_POLL_INTERVAL.as_millis(), 100);
+        assert_eq!(MENU_BAR_FALLBACK_POLL_INTERVAL, Duration::from_millis(100));
     }
 
     #[test]

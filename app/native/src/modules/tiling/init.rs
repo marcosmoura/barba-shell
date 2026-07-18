@@ -130,12 +130,18 @@ pub fn init(app_handle: tauri::AppHandle) -> bool {
 
     let config = get_config();
 
+    // Bind log: observable value of configured-enabled
+    tracing::debug!("tiling: enabled = {}", config.tiling.is_enabled());
+
     // Check if tiling is enabled
     if !config.tiling.is_enabled() {
         tracing::info!("tiling: disabled in config (set enabled=true to enable)");
         let _ = INITIALIZED.set(false);
         return false;
     }
+
+    // Bind log: observable value of accessibility-granted
+    tracing::debug!("tiling: accessibility_granted = {}", is_accessibility_granted());
 
     // Check accessibility permissions
     if !is_accessibility_granted() {
@@ -290,8 +296,6 @@ fn init_internal() -> Result<(), String> {
         tracing::warn!("tiling: mouse monitor initialization failed");
     }
 
-    tracing::debug!("tiling: init: mouse monitor registered");
-
     // Initialize the border system (connects to JankyBorders if available)
     if !borders::init() {
         tracing::warn!("tiling: borders initialization failed (JankyBorders may not be installed)");
@@ -306,7 +310,7 @@ fn init_internal() -> Result<(), String> {
     // Initialize screens and workspaces
     initialize_state(&handle);
 
-    tracing::debug!("tiling: init: initial state tracking: complete");
+    tracing::debug!("tiling: init: initial state tracking call returned");
 
     tracing::info!("tiling: all components started");
     Ok(())

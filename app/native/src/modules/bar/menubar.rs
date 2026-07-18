@@ -333,11 +333,20 @@ fn resolve_menu_bar_visible(
     nsmenu.or_else(|| cg().ok()).or(prior)
 }
 
-/// Wrap an NSMenu visibility query in `catch_unwind` so that a panic inside
+/// Wrap an `NSMenu` visibility query in `catch_unwind` so that a panic inside
 /// the Objective‑C runtime call is contained **inside** the main‑thread
 /// dispatch closure, before it can reach the `extern "C"` dispatch trampoline.
 fn try_nsmenu_query(query: impl FnOnce() -> bool) -> Option<bool> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(query)).ok()
+}
+
+/// Wrap a dispatch call (typically `dispatch_on_main_sync`) in `catch_unwind`
+/// so that a panic during the dispatch itself is converted to `None`.
+/// The injected closure is the entire dispatch call — in production this
+/// includes `dispatch_on_main_sync`; in tests it can be a plain closure that
+/// simulates a dispatch failure.
+fn dispatch_catch(dispatch: impl FnOnce() -> Option<bool>) -> Option<bool> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(dispatch)).ok().flatten()
 }
 
 /// Query system menu bar visibility via the documented `+[NSMenu menuBarVisible]`
@@ -345,12 +354,16 @@ fn try_nsmenu_query(query: impl FnOnce() -> bool) -> Option<bool> {
 /// calls must execute there. Returns `None` if dispatch fails or the runtime call
 /// panics.
 fn query_nsmenu_visible() -> Option<bool> {
-    crate::platform::thread::dispatch_on_main_sync(|| try_nsmenu_query(|| {
-        // SAFETY: Calling a class method on NSMenu which is always available
-        // on macOS. We are on the main thread so the AppKit call is valid.
-        let visible: BOOL = unsafe { msg_send![class!(NSMenu), menuBarVisible] };
-        visible != NO
-    }))
+    dispatch_catch(|| {
+        crate::platform::thread::dispatch_on_main_sync(|| {
+            try_nsmenu_query(|| {
+                // SAFETY: Calling a class method on NSMenu which is always available
+                // on macOS. We are on the main thread so the AppKit call is valid.
+                let visible: BOOL = unsafe { msg_send![class!(NSMenu), menuBarVisible] };
+                visible != NO
+            })
+        })
+    })
 }
 
 #[cfg(test)]
@@ -458,23 +471,21 @@ mod tests {
 
     #[test]
     fn resolve_falls_back_when_primary_none() {
-        assert_eq!(
-            resolve_menu_bar_visible(None, || Ok(true), None),
-            Some(true)
-        );
-        assert_eq!(
-            resolve_menu_bar_visible(None, || Ok(false), None),
-            Some(false)
-        );
+        assert_eq!(resolve_menu_bar_visible(None, || Ok(true), None), Some(true));
+        assert_eq!(resolve_menu_bar_visible(None, || Ok(false), None), Some(false));
     }
 
     #[test]
     fn resolve_does_not_call_fallback_when_primary_succeeds() {
         let mut fallback_called = false;
-        let result = resolve_menu_bar_visible(Some(true), || {
-            fallback_called = true;
-            Ok(false)
-        }, None);
+        let result = resolve_menu_bar_visible(
+            Some(true),
+            || {
+                fallback_called = true;
+                Ok(false)
+            },
+            None,
+        );
         assert_eq!(result, Some(true));
         assert!(
             !fallback_called,
@@ -485,10 +496,14 @@ mod tests {
     #[test]
     fn resolve_calls_fallback_when_primary_none() {
         let mut fallback_called = false;
-        let result = resolve_menu_bar_visible(None, || {
-            fallback_called = true;
-            Ok(true)
-        }, None);
+        let result = resolve_menu_bar_visible(
+            None,
+            || {
+                fallback_called = true;
+                Ok(true)
+            },
+            None,
+        );
         assert_eq!(result, Some(true));
         assert!(
             fallback_called,
@@ -510,10 +525,7 @@ mod tests {
 
     #[test]
     fn resolve_returns_none_when_all_fail_and_no_prior() {
-        assert_eq!(
-            resolve_menu_bar_visible(None, || Err("fail".into()), None),
-            None
-        );
+        assert_eq!(resolve_menu_bar_visible(None, || Err("fail".into()), None), None);
     }
 
     // --- try_nsmenu_query ---
@@ -528,5 +540,24 @@ mod tests {
     fn try_nsmenu_query_returns_some_on_success() {
         assert_eq!(try_nsmenu_query(|| true), Some(true));
         assert_eq!(try_nsmenu_query(|| false), Some(false));
+    }
+
+    // --- dispatch_catch ---
+
+    #[test]
+    fn dispatch_catch_returns_none_on_panic() {
+        let result: Option<bool> = dispatch_catch(|| panic!("simulated dispatch failure"));
+        assert_eq!(result, None, "dispatch panic should be contained as None");
+    }
+
+    #[test]
+    fn dispatch_catch_returns_some_true_on_success() {
+        assert_eq!(dispatch_catch(|| Some(true)), Some(true));
+        assert_eq!(dispatch_catch(|| Some(false)), Some(false));
+    }
+
+    #[test]
+    fn dispatch_catch_returns_none_when_inner_returns_none() {
+        assert_eq!(dispatch_catch(|| None), None);
     }
 }

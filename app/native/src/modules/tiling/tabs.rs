@@ -374,11 +374,26 @@ fn get_tabs_from_tab_group(tab_group: AXUIElementRef) -> Vec<u32> {
 /// Returns true if this appears to be a new tab (skip layout), false otherwise.
 #[must_use]
 pub fn is_new_window_a_tab(pid: i32, new_window_id: u32, workspace_window_ids: &[u32]) -> bool {
+    tracing::debug!(
+        pid,
+        new_window_id,
+        workspace_window_count = workspace_window_ids.len(),
+        ?workspace_window_ids,
+        "tiling: evaluating new-window tab classification"
+    );
+
     // First, scan to update the registry with current tab state
     scan_and_register_tabs_for_app(pid);
 
     // If this window is already registered as a tab, it's a tab
     if is_tab(new_window_id) {
+        tracing::debug!(
+            pid,
+            new_window_id,
+            result = true,
+            reason = "already-registered-tab",
+            "tiling: tab classification result"
+        );
         return true;
     }
 
@@ -400,10 +415,25 @@ pub fn is_new_window_a_tab(pid: i32, new_window_id: u32, workspace_window_ids: &
         {
             // Found a non-tab window from the same app in the workspace
             // This new window is likely a new tab
+            tracing::debug!(
+                pid,
+                new_window_id,
+                sibling_window = wid,
+                result = true,
+                reason = "same-pid-non-tab-sibling",
+                "tiling: tab classification result"
+            );
             return true;
         }
     }
 
+    tracing::debug!(
+        pid,
+        new_window_id,
+        result = false,
+        reason = "no-tab-evidence",
+        "tiling: tab classification result"
+    );
     false
 }
 

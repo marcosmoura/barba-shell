@@ -473,6 +473,10 @@ impl EffectSubscriber {
         workspace_id: Uuid,
         visible: bool,
     ) -> Vec<TilingEffect> {
+        tracing::debug!(
+            "tiling: handle_visibility_changed workspace={workspace_id}, visible={visible}"
+        );
+
         let mut effects = Vec::new();
 
         if visible {
@@ -482,6 +486,56 @@ impl EffectSubscriber {
                 self.actor_handle.query(StateQuery::GetWindowLayout { workspace_id }).await;
 
             if let Ok(QueryResult::Layout(positions)) = layout_result {
+                // --- DIAGNOSTIC: compare layout vs all workspace windows ---
+                // GetWindowsForWorkspace returns ALL windows (including floating/excluded),
+                // unlike GetWindowLayout which only returns layoutable positions.
+                if tracing::enabled!(tracing::Level::DEBUG) {
+                    let all_result = self
+                        .actor_handle
+                        .query(StateQuery::GetWindowsForWorkspace { workspace_id })
+                        .await;
+                    match all_result {
+                        Ok(QueryResult::Windows(all_windows)) => {
+                            for w in &all_windows {
+                                let in_positions = positions.iter().any(|(id, _)| *id == w.id);
+                                if !in_positions {
+                                    tracing::debug!(
+                                        "tiling: visibility diag window absent from layout: \
+                                         workspace={workspace_id}, window={window_id}, \
+                                         floating={is_floating}, layoutable={is_layoutable}, \
+                                         in_positions={in_positions}, minimized={is_minimized}, \
+                                         hidden={is_hidden}, fullscreen={is_fullscreen}, \
+                                         tab_group={tab_group_id:?}, active_tab={is_active_tab}",
+                                        workspace_id = workspace_id,
+                                        window_id = w.id,
+                                        is_floating = w.is_floating,
+                                        is_layoutable = w.is_layoutable(),
+                                        in_positions = in_positions,
+                                        is_minimized = w.is_minimized,
+                                        is_hidden = w.is_hidden,
+                                        is_fullscreen = w.is_fullscreen,
+                                        tab_group_id = w.tab_group_id,
+                                        is_active_tab = w.is_active_tab,
+                                    );
+                                }
+                            }
+                            tracing::debug!(
+                                "tiling: visibility diag summary: workspace={workspace_id}, \
+                                 layout_count={}, all_windows_count={}",
+                                positions.len(),
+                                all_windows.len(),
+                            );
+                        }
+                        other => {
+                            tracing::debug!(
+                                "tiling: visibility diag unexpected result: \
+                                 workspace={workspace_id}, result={other:?}"
+                            );
+                        }
+                    }
+                }
+                // --- END DIAGNOSTIC ---
+
                 // Apply layout to all windows (no animation since workspace just appeared)
                 for (window_id, frame) in &positions {
                     effects.push(TilingEffect::SetWindowFrame {

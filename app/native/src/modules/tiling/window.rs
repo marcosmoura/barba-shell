@@ -254,6 +254,8 @@ pub fn get_all_windows_including_hidden() -> Vec<WindowInfo> {
                 tracing::debug!(
                     window_id,
                     pid = app.pid,
+                    bundle_id = %app.bundle_id,
+                    app_name = %app.name,
                     subrole = %subrole.as_deref().unwrap_or("<none>"),
                     width = frame.width,
                     height = frame.height,

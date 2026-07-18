@@ -30,7 +30,7 @@ static MENU_VISIBILITY_WATCHER_RUNNING: AtomicBool = AtomicBool::new(false);
 /// Current menu bar visibility state.
 static MENU_BAR_VISIBLE: AtomicBool = AtomicBool::new(false);
 
-const MENU_BAR_FALLBACK_POLL_INTERVAL: Duration = Duration::from_secs(2);
+const MENU_BAR_FALLBACK_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const WORKSPACE_REFRESH_NOTIFICATION_NAMES: [&str; 3] = [
     "NSWorkspaceActiveSpaceDidChangeNotification",
     "NSWorkspaceDidActivateApplicationNotification",
@@ -394,8 +394,8 @@ mod tests {
     }
 
     #[test]
-    fn menu_bar_fallback_poll_interval_is_slower_than_hot_polling() {
-        assert_eq!(MENU_BAR_FALLBACK_POLL_INTERVAL.as_secs(), 2);
+    fn menu_bar_fallback_poll_interval_is_100ms() {
+        assert_eq!(MENU_BAR_FALLBACK_POLL_INTERVAL.as_millis(), 100);
     }
 
     #[test]

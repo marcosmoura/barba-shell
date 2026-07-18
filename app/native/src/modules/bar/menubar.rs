@@ -14,8 +14,10 @@ use core_foundation::dictionary::CFDictionary;
 use core_foundation::number::CFNumber;
 use core_foundation::string::CFString;
 use objc::declare::ClassDecl;
+#[cfg(test)]
+use objc::runtime::YES;
 use objc::runtime::{BOOL, Class, NO, Object, Sel};
-use objc::{class, msg_send, sel, sel_impl};
+use objc::{Message, class, msg_send, sel, sel_impl};
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
 use crate::events;
@@ -325,6 +327,10 @@ fn query_menu_bar_visible() -> Result<bool, String> {
 /// The `cg` fallback is lazily evaluated — it is only called when the primary
 /// `NSMenu` result is `None`. Returns `None` only when all sources fail and
 /// there is no prior state.
+///
+/// Infrastructure dispatch failure (e.g. the main thread dying) will still
+/// panic. This function only handles recoverable failures: a missing `ObjC`
+/// class or a thrown exception during the message send.
 fn resolve_menu_bar_visible(
     nsmenu: Option<bool>,
     cg: impl FnOnce() -> Result<bool, String>,
@@ -333,36 +339,30 @@ fn resolve_menu_bar_visible(
     nsmenu.or_else(|| cg().ok()).or(prior)
 }
 
-/// Wrap an `NSMenu` visibility query in `catch_unwind` so that a panic inside
-/// the Objective‑C runtime call is contained **inside** the main‑thread
-/// dispatch closure, before it can reach the `extern "C"` dispatch trampoline.
-fn try_nsmenu_query(query: impl FnOnce() -> bool) -> Option<bool> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(query)).ok()
-}
-
-/// Wrap a dispatch call (typically `dispatch_on_main_sync`) in `catch_unwind`
-/// so that a panic during the dispatch itself is converted to `None`.
-/// The injected closure is the entire dispatch call — in production this
-/// includes `dispatch_on_main_sync`; in tests it can be a plain closure that
-/// simulates a dispatch failure.
-fn dispatch_catch(dispatch: impl FnOnce() -> Option<bool>) -> Option<bool> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(dispatch)).ok().flatten()
+/// Convert a raw `Result<BOOL, E>` (from an `ObjC` message send) into an
+/// `Option<bool>` — `Ok(YES)` → `Some(true)`, `Ok(NO)` → `Some(false)`,
+/// `Err(_)` → `None`.
+#[allow(clippy::needless_pass_by_value, clippy::option_if_let_else)]
+fn nsmenu_bool_to_option<E: std::fmt::Debug>(result: Result<BOOL, E>) -> Option<bool> {
+    match result {
+        Ok(val) => Some(val != NO),
+        Err(_) => None,
+    }
 }
 
 /// Query system menu bar visibility via the documented `+[NSMenu menuBarVisible]`
 /// class method. The query is dispatched to the macOS main thread because `AppKit`
-/// calls must execute there. Returns `None` if dispatch fails or the runtime call
-/// panics.
+/// calls must execute there. Returns `None` if the `NSMenu` class is unavailable
+/// or the Objective‑C message throws an exception.
 fn query_nsmenu_visible() -> Option<bool> {
-    dispatch_catch(|| {
-        crate::platform::thread::dispatch_on_main_sync(|| {
-            try_nsmenu_query(|| {
-                // SAFETY: Calling a class method on NSMenu which is always available
-                // on macOS. We are on the main thread so the AppKit call is valid.
-                let visible: BOOL = unsafe { msg_send![class!(NSMenu), menuBarVisible] };
-                visible != NO
-            })
-        })
+    crate::platform::thread::dispatch_on_main_sync(|| {
+        // SAFETY: Class::get returns None if the class is not registered.
+        // send_message on the class is safe because we are on the main thread,
+        // required by AppKit. With the "exception" feature enabled, ObjC
+        // exceptions are caught and returned as Err(MessageError).
+        let cls = Class::get("NSMenu")?;
+        let result: Result<BOOL, _> = unsafe { cls.send_message(sel!(menuBarVisible), ()) };
+        nsmenu_bool_to_option(result)
     })
 }
 
@@ -455,6 +455,24 @@ mod tests {
         assert_eq!(kCGNullWindowID, 0);
     }
 
+    // --- nsmenu_bool_to_option ---
+
+    #[test]
+    fn nsmenu_bool_to_option_maps_yes_to_some_true() {
+        assert_eq!(super::nsmenu_bool_to_option::<()>(Ok(YES)), Some(true));
+    }
+
+    #[test]
+    fn nsmenu_bool_to_option_maps_no_to_some_false() {
+        assert_eq!(super::nsmenu_bool_to_option::<()>(Ok(NO)), Some(false));
+    }
+
+    #[test]
+    fn nsmenu_bool_to_option_maps_error_to_none() {
+        let result: Result<BOOL, String> = Err("failed".into());
+        assert_eq!(super::nsmenu_bool_to_option(result), None);
+    }
+
     // --- resolve_menu_bar_visible ---
 
     #[test]
@@ -526,38 +544,5 @@ mod tests {
     #[test]
     fn resolve_returns_none_when_all_fail_and_no_prior() {
         assert_eq!(resolve_menu_bar_visible(None, || Err("fail".into()), None), None);
-    }
-
-    // --- try_nsmenu_query ---
-
-    #[test]
-    fn try_nsmenu_query_returns_none_on_panic() {
-        let result = try_nsmenu_query(|| panic!("simulated query failure"));
-        assert_eq!(result, None, "panic should be contained as None");
-    }
-
-    #[test]
-    fn try_nsmenu_query_returns_some_on_success() {
-        assert_eq!(try_nsmenu_query(|| true), Some(true));
-        assert_eq!(try_nsmenu_query(|| false), Some(false));
-    }
-
-    // --- dispatch_catch ---
-
-    #[test]
-    fn dispatch_catch_returns_none_on_panic() {
-        let result: Option<bool> = dispatch_catch(|| panic!("simulated dispatch failure"));
-        assert_eq!(result, None, "dispatch panic should be contained as None");
-    }
-
-    #[test]
-    fn dispatch_catch_returns_some_true_on_success() {
-        assert_eq!(dispatch_catch(|| Some(true)), Some(true));
-        assert_eq!(dispatch_catch(|| Some(false)), Some(false));
-    }
-
-    #[test]
-    fn dispatch_catch_returns_none_when_inner_returns_none() {
-        assert_eq!(dispatch_catch(|| None), None);
     }
 }

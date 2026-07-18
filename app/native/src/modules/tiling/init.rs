@@ -126,6 +126,8 @@ pub fn init(app_handle: tauri::AppHandle) -> bool {
         return false;
     }
 
+    tracing::debug!("tiling: init: proceeding with initialization");
+
     let config = get_config();
 
     // Check if tiling is enabled
@@ -198,6 +200,8 @@ fn init_internal() -> Result<(), String> {
         .set(handle.clone())
         .map_err(|_| "Failed to store handle - already initialized")?;
 
+    tracing::debug!("tiling: init: state actor spawned and stored");
+
     // Create the event processor
     let processor = Arc::new(EventProcessor::new(handle.clone()));
 
@@ -206,8 +210,12 @@ fn init_internal() -> Result<(), String> {
         .set(processor.clone())
         .map_err(|_| "Failed to store processor - already initialized")?;
 
+    tracing::debug!("tiling: init: event processor created and stored");
+
     // Start the event processor
     processor.start();
+
+    tracing::debug!("tiling: init: event processor started");
 
     // Create the effect executor with app handle for event emission
     let mut executor = get_app_handle().map_or_else(
@@ -235,6 +243,8 @@ fn init_internal() -> Result<(), String> {
 
     tauri::async_runtime::spawn(subscriber.run());
 
+    tracing::debug!("tiling: init: effect subscriber created and spawned");
+
     // Create and initialize the app monitor adapter
     let app_monitor = Arc::new(AppMonitorAdapter::new(processor.clone()));
     if !app_monitor.init() {
@@ -243,6 +253,8 @@ fn init_internal() -> Result<(), String> {
     // Install the adapter globally so callbacks can access it
     super::events::app_monitor::install_adapter(app_monitor);
 
+    tracing::debug!("tiling: init: app monitor initialized and installed");
+
     // Create and initialize the screen monitor adapter
     let screen_monitor = Arc::new(ScreenMonitorAdapter::new(processor.clone()));
     if !screen_monitor.init() {
@@ -250,6 +262,10 @@ fn init_internal() -> Result<(), String> {
     }
     // Install the adapter globally so callbacks can access it
     super::events::screen_monitor::install_adapter(screen_monitor);
+
+    tracing::debug!("tiling: init: screen monitor initialized and installed");
+
+    tracing::debug!("tiling: init: observer activation: beginning");
 
     // Create and install the AX observer adapter
     let ax_adapter = Arc::new(super::events::AXObserverAdapter::new(processor));
@@ -263,6 +279,8 @@ fn init_internal() -> Result<(), String> {
         tracing::warn!("tiling: AXObserver initialization failed");
     }
 
+    tracing::debug!("tiling: init: observer activation: complete");
+
     // Initialize the mouse monitor for drag/resize detection
     if super::events::mouse_monitor::init() {
         // Set up the callback for when mouse is released after a drag/resize
@@ -272,13 +290,23 @@ fn init_internal() -> Result<(), String> {
         tracing::warn!("tiling: mouse monitor initialization failed");
     }
 
+    tracing::debug!("tiling: init: mouse monitor initialized");
+
     // Initialize the border system (connects to JankyBorders if available)
     if !borders::init() {
         tracing::warn!("tiling: borders initialization failed (JankyBorders may not be installed)");
     }
 
+    tracing::debug!("tiling: init: borders initialized");
+
+    tracing::debug!(
+        "tiling: init: initial state tracking: beginning (screens and windows enumeration)"
+    );
+
     // Initialize screens and workspaces
     initialize_state(&handle);
+
+    tracing::debug!("tiling: init: initial state tracking: complete");
 
     tracing::info!("tiling: all components started");
     Ok(())

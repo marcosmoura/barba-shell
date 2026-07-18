@@ -253,7 +253,7 @@ fn init_internal() -> Result<(), String> {
     // Install the adapter globally so callbacks can access it
     super::events::app_monitor::install_adapter(app_monitor);
 
-    tracing::debug!("tiling: init: app monitor initialized and installed");
+    tracing::debug!("tiling: init: app monitor adapter installed");
 
     // Create and initialize the screen monitor adapter
     let screen_monitor = Arc::new(ScreenMonitorAdapter::new(processor.clone()));
@@ -263,7 +263,7 @@ fn init_internal() -> Result<(), String> {
     // Install the adapter globally so callbacks can access it
     super::events::screen_monitor::install_adapter(screen_monitor);
 
-    tracing::debug!("tiling: init: screen monitor initialized and installed");
+    tracing::debug!("tiling: init: screen monitor adapter installed");
 
     tracing::debug!("tiling: init: observer activation: beginning");
 
@@ -279,7 +279,7 @@ fn init_internal() -> Result<(), String> {
         tracing::warn!("tiling: AXObserver initialization failed");
     }
 
-    tracing::debug!("tiling: init: observer activation: complete");
+    tracing::debug!("tiling: init: observer activation: finished");
 
     // Initialize the mouse monitor for drag/resize detection
     if super::events::mouse_monitor::init() {
@@ -290,14 +290,14 @@ fn init_internal() -> Result<(), String> {
         tracing::warn!("tiling: mouse monitor initialization failed");
     }
 
-    tracing::debug!("tiling: init: mouse monitor initialized");
+    tracing::debug!("tiling: init: mouse monitor registered");
 
     // Initialize the border system (connects to JankyBorders if available)
     if !borders::init() {
         tracing::warn!("tiling: borders initialization failed (JankyBorders may not be installed)");
     }
 
-    tracing::debug!("tiling: init: borders initialized");
+    tracing::debug!("tiling: init: borders setup done");
 
     tracing::debug!(
         "tiling: init: initial state tracking: beginning (screens and windows enumeration)"

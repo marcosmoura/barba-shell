@@ -243,6 +243,26 @@ pub fn get_all_windows_including_hidden() -> Vec<WindowInfo> {
                 }
             };
 
+            // Log Ghostty window decisions for diagnostic purposes (Phase 2).
+            // This is intentional debug instrumentation—do not remove.
+            if app.bundle_id == "com.mitchellh.ghostty" {
+                let reason = match subrole.as_deref() {
+                    Some("AXSheet" | "AXDrawer" | "AXUnknown") => "non-standard-subrole",
+                    Some("AXDialog") => "dialog-size",
+                    _ => "standard-size",
+                };
+                tracing::debug!(
+                    window_id,
+                    pid = app.pid,
+                    subrole = %subrole.as_deref().unwrap_or("<none>"),
+                    width = frame.width,
+                    height = frame.height,
+                    managed = should_manage,
+                    reason,
+                    "ghostty window: {reason}",
+                );
+            }
+
             if !should_manage {
                 continue;
             }

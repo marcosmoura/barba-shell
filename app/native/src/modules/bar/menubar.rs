@@ -14,7 +14,7 @@ use core_foundation::dictionary::CFDictionary;
 use core_foundation::number::CFNumber;
 use core_foundation::string::CFString;
 use objc::declare::ClassDecl;
-use objc::runtime::{Class, Object, Sel};
+use objc::runtime::{BOOL, Class, NO, Object, Sel};
 use objc::{class, msg_send, sel, sel_impl};
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
@@ -64,7 +64,9 @@ pub fn start_menu_bar_visibility_watcher(window: &WebviewWindow) {
 }
 
 fn register_menu_bar_visibility_observer(app_handle: AppHandle, window_label: String) {
-    let initial_state = query_menu_bar_visible().unwrap_or(false);
+    let initial_state =
+        resolve_menu_bar_visible(query_nsmenu_visible(), query_menu_bar_visible(), None)
+            .unwrap_or(false);
     MENU_BAR_VISIBLE.store(initial_state, Ordering::Release);
 
     if let Err(e) = emit_menubar_visibility_event(&app_handle, &window_label, initial_state) {
@@ -97,19 +99,18 @@ fn refresh_menu_bar_visibility(
     window_label: &str,
     last_visible: &mut bool,
 ) {
-    match query_menu_bar_visible() {
-        Ok(visible) => {
-            if visible != *last_visible {
-                *last_visible = visible;
-                MENU_BAR_VISIBLE.store(visible, Ordering::Release);
+    let visible = resolve_menu_bar_visible(
+        query_nsmenu_visible(),
+        query_menu_bar_visible(),
+        Some(*last_visible),
+    )
+    .unwrap_or(*last_visible);
+    if visible != *last_visible {
+        *last_visible = visible;
+        MENU_BAR_VISIBLE.store(visible, Ordering::Release);
 
-                if let Err(e) = emit_menubar_visibility_event(app_handle, window_label, visible) {
-                    tracing::warn!(error = %e, "failed to emit menubar visibility");
-                }
-            }
-        }
-        Err(e) => {
-            tracing::debug!(error = %e, "failed to query menubar visibility");
+        if let Err(e) = emit_menubar_visibility_event(app_handle, window_label, visible) {
+            tracing::warn!(error = %e, "failed to emit menubar visibility");
         }
     }
 }
@@ -319,6 +320,27 @@ fn query_menu_bar_visible() -> Result<bool, String> {
     }
 }
 
+/// Select the best-available menu-bar visibility, falling back from the
+/// primary `NSMenu` query to the `CGWindowList` heuristic, then to prior state.
+/// Returns `None` only when all sources fail and there is no prior state.
+fn resolve_menu_bar_visible(
+    nsmenu: Option<bool>,
+    cg: Result<bool, String>,
+    prior: Option<bool>,
+) -> Option<bool> {
+    nsmenu.or_else(|| cg.ok()).or(prior)
+}
+
+/// Query system menu bar visibility via the documented `+[NSMenu menuBarVisible]`
+/// class method. This is the official cheap way to detect auto-hide/show. Returns
+/// `None` if the `ObjC` runtime call cannot produce a value.
+#[allow(clippy::unnecessary_wraps)]
+fn query_nsmenu_visible() -> Option<bool> {
+    // SAFETY: Calling a class method on NSMenu which is always available on macOS.
+    let visible: BOOL = unsafe { msg_send![class!(NSMenu), menuBarVisible] };
+    Some(visible != NO)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -419,5 +441,52 @@ mod tests {
 
         assert_eq!(kCGWindowListOptionOnScreenOnly, 1);
         assert_eq!(kCGNullWindowID, 0);
+    }
+
+    // --- resolve_menu_bar_visible ---
+
+    #[test]
+    fn resolve_uses_primary_when_available() {
+        assert_eq!(resolve_menu_bar_visible(Some(true), Ok(false), None), Some(true));
+        assert_eq!(
+            resolve_menu_bar_visible(Some(false), Ok(true), None),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn resolve_falls_back_when_primary_none() {
+        assert_eq!(resolve_menu_bar_visible(None, Ok(true), None), Some(true));
+        assert_eq!(resolve_menu_bar_visible(None, Ok(false), None), Some(false));
+    }
+
+    #[test]
+    fn resolve_preserves_prior_when_both_fail() {
+        assert_eq!(
+            resolve_menu_bar_visible(None, Err("fail".into()), Some(true)),
+            Some(true)
+        );
+        assert_eq!(
+            resolve_menu_bar_visible(None, Err("fail".into()), Some(false)),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn resolve_returns_none_when_all_fail_and_no_prior() {
+        assert_eq!(resolve_menu_bar_visible(None, Err("fail".into()), None), None);
+    }
+
+    #[test]
+    fn resolve_prior_trumps_cg_fallback_when_primary_none() {
+        // When primary is None and CG fails, preserve prior even if CG would have returned something
+        assert_eq!(
+            resolve_menu_bar_visible(None, Err("fail".into()), Some(true)),
+            Some(true)
+        );
+        assert_eq!(
+            resolve_menu_bar_visible(None, Err("fail".into()), Some(false)),
+            Some(false)
+        );
     }
 }

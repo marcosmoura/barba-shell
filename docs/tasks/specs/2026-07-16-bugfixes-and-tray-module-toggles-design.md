@@ -2,7 +2,7 @@
 
 ## Summary
 
-One combined project with five sequential phases:
+One combined project with six sequential phases:
 
 1. Fix menubar show/hide reaction latency (currently up to ~2s, target ≤200ms).
 2. Add targeted diagnostic tracing for two intermittent bugs (Ghostty windows ignored;
@@ -12,9 +12,11 @@ One combined project with five sequential phases:
    module supports safe pause/resume.
 5. Add a tray icon submenu exposing runtime toggles for 6 modules, built on top of
    Phase 4.
+6. Restore windows hidden by Stache before supported shutdown paths complete.
 
 Phases are ordered by dependency: 2 must complete (with real log evidence) before 3
-starts. 4 does not depend on 2/3 and could run in parallel, but 5 depends on 4.
+starts. 4 does not depend on 2/3 and could run in parallel, but 5 depends on 4. Phase 6
+uses the tiling lifecycle and must restore windows before tiling shuts down.
 
 ## Phase 1 — Menubar Latency Fix
 
@@ -169,12 +171,49 @@ uniformly without per-module special-casing.
   Note: "Reload Stache" only exists in release builds (`#[cfg(not(debug_assertions))]`)
   — it will not appear when manually testing tray toggles in a debug build.
 
+## Phase 6 — Restore Stache-Hidden Windows on Shutdown
+
+**Problem:** Workspace switching hides applications with
+`NSRunningApplication.hide()`. Stache currently exits without reliably unhiding those
+applications, which can leave their windows hidden after the window manager is gone.
+
+**Scope:** Restore only applications that Stache itself successfully hid during
+workspace switching. Preserve windows that the user minimized and applications that
+were already hidden independently of Stache.
+
+**Design:**
+
+- Augment the hide operation to distinguish `HiddenByStache`, `AlreadyHidden`, and
+  `Failed`; track a process ID only for `HiddenByStache` in a dedicated runtime set.
+- Remove a process ID when Stache unhides that application. Do not add an application
+  that was already hidden before Stache attempted to hide it.
+- Add an idempotent `restore_stache_hidden_windows()` operation that drains a snapshot
+  of the tracked set and calls the existing `unhide_app(pid)` for each process.
+- Invoke restoration before tiling teardown on normal app quit and tray quit, and
+  explicitly before the existing reload/restart call. Route SIGTERM and SIGINT into
+  the same orderly shutdown path; the signal handler must only notify safe application
+  code and must not call AppKit/AX APIs directly. Cleanup must be best-effort: one
+  failed or vanished application must not prevent attempts for the remaining processes
+  or block process termination.
+- Keep the operation in-process, matching AeroSpace's normal-quit strategy. No helper
+  process or persistent recovery state is introduced.
+
+Because Stache hides whole applications rather than moving windows off-screen, no frame
+capture or repositioning is required. `unhide_app` returns their existing windows to
+their current frames, while minimized state remains controlled by macOS.
+
+**Hard limitation:** SIGKILL cannot be caught, delayed, or handled by an in-process
+application, so cleanup cannot run after `kill -9` or any Force Quit path implemented
+with SIGKILL. Crash-safe recovery through a watchdog or restoration on the next launch
+is outside this phase.
+
 ## Out of Scope
 
 - Hot config reload without process restart.
 - Adopting/refactoring the existing dead `modules/services/traits.rs` code (left as-is,
   unrelated to the new trait).
 - Any UI change beyond the tray menu (no changes to the bar/status widgets).
+- Persistent recovery or an external watchdog for SIGKILL and unrecoverable crashes.
 - Ghostty/floating-window fixes beyond what Phase 2 evidence supports (Phase 3 scope is
   intentionally left open pending that evidence).
 - `menuAnywhere`'s `IS_RUNNING` flag is currently set but never checked as a guard
@@ -190,3 +229,4 @@ uniformly without per-module special-casing.
 | 3     | TBD once root cause is confirmed; will include a regression test/repro case per fixed bug                                                                                                                                                                                          |
 | 4     | Unit tests per module's `pause`/`resume` where OS calls can be exercised or mocked; existing test suite must still pass; manual check that OS resources are actually released/reacquired (e.g. event tap disabled, tiling `reset()` actually clears init guard so resume succeeds) |
 | 5     | Manual tray interaction test: toggle each module, confirm menu item state updates and underlying module actually pauses/resumes; confirm config-off items are locked and unavailable items show reason text                                                                        |
+| 6     | Unit-test PID tracking, idempotent draining, and best-effort continuation after individual failures; manually verify normal quit, reload/restart, SIGTERM, and SIGINT unhide only applications hidden by Stache while preserving minimized and independently hidden windows        |

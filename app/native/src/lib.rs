@@ -221,6 +221,9 @@ pub fn run() {
     app.run(|_app, event| {
         if matches!(event, tauri::RunEvent::Exit) {
             tracing::info!("application exiting, cleaning up");
+            // Establish exit precedence so a queued restart closure cannot
+            // run after the app has entered a natural exit.
+            app_shutdown::establish_exit_precedence();
             app_shutdown::cleanup_once();
         }
     });

@@ -109,9 +109,7 @@ fn request<R: Runtime>(app: &AppHandle<R>, action: ShutdownAction) {
 pub fn exit<R: Runtime>(app: &AppHandle<R>) { request(app, ShutdownAction::Exit); }
 /// Schedules an orderly restart (restore → tiling shutdown → IPC stop → restart).
 #[allow(dead_code)]
-pub fn restart<R: Runtime>(app: &AppHandle<R>) {
-    request(app, ShutdownAction::Restart);
-}
+pub fn restart<R: Runtime>(app: &AppHandle<R>) { request(app, ShutdownAction::Restart); }
 // ============================================================================
 // Signal Handler
 // ============================================================================

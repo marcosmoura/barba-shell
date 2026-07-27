@@ -916,7 +916,6 @@ impl HideAppOutcome {
 /// This is a pure function (no side effects) making it easily testable
 /// without any macOS APIs.
 #[must_use]
-#[allow(dead_code)]
 const fn classify_hide_outcome(was_hidden: bool, hide_succeeded: bool) -> HideAppOutcome {
     if was_hidden {
         HideAppOutcome::AlreadyHidden
@@ -951,16 +950,12 @@ pub fn hide_app_with_outcome(pid: i32) -> HideAppOutcome {
         // Check if already hidden
         let is_hidden: BOOL = msg_send![app, isHidden];
         if is_hidden == YES {
-            return HideAppOutcome::AlreadyHidden;
+            return classify_hide_outcome(true, false);
         }
 
         // Hide the app
         let result: BOOL = msg_send![app, hide];
-        if result == YES {
-            HideAppOutcome::HiddenByStache
-        } else {
-            HideAppOutcome::Failed
-        }
+        classify_hide_outcome(false, result == YES)
     }
 }
 
@@ -995,6 +990,32 @@ pub fn unhide_apps(pids: &[i32]) -> usize { pids.iter().filter(|&&pid| unhide_ap
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Note: test_resolve_nonexistent_window is disabled because it requires
+    // accessibility permissions and can crash if permissions are not granted.
+    // The function is still tested indirectly through integration tests.
+
+    #[test]
+    fn test_get_running_app_pids() {
+        // This test just verifies the function doesn't panic.
+        // The actual PIDs returned depend on the system state.
+        let pids = get_running_app_pids();
+        // Should have at least one running app (the test runner)
+        // But this might fail in CI, so we just check it doesn't panic
+        let _ = pids;
+    }
+
+    #[test]
+    fn test_cached_cfstrings() {
+        // Verify cached CFString functions don't panic
+        let _ = cf_windows();
+        let _ = cf_position();
+        let _ = cf_size();
+        let _ = cf_focused();
+        let _ = cf_main();
+        let _ = cf_raise();
+        let _ = cf_role();
+    }
 
     // ========================================================================
     // HideAppOutcome / classify_hide_outcome tests

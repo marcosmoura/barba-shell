@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Fix three bugs (menubar latency, Ghostty window loss, floating-window loss) and add a tray menu with runtime pause/resume toggles for six modules, behind a uniform `LifecycleModule` trait.
+**Goal:** Fix three bugs (menubar latency, Ghostty window loss, floating-window loss), add a tray menu with runtime pause/resume toggles for six modules, and restore applications hidden by Stache before supported shutdown paths complete.
 
-**Architecture:** Five phases. Phase 1 replaces the 2s CGWindowList poll with a fast `NSMenu.menuBarVisible()` poll. Phase 2 adds debug-only tracing for the two intermittent bugs (no fixes). Phase 3 fixes those bugs from Phase 2 evidence (scope left open). Phase 4 introduces a `LifecycleModule` trait and makes each of the 6 modules retain its OS handle so it can pause/resume. Phase 5 builds the tray submenu from the registry. Phases 1 and 4/5 are independent of 2/3; 3 depends on 2's evidence; 5 depends on 4.
+**Architecture:** Six phases. Phase 1 fixes menubar visibility detection and latency. Phase 2 adds debug-only tracing for the two intermittent bugs (no fixes). Phase 3 fixes those bugs from Phase 2 evidence (scope left open). Phase 4 introduces a `LifecycleModule` trait and makes each of the 6 modules retain its OS handle so it can pause/resume. Phase 5 builds the tray submenu from the registry. Phase 6 records only application PIDs actually hidden by Stache and restores them through one idempotent cleanup path before tiling teardown. Phases 1 and 4/5 are independent of 2/3; 3 depends on 2's evidence; 5 depends on 4; 6 must restore windows before tiling shuts down.
 
-**Tech Stack:** Rust (Tauri 2.x), `objc` v0.2.7 (already a dependency — no `objc2` needed), `tracing` for debug spans, Tauri `CheckMenuItem` / `TrayIcon` (already in deps).
+**Tech Stack:** Rust (Tauri 2.x), `objc` v0.2.7 (already a dependency — no `objc2` needed), `tracing` for debug spans, Tauri `CheckMenuItem` / `TrayIcon` (already in deps), and `ctrlc` 3.4 with its `termination` feature for SIGINT/SIGTERM delivery on a safe handler thread.
 
 **Spec:** `docs/tasks/specs/2026-07-16-bugfixes-and-tray-module-toggles-design.md`
 
@@ -31,6 +31,12 @@
 | `app/native/src/modules/tiling/init.rs`                 | Phase 4: implement `LifecycleModule` for tiling (shutdown + reset + re-init)         |
 | `app/native/src/modules/tray/mod.rs`                    | Phase 5: retain `TrayIcon`; build `CheckMenuItem` per module; wire `on_menu_event`   |
 | `app/native/src/modules/lifecycle_registry.rs`          | Phase 4/5: registry of `Box<dyn LifecycleModule>` held via `app.manage()`            |
+| `app/native/src/modules/tiling/visibility.rs`           | Phase 6: track PIDs hidden by Stache and restore them idempotently                   |
+| `app/native/src/modules/tiling/effects/window_ops.rs`   | Phase 6: distinguish hidden-now, already-hidden, and failed hide outcomes            |
+| `app/native/src/app_shutdown.rs`                        | Phase 6: shared restore → tiling shutdown → IPC shutdown orchestration               |
+| `app/native/src/lib.rs`                                 | Phase 6: install signal bridge and run cleanup on Tauri exit                         |
+| `app/native/src/config/watcher.rs`                      | Phase 6: route config-triggered restart through orderly cleanup                      |
+| `app/native/src/modules/bar/ipc_listener.rs`            | Phase 6: route CLI reload through orderly cleanup                                    |
 
 > Note: the existing dead trait file is `app/native/src/services/traits.rs` (NOT under `modules/`). Per spec, we do NOT reuse it. The new trait lives in `app/native/src/modules/services/lifecycle.rs` (create the `modules/services/` dir).
 
@@ -1154,15 +1160,663 @@ Quit and relaunch. All modules return to their config-driven default state (togg
 
 ---
 
+## Phase 6 — Restore Stache-Hidden Applications on Shutdown
+
+### Task 19: Track only applications hidden by Stache
+
+**Files:**
+
+- Create: `app/native/src/modules/tiling/visibility.rs`
+- Modify: `app/native/src/modules/tiling/mod.rs`
+- Modify: `app/native/src/modules/tiling/effects/window_ops.rs:841-937`
+- Modify: `app/native/src/modules/tiling/actor/handlers/app.rs:30-133`
+- Modify: `app/native/src/modules/tiling/actor/handlers/window.rs:349-411`
+- Modify: `app/native/src/modules/tiling/actor/mod.rs:639-683`
+
+- [ ] **Step 1: Write failing tests for hide ownership and restoration**
+
+Create `visibility.rs` with tests first. The tests define the required internal API and
+must fail to compile because `HiddenAppTracker`, `hide_with`, `remove`, and
+`restore_with` do not exist yet:
+
+Expose the test file by adding `pub mod visibility;` to `tiling/mod.rs`; do not add the
+public re-exports until Step 4.
+
+```rust
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+
+    use super::*;
+    use crate::modules::tiling::effects::window_ops::HideAppOutcome;
+
+    #[test]
+    fn records_only_apps_newly_hidden_by_stache() {
+        let tracker = HiddenAppTracker::default();
+
+        tracker.hide_with(10, || HideAppOutcome::AlreadyHidden);
+        tracker.hide_with(11, || HideAppOutcome::Failed);
+        tracker.hide_with(12, || HideAppOutcome::HiddenByStache);
+
+        assert_eq!(tracker.snapshot(), vec![12]);
+    }
+
+    #[test]
+    fn successful_workspace_unhide_forgets_owned_hide() {
+        let tracker = HiddenAppTracker::default();
+        tracker.hide_with(12, || HideAppOutcome::HiddenByStache);
+
+        tracker.remove(12);
+
+        assert!(tracker.snapshot().is_empty());
+    }
+
+    #[test]
+    fn shown_then_independently_hidden_app_is_not_owned() {
+        let tracker = HiddenAppTracker::default();
+        tracker.hide_with(12, || HideAppOutcome::HiddenByStache);
+        tracker.remove(12);
+
+        tracker.hide_with(12, || HideAppOutcome::AlreadyHidden);
+
+        assert!(tracker.snapshot().is_empty());
+    }
+
+    #[test]
+    fn restore_attempts_every_pid_and_drains_tracking() {
+        let tracker = HiddenAppTracker::default();
+        tracker.hide_with(12, || HideAppOutcome::HiddenByStache);
+        tracker.hide_with(13, || HideAppOutcome::HiddenByStache);
+        let attempted = RefCell::new(Vec::new());
+
+        let summary = restore_with(&tracker, |pid| {
+            attempted.borrow_mut().push(pid);
+            pid == 13
+        });
+
+        assert_eq!(attempted.into_inner(), vec![12, 13]);
+        assert_eq!(summary, RestoreSummary { attempted: 2, restored: 1 });
+        assert!(tracker.snapshot().is_empty());
+    }
+
+    #[test]
+    fn repeated_restore_is_a_no_op() {
+        let tracker = HiddenAppTracker::default();
+        tracker.hide_with(12, || HideAppOutcome::HiddenByStache);
+        let _ = restore_with(&tracker, |_| true);
+
+        assert_eq!(
+            restore_with(&tracker, |_| panic!("empty tracker must not call unhide")),
+            RestoreSummary { attempted: 0, restored: 0 }
+        );
+    }
+
+    #[test]
+    fn shutdown_boundary_rejects_late_hide_without_calling_os() {
+        let tracker = HiddenAppTracker::default();
+        let _ = restore_with(&tracker, |_| true);
+
+        let outcome = tracker.hide_with(12, || panic!("late hide must not reach AppKit"));
+
+        assert_eq!(outcome, HideAppOutcome::Failed);
+        assert!(tracker.snapshot().is_empty());
+    }
+}
+```
+
+Also add these pure outcome tests to the existing test module in
+`effects/window_ops.rs` before changing `hide_app`:
+
+```rust
+#[test]
+fn hide_outcome_preserves_preexisting_hidden_state() {
+    assert_eq!(classify_hide_outcome(true, false), HideAppOutcome::AlreadyHidden);
+}
+
+#[test]
+fn hide_outcome_records_only_successful_new_hide() {
+    assert_eq!(classify_hide_outcome(false, true), HideAppOutcome::HiddenByStache);
+    assert_eq!(classify_hide_outcome(false, false), HideAppOutcome::Failed);
+}
+```
+
+- [ ] **Step 2: Run the tests and verify RED**
+
+Run:
+
+```bash
+cargo test -p stache --lib modules::tiling::visibility::tests
+```
+
+Expected: compilation fails because the tracker and restoration API are not defined.
+
+- [ ] **Step 3: Add a three-state hide result without changing existing boolean callers**
+
+In `effects/window_ops.rs`, add the outcome and a fallible-detail variant. Keep
+`hide_app(pid) -> bool` as a compatibility wrapper so unrelated call sites retain their
+current semantics:
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HideAppOutcome {
+    HiddenByStache,
+    AlreadyHidden,
+    Failed,
+}
+
+impl HideAppOutcome {
+    const fn succeeded(self) -> bool { !matches!(self, Self::Failed) }
+}
+
+const fn classify_hide_outcome(was_hidden: bool, hide_succeeded: bool) -> HideAppOutcome {
+    if was_hidden {
+        HideAppOutcome::AlreadyHidden
+    } else if hide_succeeded {
+        HideAppOutcome::HiddenByStache
+    } else {
+        HideAppOutcome::Failed
+    }
+}
+
+#[must_use]
+pub fn hide_app_with_outcome(pid: i32) -> HideAppOutcome {
+    use objc::runtime::{BOOL, Class, Object, YES};
+    use objc::{msg_send, sel, sel_impl};
+
+    unsafe {
+        let Some(app_class) = Class::get("NSRunningApplication") else {
+            tracing::warn!("NSRunningApplication class not found");
+            return HideAppOutcome::Failed;
+        };
+        let app: *mut Object = msg_send![app_class, runningApplicationWithProcessIdentifier: pid];
+        if app.is_null() {
+            return HideAppOutcome::Failed;
+        }
+        let is_hidden: BOOL = msg_send![app, isHidden];
+        if is_hidden == YES {
+            return classify_hide_outcome(true, false);
+        }
+        let result: BOOL = msg_send![app, hide];
+        classify_hide_outcome(false, result == YES)
+    }
+}
+
+#[must_use]
+pub fn hide_app(pid: i32) -> bool { hide_app_with_outcome(pid).succeeded() }
+```
+
+- [ ] **Step 4: Implement the tracker and workspace visibility wrappers**
+
+Add this production code above the tests in `visibility.rs`:
+
+```rust
+use std::collections::HashSet;
+use std::sync::OnceLock;
+
+use parking_lot::Mutex;
+
+use super::effects::window_ops::{HideAppOutcome, hide_app_with_outcome, unhide_app};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RestoreSummary {
+    pub attempted: usize,
+    pub restored: usize,
+}
+
+#[derive(Debug, Default)]
+struct TrackerState {
+    shutting_down: bool,
+    pids: HashSet<i32>,
+}
+
+#[derive(Debug, Default)]
+struct HiddenAppTracker {
+    state: Mutex<TrackerState>,
+}
+
+impl HiddenAppTracker {
+    fn hide_with(&self, pid: i32, hide: impl FnOnce() -> HideAppOutcome) -> HideAppOutcome {
+        let mut state = self.state.lock();
+        if state.shutting_down {
+            return HideAppOutcome::Failed;
+        }
+        let outcome = hide();
+        if outcome == HideAppOutcome::HiddenByStache {
+            state.pids.insert(pid);
+        }
+        outcome
+    }
+
+    fn remove(&self, pid: i32) { self.state.lock().pids.remove(&pid); }
+
+    #[cfg(test)]
+    fn snapshot(&self) -> Vec<i32> {
+        let mut pids: Vec<_> = self.state.lock().pids.iter().copied().collect();
+        pids.sort_unstable();
+        pids
+    }
+
+    fn begin_shutdown_and_drain(&self) -> Vec<i32> {
+        let mut state = self.state.lock();
+        state.shutting_down = true;
+        let mut pids: Vec<_> = state.pids.drain().collect();
+        pids.sort_unstable();
+        pids
+    }
+}
+
+static STACHE_HIDDEN_APPS: OnceLock<HiddenAppTracker> = OnceLock::new();
+
+fn tracker() -> &'static HiddenAppTracker {
+    STACHE_HIDDEN_APPS.get_or_init(HiddenAppTracker::default)
+}
+
+#[must_use]
+pub fn hide_app_for_workspace(pid: i32) -> HideAppOutcome {
+    tracker().hide_with(pid, || hide_app_with_outcome(pid))
+}
+
+#[must_use]
+pub fn unhide_app_for_workspace(pid: i32) -> bool {
+    let unhidden = unhide_app(pid);
+    if unhidden {
+        tracker().remove(pid);
+    }
+    unhidden
+}
+
+pub fn forget_stache_hidden_app(pid: i32) { tracker().remove(pid); }
+
+fn restore_with(
+    hidden_apps: &HiddenAppTracker,
+    mut unhide: impl FnMut(i32) -> bool,
+) -> RestoreSummary {
+    let pids = hidden_apps.begin_shutdown_and_drain();
+    let attempted = pids.len();
+    let restored = pids.into_iter().filter(|&pid| unhide(pid)).count();
+    RestoreSummary { attempted, restored }
+}
+
+#[must_use]
+pub fn restore_stache_hidden_apps() -> RestoreSummary {
+    restore_with(tracker(), unhide_app)
+}
+```
+
+`hide_with` intentionally holds the tracker mutex across the OS hide and ownership
+record. `begin_shutdown_and_drain` takes the same mutex, sets `shutting_down`, and then
+drains the set. Therefore cleanup either observes and restores a completed hide, or a
+late hide sees the shutdown boundary and never calls AppKit.
+
+Expose the restoration types from `tiling/mod.rs` (the module declaration was added in
+Step 1):
+
+```rust
+pub use visibility::{RestoreSummary, restore_stache_hidden_apps};
+```
+
+- [ ] **Step 5: Route workspace synchronization and app lifecycle through the tracker**
+
+In `actor/handlers/window.rs` and `actor/mod.rs`, replace imports and calls to direct
+`hide_app`/`unhide_app` with `hide_app_for_workspace`/`unhide_app_for_workspace`.
+Do not change PID selection or workspace visibility logic. Update the existing trace in
+`actor/handlers/window.rs` to use structured debug formatting because the hide wrapper
+now returns an enum:
+
+```rust
+tracing::trace!(pid, result = ?result, "workspace visibility hide result");
+```
+
+In `actor/handlers/app.rs`, call `forget_stache_hidden_app(pid)` near the beginning of
+both `on_app_shown` and `on_app_terminated`. In `on_app_terminated`, it must appear
+before collecting windows and before the `window_ids.is_empty()` early return. The
+shown event covers a user manually revealing an application that Stache previously
+hid; forgetting ownership prevents a later user-initiated hide from being undone at
+shutdown. Extend the existing no-tracked-windows termination test to continue covering
+that early-return path after the ownership-forget call is inserted.
+
+- [ ] **Step 6: Run focused tests and verify GREEN**
+
+Run:
+
+```bash
+cargo test -p stache --lib modules::tiling::visibility::tests
+cargo test -p stache --lib modules::tiling::effects::window_ops::tests
+cargo test -p stache --lib modules::tiling::actor::handlers::app::tests
+cargo fmt --all -- --check
+cargo check -p stache
+```
+
+Expected: all commands pass. The tracker tests prove already-hidden apps are never
+owned by Stache and one failed unhide does not prevent later attempts.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add app/native/src/modules/tiling/visibility.rs \
+  app/native/src/modules/tiling/mod.rs \
+  app/native/src/modules/tiling/effects/window_ops.rs \
+  app/native/src/modules/tiling/actor/handlers/app.rs \
+  app/native/src/modules/tiling/actor/handlers/window.rs \
+  app/native/src/modules/tiling/actor/mod.rs
+git commit -m "feat(tiling): track applications hidden by Stache"
+```
+
+### Task 20: Centralize orderly shutdown and wire every supported exit path
+
+**Files:**
+
+- Create: `app/native/src/app_shutdown.rs`
+- Modify: `app/native/Cargo.toml`
+- Modify: `Cargo.lock`
+- Modify: `app/native/src/lib.rs:7-27,168-222`
+- Modify: `app/native/src/modules/tray/mod.rs:50-59`
+- Modify: `app/native/src/config/watcher.rs:94-98`
+- Modify: `app/native/src/modules/bar/ipc_listener.rs:58-74`
+
+- [ ] **Step 1: Write failing cleanup-order and idempotency tests**
+
+Create `app_shutdown.rs` with tests first:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
+    use std::sync::Mutex;
+
+    use super::*;
+
+    #[test]
+    fn cleanup_restores_before_stopping_tiling_and_ipc() {
+        let started = AtomicBool::new(false);
+        let order = Mutex::new(Vec::new());
+
+        assert!(run_cleanup_once(
+            &started,
+            || order.lock().unwrap().push("restore"),
+            || order.lock().unwrap().push("tiling"),
+            || order.lock().unwrap().push("ipc"),
+        ));
+
+        assert_eq!(*order.lock().unwrap(), ["restore", "tiling", "ipc"]);
+    }
+
+    #[test]
+    fn cleanup_runs_only_once() {
+        let started = AtomicBool::new(false);
+        let calls = AtomicUsize::new(0);
+        assert!(run_cleanup_once(
+            &started,
+            || { calls.fetch_add(1, Ordering::Relaxed); },
+            || { calls.fetch_add(1, Ordering::Relaxed); },
+            || { calls.fetch_add(1, Ordering::Relaxed); },
+        ));
+        assert!(!run_cleanup_once(
+            &started,
+            || { calls.fetch_add(1, Ordering::Relaxed); },
+            || { calls.fetch_add(1, Ordering::Relaxed); },
+            || { calls.fetch_add(1, Ordering::Relaxed); },
+        ));
+        assert_eq!(calls.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn second_termination_signal_forces_exit() {
+        let signals = AtomicU8::new(0);
+
+        assert_eq!(next_signal_action(&signals), SignalAction::Orderly);
+        assert_eq!(next_signal_action(&signals), SignalAction::Force);
+    }
+}
+```
+
+Run:
+
+```bash
+cargo test -p stache --lib app_shutdown::tests
+```
+
+Expected: compilation fails because `run_cleanup_once` is missing.
+
+- [ ] **Step 2: Add the signal dependency**
+
+Add to `app/native/Cargo.toml` in alphabetical order:
+
+```toml
+ctrlc = { version = "3.4.5", features = ["termination"] }
+```
+
+Run `cargo check -p stache` once to update `Cargo.lock`.
+
+- [ ] **Step 3: Implement one cleanup path and safe signal bridging**
+
+Add above the tests in `app_shutdown.rs`:
+
+```rust
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+
+use tauri::{AppHandle, Runtime};
+
+use crate::{modules::tiling, platform};
+
+static CLEANUP_STARTED: AtomicBool = AtomicBool::new(false);
+static SIGNAL_COUNT: AtomicU8 = AtomicU8::new(0);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShutdownAction {
+    Exit,
+    Restart,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SignalAction {
+    Orderly,
+    Force,
+}
+
+fn next_signal_action(signals: &AtomicU8) -> SignalAction {
+    if signals.fetch_add(1, Ordering::AcqRel) == 0 {
+        SignalAction::Orderly
+    } else {
+        SignalAction::Force
+    }
+}
+
+fn run_cleanup_once(
+    started: &AtomicBool,
+    restore: impl FnOnce(),
+    stop_tiling: impl FnOnce(),
+    stop_ipc: impl FnOnce(),
+) -> bool {
+    if started.swap(true, Ordering::AcqRel) {
+        return false;
+    }
+    restore();
+    stop_tiling();
+    stop_ipc();
+    true
+}
+
+pub fn cleanup_once() {
+    let _ = run_cleanup_once(
+        &CLEANUP_STARTED,
+        || {
+            let summary = tiling::restore_stache_hidden_apps();
+            tracing::info!(
+                attempted = summary.attempted,
+                restored = summary.restored,
+                "restored applications hidden by Stache"
+            );
+        },
+        tiling::shutdown,
+        platform::ipc_socket::stop_server,
+    );
+}
+
+fn request<R: Runtime>(app: &AppHandle<R>, action: ShutdownAction) {
+    let action_handle = app.clone();
+    if let Err(error) = app.run_on_main_thread(move || {
+        cleanup_once();
+        match action {
+            ShutdownAction::Exit => action_handle.exit(0),
+            ShutdownAction::Restart => action_handle.restart(),
+        }
+    }) {
+        tracing::error!(%error, "failed to dispatch orderly shutdown to main thread");
+    }
+}
+
+pub fn exit<R: Runtime>(app: &AppHandle<R>) { request(app, ShutdownAction::Exit); }
+
+pub fn restart<R: Runtime>(app: &AppHandle<R>) { request(app, ShutdownAction::Restart); }
+
+pub fn install_signal_handler<R: Runtime>(app: AppHandle<R>) -> Result<(), ctrlc::Error> {
+    ctrlc::set_handler(move || {
+        match next_signal_action(&SIGNAL_COUNT) {
+            SignalAction::Orderly => exit(&app),
+            SignalAction::Force => std::process::exit(1),
+        }
+    })
+}
+```
+
+The `ctrlc` closure runs on the crate's dedicated thread; it only schedules work on
+Tauri's main thread through `request`. Explicit restart calls from the config watcher
+and IPC listener use the same dispatch path. AppKit/AX restoration never runs inside a
+raw signal handler or on a background thread.
+`ctrlc::set_handler` installs one process-global handler and this function is called
+exactly once during app startup. The first SIGINT/SIGTERM requests orderly restoration;
+a second signal is an explicit last-resort forced exit if the main thread is stalled.
+If scheduling the first request fails, Stache logs the error and does not restart or
+pretend restoration occurred.
+
+- [ ] **Step 4: Expose the module and install the signal bridge before `App::run`**
+
+In `lib.rs`, add `mod app_shutdown;`. Refactor the final builder chain so `.build(...)`
+is assigned to `app`, then install the handler and run the app:
+
+```rust
+let app = tauri::Builder::default()
+    // existing plugins, handlers, and setup remain unchanged
+    .build(context)
+    .expect("error while building tauri application");
+
+app_shutdown::install_signal_handler(app.handle().clone())
+    .expect("failed to install SIGINT/SIGTERM handler");
+
+app.run(|_app, event| {
+    if matches!(event, tauri::RunEvent::Exit) {
+        tracing::info!("application exiting, cleaning up");
+        app_shutdown::cleanup_once();
+    }
+});
+```
+
+- [ ] **Step 5: Route explicit quit and restart paths through cleanup**
+
+Replace only the terminal calls at these sites:
+
+```rust
+// modules/tray/mod.rs
+RELOAD_ID => crate::app_shutdown::restart(app),
+QUIT_ID => crate::app_shutdown::exit(app),
+
+// config/watcher.rs release branch
+crate::app_shutdown::restart(&app_handle);
+
+// modules/bar/ipc_listener.rs release branch
+crate::app_shutdown::restart(app_handle);
+```
+
+Keep existing logging and frontend reload emission. Do not alter debug-only behavior.
+
+- [ ] **Step 6: Run focused tests and compile all wired paths**
+
+Run:
+
+```bash
+cargo test -p stache --lib app_shutdown::tests
+cargo test -p stache --lib modules::tiling::visibility::tests
+cargo fmt --all -- --check
+cargo check -p stache
+cargo clippy -p stache --lib -- -D warnings
+```
+
+Expected: all commands pass. The cleanup test proves restoration occurs before tiling
+and IPC teardown, and repeated Tauri exit notifications cannot run cleanup twice.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add app/native/Cargo.toml Cargo.lock app/native/src/app_shutdown.rs \
+  app/native/src/lib.rs app/native/src/modules/tray/mod.rs \
+  app/native/src/config/watcher.rs app/native/src/modules/bar/ipc_listener.rs
+git commit -m "feat: restore Stache-hidden apps before shutdown"
+```
+
+### Task 21: Manually verify supported shutdown paths
+
+**Files:** none
+
+- [ ] **Step 1: Prepare distinguishable application states**
+
+Run `pnpm tauri:dev`, place one application's windows only on a non-visible Stache
+workspace so Stache hides that application, minimize a window from another application,
+and manually hide a third application before Stache attempts to manage it.
+
+Also prepare the relinquished-ownership sequence: let Stache hide an application, show
+it manually, then hide it manually again. On every shutdown path below, confirm this
+application remains hidden because the app-shown event removed Stache's ownership.
+
+- [ ] **Step 2: Verify normal tray quit**
+
+Choose “Quit Stache.” Confirm the Stache-hidden application becomes visible, while the
+minimized window remains minimized and the independently hidden application remains
+hidden.
+
+- [ ] **Step 3: Verify every reload/restart entry point in a release build**
+
+Build and launch the release app. From a fresh process/state for each case, hide an
+application through a workspace switch and trigger:
+
+1. Tray “Reload Stache”.
+2. A config file change handled by `config/watcher.rs`.
+3. CLI `stache reload`, which reaches `bar/ipc_listener.rs`.
+
+Confirm restoration occurs before the replacement process starts in all three cases.
+
+- [ ] **Step 4: Verify SIGTERM and SIGINT**
+
+For each signal, start from a fresh process and repeat the hidden-state setup:
+
+```bash
+kill -TERM "$(pgrep -x stache)"
+kill -INT "$(pgrep -x stache)"
+```
+
+Confirm the process exits after restoring only Stache-owned hides. Check logs for the
+`attempted` and `restored` counts.
+
+- [ ] **Step 5: Confirm and document the SIGKILL boundary**
+
+Run `kill -KILL "$(pgrep -x stache)"` only after the supported-path checks. Confirm no
+cleanup log is emitted. This is the expected POSIX limitation: SIGKILL cannot execute
+in-process restoration and is not a failure of the implementation.
+
+- [ ] **Step 6: Report results** — verification only. No commit.
+
+---
+
 ## Verification Summary
 
-| Phase | Verification                                                                                                                                                                               |
-| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1     | Manual: menubar reaction ≤200ms (Task 3). Build passes.                                                                                                                                    |
-| 2     | Manual: tracing spans emit under debug default (Task 8). No behavior change; existing tests pass (`pnpm test`).                                                                            |
-| 3     | TBD per Phase 2 evidence; each fix gets a failing test → pass → commit.                                                                                                                    |
-| 4     | Build passes; `pnpm test` passes; manual: each module's OS resource actually releases/reacquires (event tap disabled, listener removed, tiling `reset()` clears guard so resume succeeds). |
-| 5     | Manual tray interaction (Task 18): toggle states correct, config-off locked, unavailable shows reason, restart resets.                                                                     |
+| Phase | Verification                                                                                                                                                                                       |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | Manual: menubar reaction ≤200ms (Task 3). Build passes.                                                                                                                                            |
+| 2     | Manual: tracing spans emit under debug default (Task 8). No behavior change; existing tests pass (`pnpm test`).                                                                                    |
+| 3     | Blocked pending Phase 2 evidence; each confirmed fix gets a failing test → pass → commit.                                                                                                          |
+| 4     | Build passes; `pnpm test` passes; manual: each module's OS resource actually releases/reacquires (event tap disabled, listener removed, tiling `reset()` clears guard so resume succeeds).         |
+| 5     | Manual tray interaction (Task 18): toggle states correct, config-off locked, unavailable shows reason, restart resets.                                                                             |
+| 6     | Unit: hide ownership, best-effort drain, cleanup order, idempotency. Manual: tray quit, reload/restart, SIGTERM, and SIGINT restore only Stache-hidden applications; SIGKILL limitation confirmed. |
 
 ## Open Items / Risks
 
@@ -1170,3 +1824,4 @@ Quit and relaunch. All modules return to their config-driven default state (togg
 - **proxyAudio listener removal (Task 13)** is the highest-risk change — callback reference and `client_data` pointer MUST match the registration exactly.
 - **tiling `INITIALIZED` change (Task 15)** converts a `OnceLock<bool>` to `Mutex<bool>`; all read/write sites in `init()` must be updated consistently.
 - **Tray `CheckMenuItem` handle retention (Task 17)** may need a `TrayMenuState` managed struct if immediate state reflection is required; the minimal version relies on macOS re-querying the menu on open.
+- **SIGKILL cannot be handled in-process.** Phase 6 intentionally provides best-effort cleanup for orderly exits, explicit restart paths, SIGTERM, and SIGINT only.

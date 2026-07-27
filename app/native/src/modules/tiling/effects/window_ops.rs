@@ -912,6 +912,88 @@ pub fn unhide_app(pid: i32) -> bool {
     }
 }
 
+// ============================================================================
+// Hide Outcome
+// ============================================================================
+
+/// Outcome of hiding an application.
+///
+/// Tracks whether the app was hidden by Stache (so we own the responsibility
+/// to restore it), was already hidden, or the operation failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HideAppOutcome {
+    /// App was successfully hidden by Stache - we own restoring it.
+    HiddenByStache,
+    /// App was already hidden - no ownership taken.
+    AlreadyHidden,
+    /// Hide operation failed.
+    Failed,
+}
+
+impl HideAppOutcome {
+    /// Returns `true` if the hide operation was functionally successful
+    /// (either hidden by us or already hidden).
+    #[must_use]
+    pub const fn succeeded(self) -> bool {
+        matches!(self, Self::HiddenByStache | Self::AlreadyHidden)
+    }
+}
+
+/// Pure classifier that determines the outcome given the pre-hide state
+/// and the result of the OS hide call.
+///
+/// This is a pure function (no side effects) making it easily testable
+/// without any macOS APIs.
+#[must_use]
+pub const fn classify_hide_outcome(was_hidden: bool, hide_succeeded: bool) -> HideAppOutcome {
+    if hide_succeeded {
+        if was_hidden {
+            HideAppOutcome::AlreadyHidden
+        } else {
+            HideAppOutcome::HiddenByStache
+        }
+    } else {
+        HideAppOutcome::Failed
+    }
+}
+
+/// Hides an app and returns the detailed outcome.
+///
+/// Like `hide_app` but provides full outcome information including whether
+/// Stache caused the hide or the app was already hidden.
+#[must_use]
+pub fn hide_app_with_outcome(pid: i32) -> HideAppOutcome {
+    use objc::runtime::{BOOL, Class, Object, YES};
+    use objc::{msg_send, sel, sel_impl};
+
+    unsafe {
+        let Some(app_class) = Class::get("NSRunningApplication") else {
+            tracing::warn!("NSRunningApplication class not found");
+            return HideAppOutcome::Failed;
+        };
+
+        let app: *mut Object = msg_send![app_class, runningApplicationWithProcessIdentifier: pid];
+        if app.is_null() {
+            tracing::debug!("hide_app_with_outcome: no running application for pid {pid}");
+            return HideAppOutcome::Failed;
+        }
+
+        // Check if already hidden
+        let is_hidden: BOOL = msg_send![app, isHidden];
+        if is_hidden == YES {
+            return HideAppOutcome::AlreadyHidden;
+        }
+
+        // Hide the app
+        let result: BOOL = msg_send![app, hide];
+        if result == YES {
+            HideAppOutcome::HiddenByStache
+        } else {
+            HideAppOutcome::Failed
+        }
+    }
+}
+
 /// Hides multiple apps by their PIDs.
 ///
 /// # Arguments
@@ -968,5 +1050,52 @@ mod tests {
         let _ = cf_main();
         let _ = cf_raise();
         let _ = cf_role();
+    }
+
+    // ========================================================================
+    // HideAppOutcome / classify_hide_outcome tests
+    // ========================================================================
+
+    #[test]
+    fn test_classify_was_not_hidden_hide_succeeded() {
+        let outcome = classify_hide_outcome(false, true);
+        assert_eq!(outcome, HideAppOutcome::HiddenByStache);
+        assert!(outcome.succeeded());
+    }
+
+    #[test]
+    fn test_classify_was_hidden_hide_succeeded() {
+        let outcome = classify_hide_outcome(true, true);
+        assert_eq!(outcome, HideAppOutcome::AlreadyHidden);
+        assert!(outcome.succeeded());
+    }
+
+    #[test]
+    fn test_classify_hide_failed_was_not_hidden() {
+        let outcome = classify_hide_outcome(false, false);
+        assert_eq!(outcome, HideAppOutcome::Failed);
+        assert!(!outcome.succeeded());
+    }
+
+    #[test]
+    fn test_classify_hide_failed_was_hidden() {
+        // Edge case: reported hidden but hide call failed
+        // (unusual but we classify based on the inputs as given)
+        let outcome = classify_hide_outcome(true, false);
+        assert_eq!(outcome, HideAppOutcome::Failed);
+        assert!(!outcome.succeeded());
+    }
+
+    #[test]
+    fn test_hide_app_outcome_debug_format() {
+        let outcome = HideAppOutcome::HiddenByStache;
+        let debug = format!("{outcome:?}");
+        assert_eq!(debug, "HiddenByStache");
+    }
+
+    #[test]
+    fn test_hide_app_outcome_sized() {
+        // Verify it fits in a single register (small enum)
+        assert_eq!(std::mem::size_of::<HideAppOutcome>(), 1);
     }
 }

@@ -48,6 +48,7 @@ pub mod layout;
 pub mod rules;
 pub mod state;
 pub mod tabs;
+pub mod visibility;
 pub mod window;
 
 // Re-export commonly used types
@@ -75,6 +76,7 @@ pub use layout::{
     calculate_layout_full, calculate_layout_with_gaps,
 };
 pub use state::{FocusState, LayoutType, Rect, Screen, TilingState, Window, Workspace};
+pub use visibility::{RestoreSummary, restore_stache_hidden_apps};
 pub use window::{
     AppInfo, WindowInfo, get_all_windows_including_hidden, get_running_apps, get_visible_windows,
 };

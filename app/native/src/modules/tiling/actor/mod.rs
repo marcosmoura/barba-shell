@@ -643,7 +643,9 @@ impl StateActor {
     fn sync_window_visibility(&self) {
         use std::collections::HashSet;
 
-        use crate::modules::tiling::effects::window_ops::{hide_app, unhide_app};
+        use crate::modules::tiling::visibility::{
+            hide_app_for_workspace, unhide_app_for_workspace,
+        };
 
         // Collect visible workspace IDs
         let visible_ws_ids: HashSet<uuid::Uuid> =
@@ -667,12 +669,12 @@ impl StateActor {
 
         // Unhide apps with windows in visible workspaces (in case they were hidden before)
         for pid in &pids_in_visible {
-            let _ = unhide_app(*pid);
+            let _ = unhide_app_for_workspace(*pid);
         }
 
         // Hide apps with windows only in non-visible workspaces
         for pid in &pids_to_hide {
-            let _ = hide_app(*pid);
+            let _ = hide_app_for_workspace(*pid);
         }
 
         tracing::debug!(

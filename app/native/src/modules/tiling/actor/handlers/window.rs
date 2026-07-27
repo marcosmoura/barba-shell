@@ -353,7 +353,7 @@ pub fn sync_window_visibility_for_workspaces(
 ) {
     use std::collections::HashSet;
 
-    use crate::modules::tiling::effects::window_ops::{hide_app, unhide_app};
+    use crate::modules::tiling::visibility::{hide_app_for_workspace, unhide_app_for_workspace};
 
     if becoming_visible.is_empty() && becoming_hidden.is_empty() {
         tracing::trace!("No visibility changes to sync");
@@ -399,14 +399,14 @@ pub fn sync_window_visibility_for_workspaces(
 
     // Show apps first (so they become visible before we hide others)
     for pid in &pids_to_show {
-        let result = unhide_app(*pid);
-        tracing::trace!("unhide_app({pid}) = {result}");
+        let result = unhide_app_for_workspace(*pid);
+        tracing::trace!("unhide_app_for_workspace({pid}) = {result}");
     }
 
     // Hide apps that only have windows in non-visible workspaces
     for pid in &pids_to_hide {
-        let result = hide_app(*pid);
-        tracing::trace!("hide_app({pid}) = {result}");
+        let result = hide_app_for_workspace(*pid);
+        tracing::trace!("hide_app_for_workspace({pid}) = ?{result:?}");
     }
 }
 

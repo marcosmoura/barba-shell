@@ -25,6 +25,7 @@ use crate::modules::tiling::actor::{
     GeometryUpdate, GeometryUpdateType, StateActorHandle, StateMessage, WindowCreatedInfo,
 };
 use crate::modules::tiling::state::Rect;
+use crate::modules::tiling::visibility::forget_stache_hidden_app;
 
 /// Default refresh rate if detection fails (60 Hz).
 const DEFAULT_REFRESH_RATE: f64 = 60.0;
@@ -49,6 +50,15 @@ struct ScreenBatch {
 
     /// Whether the timer for this screen is running.
     timer_running: AtomicBool,
+}
+
+fn relinquish_before_dispatch<T>(
+    pid: i32,
+    forget: impl FnOnce(i32),
+    dispatch: impl FnOnce() -> T,
+) -> T {
+    forget(pid);
+    dispatch()
 }
 
 impl ScreenBatch {
@@ -519,7 +529,9 @@ impl EventProcessor {
     /// Dispatch an app terminated event.
     pub fn on_app_terminated(&self, pid: i32) {
         tracing::trace!("App terminated: pid={pid}");
-        let _ = self.actor_handle.send(StateMessage::AppTerminated { pid });
+        let _ = relinquish_before_dispatch(pid, forget_stache_hidden_app, || {
+            self.actor_handle.send(StateMessage::AppTerminated { pid })
+        });
     }
 
     /// Dispatch an app hidden event.
@@ -531,7 +543,9 @@ impl EventProcessor {
     /// Dispatch an app shown event.
     pub fn on_app_shown(&self, pid: i32) {
         tracing::trace!("App shown: pid={pid}");
-        let _ = self.actor_handle.send(StateMessage::AppShown { pid });
+        let _ = relinquish_before_dispatch(pid, forget_stache_hidden_app, || {
+            self.actor_handle.send(StateMessage::AppShown { pid })
+        });
     }
 
     /// Dispatch an app activated event.
@@ -675,8 +689,41 @@ pub fn get_main_display_refresh_rate() -> f64 {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+
     use super::*;
     use crate::modules::tiling::actor::StateActor;
+
+    #[test]
+    fn lifecycle_ownership_is_relinquished_before_dispatch() {
+        let events = RefCell::new(Vec::new());
+
+        let result: Result<(), ()> = relinquish_before_dispatch(
+            42,
+            |pid| events.borrow_mut().push(("forget", pid)),
+            || {
+                events.borrow_mut().push(("dispatch", 42));
+                Ok(())
+            },
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(events.into_inner(), vec![("forget", 42), ("dispatch", 42)]);
+    }
+
+    #[test]
+    fn lifecycle_ownership_is_relinquished_when_dispatch_fails() {
+        let events = RefCell::new(Vec::new());
+
+        let result: Result<(), &str> = relinquish_before_dispatch(
+            42,
+            |pid| events.borrow_mut().push(("forget", pid)),
+            || Err("full"),
+        );
+
+        assert_eq!(result, Err("full"));
+        assert_eq!(events.into_inner(), vec![("forget", 42)]);
+    }
 
     #[tokio::test]
     async fn test_processor_creation() {

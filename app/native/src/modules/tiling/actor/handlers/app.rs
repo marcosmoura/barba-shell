@@ -34,7 +34,6 @@ pub fn on_app_launched(state: &mut TilingState, pid: i32, bundle_id: &str, name:
 pub fn on_app_terminated(state: &mut TilingState, pid: i32) -> HashSet<Uuid> {
     tracing::debug!("Handling app terminated: pid={pid}");
 
-    crate::modules::tiling::visibility::forget_stache_hidden_app(pid);
     crate::modules::tiling::tabs::clear_tabs_for_pid(pid);
 
     // Find all windows for this PID
@@ -122,8 +121,6 @@ pub fn on_app_hidden(state: &mut TilingState, pid: i32) {
 /// Marks all windows belonging to this application as visible.
 pub fn on_app_shown(state: &mut TilingState, pid: i32) {
     tracing::debug!("Handling app shown: pid={pid}");
-
-    crate::modules::tiling::visibility::forget_stache_hidden_app(pid);
 
     // Find all windows for this PID and mark as visible
     let window_ids: Vec<u32> = state.get_windows_for_pid(pid).iter().map(|w| w.id).collect();

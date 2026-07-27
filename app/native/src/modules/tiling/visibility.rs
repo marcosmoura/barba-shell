@@ -104,6 +104,8 @@ pub fn restore_stache_hidden_apps() -> RestoreSummary { restore_with(tracker(), 
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
+    use std::sync::{Arc, Barrier, mpsc};
+    use std::thread;
 
     use super::*;
 
@@ -176,5 +178,47 @@ mod tests {
 
         assert_eq!(outcome, HideAppOutcome::Failed);
         assert!(tracker.snapshot().is_empty());
+    }
+
+    #[test]
+    fn shutdown_drain_waits_for_in_flight_hide_to_record_ownership() {
+        let tracker = Arc::new(HiddenAppTracker::default());
+        let hide_entered = Arc::new(Barrier::new(2));
+        let release_hide = Arc::new(Barrier::new(2));
+
+        let hide_tracker = Arc::clone(&tracker);
+        let hide_entered_worker = Arc::clone(&hide_entered);
+        let release_hide_worker = Arc::clone(&release_hide);
+        let hide_thread = thread::spawn(move || {
+            hide_tracker.hide_with(12, |_| {
+                hide_entered_worker.wait();
+                release_hide_worker.wait();
+                HideAppOutcome::HiddenByStache
+            })
+        });
+        hide_entered.wait();
+
+        let restore_tracker = Arc::clone(&tracker);
+        let restore_started = Arc::new(Barrier::new(2));
+        let restore_started_worker = Arc::clone(&restore_started);
+        let (summary_tx, summary_rx) = mpsc::channel();
+        let restore_thread = thread::spawn(move || {
+            restore_started_worker.wait();
+            let summary = restore_with(&restore_tracker, |_| true);
+            summary_tx.send(summary).expect("summary receiver should remain alive");
+        });
+        restore_started.wait();
+
+        release_hide.wait();
+
+        assert_eq!(
+            hide_thread.join().expect("hide thread should not panic"),
+            HideAppOutcome::HiddenByStache
+        );
+        assert_eq!(
+            summary_rx.recv().expect("restore should produce a summary"),
+            RestoreSummary { attempted: 1, restored: 1 }
+        );
+        restore_thread.join().expect("restore thread should not panic");
     }
 }

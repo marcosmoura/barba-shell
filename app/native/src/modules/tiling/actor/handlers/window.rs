@@ -399,14 +399,12 @@ pub fn sync_window_visibility_for_workspaces(
 
     // Show apps first (so they become visible before we hide others)
     for pid in &pids_to_show {
-        let result = unhide_app_for_workspace(*pid);
-        tracing::trace!("unhide_app_for_workspace({pid}) = {result}");
+        let _ = unhide_app_for_workspace(*pid);
     }
 
     // Hide apps that only have windows in non-visible workspaces
     for pid in &pids_to_hide {
-        let result = hide_app_for_workspace(*pid);
-        tracing::trace!("hide_app_for_workspace({pid}) = ?{result:?}");
+        let _ = hide_app_for_workspace(*pid);
     }
 }
 

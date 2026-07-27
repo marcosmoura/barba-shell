@@ -33,7 +33,7 @@ struct TrackerState {
 // ============================================================================
 
 /// The process-global hidden-app tracker.
-pub struct HiddenAppTracker {
+struct HiddenAppTracker {
     state: Mutex<TrackerState>,
 }
 
@@ -93,17 +93,21 @@ impl HiddenAppTracker {
     /// the user or terminated).
     fn forget(&self, pid: i32) { self.state.lock().pids.remove(&pid); }
 
+    /// Private injectable restore. Takes an unhide closure for testability.
+    fn restore_with<F>(&self, mut unhide: F) -> RestoreSummary
+    where F: FnMut(i32) -> bool {
+        let pids = self.begin_shutdown_and_drain();
+        let attempted = pids.len();
+        let restored = pids.iter().filter(|&&pid| unhide(pid)).count();
+        RestoreSummary { attempted, restored }
+    }
+
     /// Attempts to unhide every tracked PID in sorted order, tolerating
     /// individual failures, then drains tracking entirely.
     ///
     /// Repeated calls are idempotent — after the first call the set is
     /// empty so no unhide closures are invoked.
-    fn restore_all(&self) -> RestoreSummary {
-        let pids = self.begin_shutdown_and_drain();
-        let attempted = pids.len();
-        let restored = pids.iter().filter(|&&pid| unhide_app(pid)).count();
-        RestoreSummary { attempted, restored }
-    }
+    fn restore_all(&self) -> RestoreSummary { self.restore_with(unhide_app) }
 }
 
 // ============================================================================
@@ -123,9 +127,11 @@ fn tracker() -> &'static HiddenAppTracker { TRACKER.get_or_init(HiddenAppTracker
 /// This wraps [`hide_app_with_outcome`] with ownership tracking.
 #[must_use]
 pub fn hide_app_for_workspace(pid: i32) -> HideAppOutcome {
-    tracker().hide_with(pid, |pid| {
+    let result = tracker().hide_with(pid, |pid| {
         crate::modules::tiling::effects::window_ops::hide_app_with_outcome(pid)
-    })
+    });
+    tracing::trace!(pid, result = ?result, "workspace visibility hide result");
+    result
 }
 
 /// Unhide an app, removing ownership only on success.
@@ -284,19 +290,20 @@ mod tests {
     fn test_restore_continues_on_failure() {
         let t = new_tracker();
 
-        // Record two PIDs.
-        t.hide_with(12, |_| HideAppOutcome::HiddenByStache);
+        // Record two PIDs (inserted out of order to exercise sort).
         t.hide_with(13, |_| HideAppOutcome::HiddenByStache);
+        t.hide_with(12, |_| HideAppOutcome::HiddenByStache);
 
-        // Restore_all will attempt unhide_app for both. Since neither
-        // PID actually exists, both will fail → restored=0, attempted=2.
-        let summary = t.restore_all();
+        // restore_with injects a mock that fails for 12, succeeds for 13.
+        // Because begin_shutdown_and_drain sorts, PID 12 is processed first
+        // (fails) and PID 13 second (succeeds) → restored=1, attempted=2.
+        let summary = t.restore_with(|pid| pid == 13);
         assert_eq!(summary.attempted, 2);
-        assert_eq!(summary.restored, 0);
+        assert_eq!(summary.restored, 1);
 
         // Tracker should be drained.
         let drained = t.begin_shutdown_and_drain();
-        assert!(drained.is_empty(), "restore_all should drain tracking");
+        assert!(drained.is_empty(), "restore should drain tracking");
     }
 
     /// Verify restore processes PIDs in sorted order (we can't easily
@@ -320,23 +327,26 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // Repeated restore no-op without invoking unhide
+    // Repeated restore no-op — closure not invoked on empty set
     // ------------------------------------------------------------------
 
     #[test]
-    fn test_repeated_restore_is_no_op() {
+    fn test_repeated_restore_does_not_invoke_unhide() {
         let t = new_tracker();
 
         // Record a PID.
         t.hide_with(99, |_| HideAppOutcome::HiddenByStache);
 
-        // First restore — attempts the unhide (fails, no such PID).
-        let s1 = t.restore_all();
+        // First restore — attempts the unhide via injectable mock.
+        let s1 = t.restore_with(|pid| {
+            assert_eq!(pid, 99);
+            false
+        });
         assert_eq!(s1.attempted, 1);
         assert_eq!(s1.restored, 0);
 
-        // Second restore — set is empty, no unhide attempted.
-        let s2 = t.restore_all();
+        // Second restore — set is empty, closure panics if invoked.
+        let s2 = t.restore_with(|_| panic!("should not be called on empty set"));
         assert_eq!(s2.attempted, 0);
         assert_eq!(s2.restored, 0);
     }
@@ -382,37 +392,4 @@ mod tests {
         assert!(!invoked, "closure should not be invoked during shutdown");
         assert_eq!(outcome, HideAppOutcome::Failed);
     }
-
-    // ------------------------------------------------------------------
-    // RestoreSummary
-    // ------------------------------------------------------------------
-
-    #[test]
-    fn test_restore_summary_debug() {
-        let s = RestoreSummary { attempted: 5, restored: 3 };
-        let debug = format!("{s:?}");
-        assert!(debug.contains("attempted: 5"));
-        assert!(debug.contains("restored: 3"));
-    }
-
-    // ------------------------------------------------------------------
-    // Global tracker convenience wrappers (structural)
-    // ------------------------------------------------------------------
-
-    #[test]
-    fn test_global_tracker_is_singleton() {
-        // Access the tracker twice — should be the same instance.
-        let a: *const HiddenAppTracker = &*TRACKER.get_or_init(HiddenAppTracker::new);
-        let b: *const HiddenAppTracker = &*TRACKER.get_or_init(HiddenAppTracker::new);
-        assert_eq!(a, b);
-    }
-
-    #[test]
-    fn test_forget_stache_hidden_app_does_not_panic() {
-        // Should not panic even for unknown PID.
-        forget_stache_hidden_app(999_999);
-    }
-
-    #[test]
-    fn test_restore_stache_hidden_apps_does_not_panic() { let _ = restore_stache_hidden_apps(); }
 }

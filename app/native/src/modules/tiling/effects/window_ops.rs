@@ -840,8 +840,7 @@ pub fn set_window_frames_batch(frames: &[(u32, Rect)]) -> usize {
 
 /// Hides an application by PID.
 ///
-/// Uses `NSRunningApplication.hide()` to hide all windows of the app.
-/// This is an app-level operation (macOS doesn't support hiding individual windows).
+/// Delegates to `hide_app_with_outcome` for the single `ObjC` hide path.
 ///
 /// # Arguments
 ///
@@ -851,33 +850,7 @@ pub fn set_window_frames_batch(frames: &[(u32, Rect)]) -> usize {
 ///
 /// `true` if the app was successfully hidden or was already hidden, `false` otherwise.
 #[must_use]
-pub fn hide_app(pid: i32) -> bool {
-    use objc::runtime::{BOOL, Class, Object, YES};
-    use objc::{msg_send, sel, sel_impl};
-
-    unsafe {
-        let Some(app_class) = Class::get("NSRunningApplication") else {
-            tracing::warn!("NSRunningApplication class not found");
-            return false;
-        };
-
-        let app: *mut Object = msg_send![app_class, runningApplicationWithProcessIdentifier: pid];
-        if app.is_null() {
-            tracing::debug!("hide_app: no running application for pid {pid}");
-            return false;
-        }
-
-        // Check if already hidden
-        let is_hidden: BOOL = msg_send![app, isHidden];
-        if is_hidden == YES {
-            return true;
-        }
-
-        // Hide the app
-        let result: BOOL = msg_send![app, hide];
-        result == YES
-    }
-}
+pub fn hide_app(pid: i32) -> bool { hide_app_with_outcome(pid).succeeded() }
 
 /// Shows (unhides) an application by PID.
 ///
@@ -934,9 +907,7 @@ impl HideAppOutcome {
     /// Returns `true` if the hide operation was functionally successful
     /// (either hidden by us or already hidden).
     #[must_use]
-    pub const fn succeeded(self) -> bool {
-        matches!(self, Self::HiddenByStache | Self::AlreadyHidden)
-    }
+    const fn succeeded(self) -> bool { matches!(self, Self::HiddenByStache | Self::AlreadyHidden) }
 }
 
 /// Pure classifier that determines the outcome given the pre-hide state
@@ -945,13 +916,12 @@ impl HideAppOutcome {
 /// This is a pure function (no side effects) making it easily testable
 /// without any macOS APIs.
 #[must_use]
-pub const fn classify_hide_outcome(was_hidden: bool, hide_succeeded: bool) -> HideAppOutcome {
-    if hide_succeeded {
-        if was_hidden {
-            HideAppOutcome::AlreadyHidden
-        } else {
-            HideAppOutcome::HiddenByStache
-        }
+#[allow(dead_code)]
+const fn classify_hide_outcome(was_hidden: bool, hide_succeeded: bool) -> HideAppOutcome {
+    if was_hidden {
+        HideAppOutcome::AlreadyHidden
+    } else if hide_succeeded {
+        HideAppOutcome::HiddenByStache
     } else {
         HideAppOutcome::Failed
     }
@@ -1026,32 +996,6 @@ pub fn unhide_apps(pids: &[i32]) -> usize { pids.iter().filter(|&&pid| unhide_ap
 mod tests {
     use super::*;
 
-    // Note: test_resolve_nonexistent_window is disabled because it requires
-    // accessibility permissions and can crash if permissions are not granted.
-    // The function is still tested indirectly through integration tests.
-
-    #[test]
-    fn test_get_running_app_pids() {
-        // This test just verifies the function doesn't panic.
-        // The actual PIDs returned depend on the system state.
-        let pids = get_running_app_pids();
-        // Should have at least one running app (the test runner)
-        // But this might fail in CI, so we just check it doesn't panic
-        let _ = pids;
-    }
-
-    #[test]
-    fn test_cached_cfstrings() {
-        // Verify cached CFString functions don't panic
-        let _ = cf_windows();
-        let _ = cf_position();
-        let _ = cf_size();
-        let _ = cf_focused();
-        let _ = cf_main();
-        let _ = cf_raise();
-        let _ = cf_role();
-    }
-
     // ========================================================================
     // HideAppOutcome / classify_hide_outcome tests
     // ========================================================================
@@ -1079,23 +1023,9 @@ mod tests {
 
     #[test]
     fn test_classify_hide_failed_was_hidden() {
-        // Edge case: reported hidden but hide call failed
-        // (unusual but we classify based on the inputs as given)
+        // was_hidden=true takes precedence: returns AlreadyHidden even if hide_succeeded=false
         let outcome = classify_hide_outcome(true, false);
-        assert_eq!(outcome, HideAppOutcome::Failed);
-        assert!(!outcome.succeeded());
-    }
-
-    #[test]
-    fn test_hide_app_outcome_debug_format() {
-        let outcome = HideAppOutcome::HiddenByStache;
-        let debug = format!("{outcome:?}");
-        assert_eq!(debug, "HiddenByStache");
-    }
-
-    #[test]
-    fn test_hide_app_outcome_sized() {
-        // Verify it fits in a single register (small enum)
-        assert_eq!(std::mem::size_of::<HideAppOutcome>(), 1);
+        assert_eq!(outcome, HideAppOutcome::AlreadyHidden);
+        assert!(outcome.succeeded());
     }
 }

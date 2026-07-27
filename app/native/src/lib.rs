@@ -5,6 +5,7 @@
 //! media controls, system status, and more.
 
 // Infrastructure modules
+mod app_shutdown;
 pub mod cache;
 pub mod cli;
 pub mod config;
@@ -165,7 +166,7 @@ pub fn run() {
     #[allow(clippy::large_stack_frames)]
     let context = tauri::generate_context!();
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|_app, _args, _| {
             // Single instance plugin ensures only one instance runs
         }))
@@ -212,12 +213,15 @@ pub fn run() {
             Ok(())
         })
         .build(context)
-        .expect("error while building tauri application")
-        .run(|_app, event| {
-            if matches!(event, tauri::RunEvent::Exit) {
-                tracing::info!("application exiting, cleaning up");
-                // Clean up IPC socket on exit
-                platform::ipc_socket::stop_server();
-            }
-        });
+        .expect("error while building tauri application");
+
+    app_shutdown::install_signal_handler(app.handle().clone())
+        .expect("failed to install SIGINT/SIGTERM handler");
+
+    app.run(|_app, event| {
+        if matches!(event, tauri::RunEvent::Exit) {
+            tracing::info!("application exiting, cleaning up");
+            app_shutdown::cleanup_once();
+        }
+    });
 }

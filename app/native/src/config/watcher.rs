@@ -94,7 +94,7 @@ pub fn watch_config_file<R: tauri::Runtime>(app_handle: AppHandle<R>) {
                     #[cfg(not(debug_assertions))]
                     {
                         tracing::info!("config file changed, restarting application");
-                        app_handle.restart();
+                        crate::app_shutdown::restart(&app_handle);
                     }
                 }
                 Ok(Err(err)) => {

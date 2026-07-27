@@ -51,11 +51,11 @@ pub fn init(app: &App) {
             #[cfg(not(debug_assertions))]
             RELOAD_ID => {
                 tracing::info!("reload requested via system tray");
-                app.restart();
+                crate::app_shutdown::restart(app);
             }
             QUIT_ID => {
                 tracing::info!("quit requested via system tray");
-                app.exit(0);
+                crate::app_shutdown::exit(app);
             }
             _ => {}
         })

@@ -70,7 +70,7 @@ fn handle_notification<R: Runtime>(app_handle: &AppHandle<R>, notification: Stac
             #[cfg(not(debug_assertions))]
             {
                 tracing::info!("reload requested via CLI, restarting application");
-                app_handle.restart();
+                crate::app_shutdown::restart(app_handle);
             }
         }
 

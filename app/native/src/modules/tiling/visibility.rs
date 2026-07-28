@@ -211,9 +211,14 @@ impl HiddenAppTracker {
         outcome
     }
 
-    /// Classifies an incoming `AppShown` event with optional OS state.
+    /// Classifies an incoming `AppShown` event.
     ///
-    /// Policy by OS state:
+    /// The `query` closure is invoked **inside** the tracker mutex so that
+    /// the OS hidden-state read is atomic with the classification decision.
+    /// This prevents a TOCTOU race where a concurrent `hide_with` records
+    /// ownership between the OS query and lock acquisition.
+    ///
+    /// Policy by OS state (from the `query` result):
     ///
     /// * `Some(false)` — OS confirms visible.  Clear the ENTIRE PID entry
     ///   (owner and ALL stale expected-show tokens), dispatch.  Classification
@@ -240,9 +245,14 @@ impl HiddenAppTracker {
     // or unhide callbacks cannot observe an inconsistent mid-classification
     // state.  The drop-tightening false positive is therefore suppressed.
     #[allow(clippy::significant_drop_tightening)]
-    fn classify_shown_with_state(&self, pid: i32, is_hidden: Option<bool>) -> ShownClassification {
+    fn classify_shown_with(
+        &self,
+        pid: i32,
+        query: impl FnOnce(i32) -> Option<bool>,
+    ) -> ShownClassification {
         let mut state = self.state.lock();
         let seq = Self::next_seq(&mut state);
+        let is_hidden = query(pid);
 
         // ── OS confirms the app is visible ─────────────────────────
         // Actual visible state wins over all bookkeeping.
@@ -357,6 +367,17 @@ impl HiddenAppTracker {
             );
             ShownClassification::ExternalShown
         }
+    }
+
+    /// Classifies with an explicit OS-state value.
+    ///
+    /// Delegates to [`Self::classify_shown_with`] by injecting the value
+    /// as a constant closure.  Useful for tests that cannot reach macOS
+    /// APIs — the real `classify_stache_hidden_app` goes through
+    /// [`Self::classify_shown_with`] directly so the OS query is inside
+    /// the mutex.
+    fn classify_shown_with_state(&self, pid: i32, is_hidden: Option<bool>) -> ShownClassification {
+        self.classify_shown_with(pid, |_| is_hidden)
     }
 
     /// Unconditionally removes the entire PID entry.  Intended for process
@@ -489,10 +510,17 @@ pub fn unhide_app_for_workspace(pid: i32) -> bool {
 }
 
 /// Classifies an incoming `AppShown` event by querying the OS hidden
-/// state.  See [`ShownClassification`] for interpretation.
+/// state **inside** the tracker mutex.  See [`ShownClassification`] for
+/// interpretation.
+///
+/// The OS `app_is_hidden` query is passed as a closure to
+/// [`HiddenAppTracker::classify_shown_with`] so that it is invoked after
+/// the tracker lock is acquired.  This prevents a TOCTOU race where a
+/// concurrent `hide_with` records ownership between the OS query and
+/// lock acquisition.
 #[must_use]
 pub fn classify_stache_hidden_app(pid: i32) -> ShownClassification {
-    tracker().classify_shown_with_state(pid, app_is_hidden(pid))
+    tracker().classify_shown_with(pid, app_is_hidden)
 }
 
 /// Classifies an incoming `AppShown` event with an explicit OS-state
@@ -1169,5 +1197,72 @@ mod tests {
         // Token is consumed, entry should be pruned (zombie).
         assert!(tracker.snapshot_tokens(10).is_empty());
         assert!(tracker.snapshot().is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Fix: classify_shown_with query runs inside tracker mutex
+    // -----------------------------------------------------------------------
+
+    /// Proves that `classify_shown_with` holds the tracker mutex during the
+    /// visibility query, preventing a concurrent `hide_with` from recording
+    /// ownership between the OS query and classification (TOCTOU race).
+    #[test]
+    fn classify_shown_with_holds_mutex_during_query() {
+        let tracker = Arc::new(HiddenAppTracker::default());
+
+        let query_entered = Arc::new(Barrier::new(2));
+        let release_query = Arc::new(Barrier::new(2));
+
+        let t = Arc::clone(&tracker);
+        let qe = Arc::clone(&query_entered);
+        let rq = Arc::clone(&release_query);
+
+        // Thread: classify_shown_with — query runs inside the lock.
+        let classify_thread = thread::spawn(move || {
+            t.classify_shown_with(42, |_| {
+                qe.wait(); // Signal: we hold the lock inside the query
+                rq.wait(); // Wait for main thread to verify
+                None // query result doesn't matter for this test
+            })
+        });
+
+        query_entered.wait(); // Classify thread has the lock
+
+        // The tracker mutex MUST be held during the query closure.
+        assert!(
+            tracker.state.try_lock().is_none(),
+            "classify_shown_with must hold the tracker mutex during the query"
+        );
+
+        // A concurrent hide_with issued now will block until classify
+        // releases the lock — it cannot "sneak in" between query and
+        // classification.
+        release_query.wait();
+        classify_thread.join().expect("classify thread should not panic");
+    }
+
+    /// An `AppShown` that runs and clears ownership (OS visible) before a
+    /// later `hide_with` records ownership must NOT erase that later
+    /// ownership.  This is guaranteed by linearization through the mutex:
+    /// the classify releases the lock before the hide acquires it.
+    #[test]
+    fn appshown_before_hide_does_not_erase_later_ownership() {
+        let tracker = HiddenAppTracker::default();
+
+        // AppShown: OS says visible → clears any stale state.
+        tracker.classify_shown_with_state(10, Some(false));
+        assert!(tracker.snapshot_owner(10).is_none());
+
+        // Later: Stache hides the app.
+        tracker.hide_with(10, |_| HideAppOutcome::HiddenByStache);
+        assert_eq!(tracker.snapshot_owner(10), Some(1));
+
+        // The earlier classify does NOT erase the hide's ownership.
+        // A subsequent classify while OS still says hidden retains it.
+        assert_eq!(
+            tracker.classify_shown_with_state(10, Some(true)),
+            ShownClassification::StaleNoDispatch
+        );
+        assert_eq!(tracker.snapshot_owner(10), Some(1));
     }
 }

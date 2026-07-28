@@ -877,6 +877,31 @@ impl UnhideAppOutcome {
     }
 }
 
+/// Returns the current OS-level hidden state for an application.
+///
+/// # Returns
+///
+/// - `Some(true)` if the app exists and is hidden.
+/// - `Some(false)` if the app exists and is visible.
+/// - `None` if the app cannot be found or the class is unavailable.
+#[must_use]
+pub fn app_is_hidden(pid: i32) -> Option<bool> {
+    use objc::runtime::{BOOL, Class, Object, YES};
+    use objc::{msg_send, sel, sel_impl};
+
+    unsafe {
+        let app_class = Class::get("NSRunningApplication")?;
+
+        let app: *mut Object = msg_send![app_class, runningApplicationWithProcessIdentifier: pid];
+        if app.is_null() {
+            return None;
+        }
+
+        let is_hidden: BOOL = msg_send![app, isHidden];
+        Some(is_hidden == YES)
+    }
+}
+
 /// Shows (unhides) an application by PID with detailed outcome classification.
 ///
 /// Checks the current hidden state before calling `unhide`. This lets callers
@@ -895,29 +920,28 @@ pub fn unhide_app_with_outcome(pid: i32) -> UnhideAppOutcome {
     use objc::runtime::{BOOL, Class, Object, YES};
     use objc::{msg_send, sel, sel_impl};
 
-    unsafe {
-        let Some(app_class) = Class::get("NSRunningApplication") else {
-            tracing::warn!("NSRunningApplication class not found");
-            return UnhideAppOutcome::Failed;
-        };
+    let Some(app_class) = Class::get("NSRunningApplication") else {
+        tracing::warn!("NSRunningApplication class not found");
+        return UnhideAppOutcome::Failed;
+    };
 
-        let app: *mut Object = msg_send![app_class, runningApplicationWithProcessIdentifier: pid];
-        if app.is_null() {
-            tracing::debug!("unhide_app_with_outcome: no running application for pid {pid}");
-            return UnhideAppOutcome::Failed;
-        }
+    let app: *mut Object =
+        unsafe { msg_send![app_class, runningApplicationWithProcessIdentifier: pid] };
+    if app.is_null() {
+        tracing::debug!("unhide_app_with_outcome: no running application for pid {pid}");
+        return UnhideAppOutcome::Failed;
+    }
 
-        let is_hidden: BOOL = msg_send![app, isHidden];
-        if is_hidden != YES {
-            return UnhideAppOutcome::AlreadyShown;
-        }
+    let is_hidden: BOOL = unsafe { msg_send![app, isHidden] };
+    if is_hidden != YES {
+        return UnhideAppOutcome::AlreadyShown;
+    }
 
-        let unhide_result: BOOL = msg_send![app, unhide];
-        if unhide_result == YES {
-            UnhideAppOutcome::UnhiddenByStache
-        } else {
-            UnhideAppOutcome::Failed
-        }
+    let unhide_result: BOOL = unsafe { msg_send![app, unhide] };
+    if unhide_result == YES {
+        UnhideAppOutcome::UnhiddenByStache
+    } else {
+        UnhideAppOutcome::Failed
     }
 }
 

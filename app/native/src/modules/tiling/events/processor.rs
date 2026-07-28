@@ -29,6 +29,41 @@ use crate::modules::tiling::visibility::{
     ShownClassification, classify_stache_hidden_app, forget_stache_hidden_app_terminated,
 };
 
+// ---------------------------------------------------------------------------
+// AppShown dispatch helper (production seam for testability)
+// ---------------------------------------------------------------------------
+
+/// Processes an `AppShown` event with injectable classify and dispatch
+/// callbacks.
+///
+/// This is the production seam that [`EventProcessor::on_app_shown`] delegates
+/// to, making the dispatch/no-dispatch decision testable without an actor
+/// channel or macOS accessibility APIs.
+///
+/// # Returns
+///
+/// - `None` when the classification is [`StaleNoDispatch`] — the caller
+///   should suppress the message to the actor.
+/// - `Some(classification)` for [`SelfShown`] or [`ExternalShown`] — the
+///   caller should forward the PID to the actor.
+///
+/// [`StaleNoDispatch`]: ShownClassification::StaleNoDispatch
+/// [`SelfShown`]: ShownClassification::SelfShown
+/// [`ExternalShown`]: ShownClassification::ExternalShown
+fn on_app_shown_with(
+    pid: i32,
+    classify: impl FnOnce(i32) -> ShownClassification,
+    dispatch: impl FnOnce(i32),
+) -> Option<ShownClassification> {
+    let classification = classify(pid);
+    if classification == ShownClassification::StaleNoDispatch {
+        None
+    } else {
+        dispatch(pid);
+        Some(classification)
+    }
+}
+
 /// Default refresh rate if detection fails (60 Hz).
 const DEFAULT_REFRESH_RATE: f64 = 60.0;
 
@@ -543,18 +578,17 @@ impl EventProcessor {
     /// Stale self-generated events (where Stache has already re-hidden the
     /// app) are silently dropped so the actor does not mark freshly re-hidden
     /// windows as visible.
+    ///
+    /// Delegates to [`on_app_shown_with`] for testability.
     pub fn on_app_shown(&self, pid: i32) {
         tracing::trace!("App shown: pid={pid}");
-        match classify_stache_hidden_app(pid) {
-            ShownClassification::StaleNoDispatch => {
-                tracing::debug!(
-                    "AppShown for pid={pid} is stale (Stache re-hidden), skipping dispatch"
-                );
-            }
-            _ => {
+        on_app_shown_with(
+            pid,
+            classify_stache_hidden_app,
+            |pid| {
                 let _ = self.actor_handle.send(StateMessage::AppShown { pid });
-            }
-        }
+            },
+        );
     }
 
     /// Dispatch an app activated event.
@@ -858,6 +892,59 @@ mod tests {
         assert!(!processor.is_running());
 
         handle.shutdown().unwrap();
+    }
+
+    // ========================================================================
+    // on_app_shown_with tests (Requirement 2 — production seam)
+    // ========================================================================
+
+    #[test]
+    fn on_app_shown_with_stale_does_not_dispatch() {
+        let dispatched = std::cell::Cell::new(false);
+        let result = on_app_shown_with(
+            42,
+            |_| ShownClassification::StaleNoDispatch,
+            |_| dispatched.set(true),
+        );
+        assert_eq!(result, None);
+        assert!(
+            !dispatched.get(),
+            "stale classification must not invoke dispatch"
+        );
+    }
+
+    #[test]
+    fn on_app_shown_with_self_shown_dispatches() {
+        let dispatched = std::cell::Cell::new(false);
+        let captured_pid = std::cell::Cell::new(0);
+        let result = on_app_shown_with(
+            42,
+            |_| ShownClassification::SelfShown,
+            |pid| {
+                captured_pid.set(pid);
+                dispatched.set(true);
+            },
+        );
+        assert_eq!(result, Some(ShownClassification::SelfShown));
+        assert!(dispatched.get(), "SelfShown must invoke dispatch");
+        assert_eq!(captured_pid.get(), 42);
+    }
+
+    #[test]
+    fn on_app_shown_with_external_shown_dispatches() {
+        let dispatched = std::cell::Cell::new(false);
+        let captured_pid = std::cell::Cell::new(0);
+        let result = on_app_shown_with(
+            42,
+            |_| ShownClassification::ExternalShown,
+            |pid| {
+                captured_pid.set(pid);
+                dispatched.set(true);
+            },
+        );
+        assert_eq!(result, Some(ShownClassification::ExternalShown));
+        assert!(dispatched.get(), "ExternalShown must invoke dispatch");
+        assert_eq!(captured_pid.get(), 42);
     }
 
     #[tokio::test]

@@ -852,9 +852,36 @@ pub fn set_window_frames_batch(frames: &[(u32, Rect)]) -> usize {
 #[must_use]
 pub fn hide_app(pid: i32) -> bool { hide_app_with_outcome(pid).succeeded() }
 
-/// Shows (unhides) an application by PID.
+/// Outcome of unhiding (showing) an application.
 ///
-/// Uses `NSRunningApplication.unhide()` to show all windows of the app.
+/// Distinguishes whether Stache actually performed a hidden→shown transition
+/// (unhide succeeded and the app was hidden), the app was already shown,
+/// or the operation failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnhideAppOutcome {
+    /// App was actually hidden and Stache unhid it — Stache should
+    /// expect an `AppShown` notification.
+    UnhiddenByStache,
+    /// App was already visible — no `AppShown` will be generated.
+    AlreadyShown,
+    /// Unhide operation failed (app not found, etc.).
+    Failed,
+}
+
+impl UnhideAppOutcome {
+    /// Returns `true` if the app is now in a shown state (either unhidden by us
+    /// or was already shown).
+    #[must_use]
+    pub const fn succeeded(self) -> bool {
+        matches!(self, Self::UnhiddenByStache | Self::AlreadyShown)
+    }
+}
+
+/// Shows (unhides) an application by PID with detailed outcome classification.
+///
+/// Checks the current hidden state before calling `unhide`. This lets callers
+/// distinguish an actual hidden→shown transition from a no-op on an already-
+/// visible app (important for ownership-token bookkeeping).
 ///
 /// # Arguments
 ///
@@ -862,28 +889,54 @@ pub fn hide_app(pid: i32) -> bool { hide_app_with_outcome(pid).succeeded() }
 ///
 /// # Returns
 ///
-/// `true` if the app was successfully unhidden, `false` otherwise.
+/// The detailed `UnhideAppOutcome`.
 #[must_use]
-pub fn unhide_app(pid: i32) -> bool {
+pub fn unhide_app_with_outcome(pid: i32) -> UnhideAppOutcome {
     use objc::runtime::{BOOL, Class, Object, YES};
     use objc::{msg_send, sel, sel_impl};
 
     unsafe {
         let Some(app_class) = Class::get("NSRunningApplication") else {
             tracing::warn!("NSRunningApplication class not found");
-            return false;
+            return UnhideAppOutcome::Failed;
         };
 
         let app: *mut Object = msg_send![app_class, runningApplicationWithProcessIdentifier: pid];
         if app.is_null() {
-            tracing::debug!("unhide_app: no running application for pid {pid}");
-            return false;
+            tracing::debug!("unhide_app_with_outcome: no running application for pid {pid}");
+            return UnhideAppOutcome::Failed;
         }
 
-        let result: BOOL = msg_send![app, unhide];
-        result == YES
+        let is_hidden: BOOL = msg_send![app, isHidden];
+        if is_hidden != YES {
+            return UnhideAppOutcome::AlreadyShown;
+        }
+
+        let unhide_result: BOOL = msg_send![app, unhide];
+        if unhide_result == YES {
+            UnhideAppOutcome::UnhiddenByStache
+        } else {
+            UnhideAppOutcome::Failed
+        }
     }
 }
+
+/// Shows (unhides) an application by PID.
+///
+/// Compatibility wrapper that returns a simple boolean. Prefer
+/// `unhide_app_with_outcome` when the caller needs to distinguish a
+/// genuine hidden→shown transition from a no-op on an already-visible app.
+///
+/// # Arguments
+///
+/// * `pid` - The process ID of the app to unhide.
+///
+/// # Returns
+///
+/// `true` if the app is now visible (was successfully unhidden or was already visible),
+/// `false` otherwise.
+#[must_use]
+pub fn unhide_app(pid: i32) -> bool { unhide_app_with_outcome(pid).succeeded() }
 
 // ============================================================================
 // Hide Outcome

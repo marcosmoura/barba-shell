@@ -582,13 +582,9 @@ impl EventProcessor {
     /// Delegates to [`on_app_shown_with`] for testability.
     pub fn on_app_shown(&self, pid: i32) {
         tracing::trace!("App shown: pid={pid}");
-        on_app_shown_with(
-            pid,
-            classify_stache_hidden_app,
-            |pid| {
-                let _ = self.actor_handle.send(StateMessage::AppShown { pid });
-            },
-        );
+        on_app_shown_with(pid, classify_stache_hidden_app, |pid| {
+            let _ = self.actor_handle.send(StateMessage::AppShown { pid });
+        });
     }
 
     /// Dispatch an app activated event.

@@ -183,24 +183,93 @@ were already hidden independently of Stache.
 
 **Design:**
 
-- Augment the hide operation to distinguish `HiddenByStache`, `AlreadyHidden`, and
-  `Failed`; track a process ID only for `HiddenByStache` in a dedicated runtime set.
-- Remove a process ID when Stache unhides that application. Do not add an application
-  that was already hidden before Stache attempted to hide it.
-- Add an idempotent `restore_stache_hidden_windows()` operation that drains a snapshot
-  of the tracked set and calls the existing `unhide_app(pid)` for each process.
-- Invoke restoration before tiling teardown on normal app quit and tray quit, and
-  explicitly before the existing reload/restart call. Route SIGTERM and SIGINT into
-  the same orderly shutdown path; the signal handler must only notify safe application
-  code and must not call AppKit/AX APIs directly. Cleanup must be best-effort: one
-  failed or vanished application must not prevent attempts for the remaining processes
-  or block process termination.
-- Keep the operation in-process, matching AeroSpace's normal-quit strategy. No helper
-  process or persistent recovery state is introduced.
+Stache assigns every running application a stable identity at first
+observation. That identity combines the PID and the launch date into a single
+`AppIdentity` value. This is the fundamental ownership unit — a bare PID can
+be reused by the kernel for a different process after the original terminates,
+so identity prevents PID-reuse races without generations or FIFO state machines.
 
-Because Stache hides whole applications rather than moving windows off-screen, no frame
-capture or repositioning is required. `unhide_app` returns their existing windows to
-their current frames, while minimized state remains controlled by macOS.
+```
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct AppIdentity { pub pid: i32, pub launch_date: LaunchDateBits }
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct LaunchDateBits(u64);
+```
+
+Identity is captured from a single local `NSRunningApplication` object:
+`pid > 0`, non-null `launchDate`, `timeIntervalSinceReferenceDate` finite and
+
+> 0, stored as `f64::to_bits`. Failure at any step is fail-closed. The ObjC
+> object (`StrongPtr`) is `!Send`/`!Sync` and must not cross threads — identity
+> extraction and restoration are one-shot operations, saving only the
+> `AppIdentity` bytes for reuse across threads.
+
+**Actor-single-writer ownership.** The `StateActor` is the sole runtime
+mutator of ownership state. A passive `Arc<VisibilityRegistry>` is shared
+with `StateActorHandle` only for synchronous terminal seal/drain. The
+registry holds a `BTreeSet<AppIdentity>` behind a single `Mutex`, gated by a
+`sealed` flag:
+
+```rust
+pub struct VisibilityRegistry { inner: Mutex<RegistryState> }
+struct RegistryState { sealed: bool, owned: BTreeSet<AppIdentity> }
+```
+
+**Event forwarding is raw.** `EventProcessor` dispatches lifecycle events
+(AppLaunched, AppTerminated, AppShown, AppHidden) keyed by identity, not
+by bare PID, and never mutates ownership. The actor consumes each event and
+re-validates the identity against current OS state using a local
+`NSRunningApplication` lookup. The actor policy is conservative:
+
+- **AppShown on an exact identity — OS visible:** remove owner + mark exact
+  windows shown. **OS hidden or mismatch:** retain owner, no state change.
+- **AppHidden — OS hidden:** mark exact windows hidden. **OS visible or
+  unknown:** ignore.
+- **AppTerminated:** remove exact identity only.
+- **AppShown where OS state is hidden and identity matches:** the event is
+  an unobserved user show→rehide within the visibility notification gap.
+  Stache retains ownership ("Keep hidden") per the conservative unavoidable-
+  history policy.
+
+This deterministic revalidation replaces the generation/FIFO classifier and
+its `ShownClassification` seam entirely.
+
+**Identity propagation.** `AppIdentity` is stored on `Window`,
+`WindowCreatedInfo`, and flows through `WindowEvent`, `StateMessage`
+lifecycle variants, AX observer callback records, and NSWorkspace
+termination handlers. The callback closure captures identity at observer
+registration time rather than resolving PID at callback time.
+
+**Workspace hide/unhide** remain actor operations. The actor validates the
+identity against a freshly looked-up `AppIdentity` from one local
+`NSRunningApplication`, then calls the OS hide/unhide on that same object,
+then mutates registry ownership under the `VisibilityRegistry` mutex. No
+notification ack is needed — the actor updates exact-identity windows in
+the same turn:
+
+- **Hide:** `HiddenByStache` inserts identity. `AlreadyHidden`/`Failed`
+  preserve existing state.
+- **Unhide:** `UnhiddenByStache`/`AlreadyShown` remove identity. `Failed`
+  preserves it.
+
+**Shutdown restoration.** When the actor channel is closed, the caller
+obtains the shared `Arc<VisibilityRegistry>`, calls `seal`, then `drain` to
+receive sorted `AppIdentity` values. For each identity, restoration obtains
+one local `NSRunningApplication` by PID, captures `AppIdentity` from that
+same object, requires equality with the drained identity, requires the app
+to be hidden, and calls `unhide` on the same object before releasing the
+reference. Errors are per-identity, best-effort. The registry lock is
+released before restoration begins so late writes are impossible.
+
+**Existing supported shutdown paths** (normal quit, tray quit, tray reload,
+config-watcher restart, IPC reload, SIGTERM/SIGINT) are unchanged. The
+signal handler installs one thread-safe handler that schedules work on
+Tauri's main thread; AppKit/AX calls never run inside a raw signal handler.
+
+Because Stache hides whole applications rather than moving windows off-screen,
+no frame capture or repositioning is required. `unhide_app` returns their
+existing windows to their current frames, while minimized state remains
+controlled by macOS.
 
 **Hard limitation:** SIGKILL cannot be caught, delayed, or handled by an in-process
 application, so cleanup cannot run after `kill -9` or any Force Quit path implemented
@@ -222,11 +291,11 @@ is outside this phase.
 
 ## Verification Summary
 
-| Phase | Verification                                                                                                                                                                                                                                                                       |
-| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1     | Timestamp logging around visibility flip → event emission; manual repro; p95 ≤200ms                                                                                                                                                                                                |
-| 2     | Confirm tracing spans emit expected data under `RUST_LOG=stache=debug` during manual repro of both bugs; no behavior change (existing test suite still passes)                                                                                                                     |
-| 3     | TBD once root cause is confirmed; will include a regression test/repro case per fixed bug                                                                                                                                                                                          |
-| 4     | Unit tests per module's `pause`/`resume` where OS calls can be exercised or mocked; existing test suite must still pass; manual check that OS resources are actually released/reacquired (e.g. event tap disabled, tiling `reset()` actually clears init guard so resume succeeds) |
-| 5     | Manual tray interaction test: toggle each module, confirm menu item state updates and underlying module actually pauses/resumes; confirm config-off items are locked and unavailable items show reason text                                                                        |
-| 6     | Unit-test PID tracking, idempotent draining, and best-effort continuation after individual failures; manually verify normal quit, reload/restart, SIGTERM, and SIGINT unhide only applications hidden by Stache while preserving minimized and independently hidden windows        |
+| Phase | Verification                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | Timestamp logging around visibility flip → event emission; manual repro; p95 ≤200ms                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 2     | Confirm tracing spans emit expected data under `RUST_LOG=stache=debug` during manual repro of both bugs; no behavior change (existing test suite still passes)                                                                                                                                                                                                                                                                                                                      |
+| 3     | TBD once root cause is confirmed; will include a regression test/repro case per fixed bug                                                                                                                                                                                                                                                                                                                                                                                           |
+| 4     | Unit tests per module's `pause`/`resume` where OS calls can be exercised or mocked; existing test suite must still pass; manual check that OS resources are actually released/reacquired (e.g. event tap disabled, tiling `reset()` actually clears init guard so resume succeeds)                                                                                                                                                                                                  |
+| 5     | Manual tray interaction test: toggle each module, confirm menu item state updates and underlying module actually pauses/resumes; confirm config-off items are locked and unavailable items show reason text                                                                                                                                                                                                                                                                         |
+| 6     | Unit: AppIdentity capture/validation, registry seal/drain, identity-keyed lifecycle event forwarding, actor revalidation (hidden/visible/mismatch), exact-instance restoration validation, deterministic delayed/duplicate/missing/PID-reuse tests, and best-effort continuation after individual failures. Manually verify normal quit, reload/restart, SIGTERM, and SIGINT unhide only applications hidden by Stache while preserving minimized and independently hidden windows. |

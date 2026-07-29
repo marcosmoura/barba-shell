@@ -199,10 +199,11 @@ pub struct LaunchDateBits(u64);
 Identity is captured from a single local `NSRunningApplication` object:
 `pid > 0`, non-null `launchDate`, `timeIntervalSinceReferenceDate` finite and
 
-> 0, stored as `f64::to_bits`. Failure at any step is fail-closed. The ObjC
-> object (`StrongPtr`) is `!Send`/`!Sync` and must not cross threads — identity
-> extraction and restoration are one-shot operations, saving only the
-> `AppIdentity` bytes for reuse across threads.
+> 0, stored as `f64::to_bits`. Failure at any step (null pointer, ≤0 PID,
+> null launchDate, non-positive/non-finite interval) returns `None` —
+> fail-closed. The ObjC object (`StrongPtr`) is `!Send`/`!Sync` and must not
+> cross threads — identity extraction and restoration are one-shot operations,
+> saving only the `AppIdentity` bytes for reuse across threads.
 
 **Actor-single-writer ownership.** The `StateActor` is the sole runtime
 mutator of ownership state. A passive `Arc<VisibilityRegistry>` is shared
@@ -236,30 +237,37 @@ its `ShownClassification` seam entirely.
 
 **Identity propagation.** `AppIdentity` is stored on `Window`,
 `WindowCreatedInfo`, and flows through `WindowEvent`, `StateMessage`
-lifecycle variants, AX observer callback records, and NSWorkspace
-termination handlers. The callback closure captures identity at observer
-registration time rather than resolving PID at callback time.
+lifecycle variants, AX observer records, and NSWorkspace
+termination handlers. The AX callback derives identity from its
+`AXObserverRef` argument via an `ObserverState` map keyed by observer
+address (not PID), copies the identity value, and constructs `WindowEvent`
+with it — no closure capture or PID rediscovery at callback time.
 
-**Workspace hide/unhide** remain actor operations. The actor validates the
-identity against a freshly looked-up `AppIdentity` from one local
-`NSRunningApplication`, then calls the OS hide/unhide on that same object,
-then mutates registry ownership under the `VisibilityRegistry` mutex. No
-notification ack is needed — the actor updates exact-identity windows in
-the same turn:
+**Workspace hide/unhide** remain actor operations under a single registry
+mutex acquisition. The actor locks the registry, checks `sealed` (rejecting
+the OS call immediately if true), validates the identity against a freshly
+looked-up `AppIdentity` from one local `NSRunningApplication`, calls the OS
+hide/unhide on that same object, then mutates the owned set — all while
+holding the same mutex. The local ObjC object is created and consumed within
+an autorelease pool; no reference escapes the locked section. The actor
+updates exact-identity windows in the same turn, no notification ack needed:
 
 - **Hide:** `HiddenByStache` inserts identity. `AlreadyHidden`/`Failed`
   preserve existing state.
 - **Unhide:** `UnhiddenByStache`/`AlreadyShown` remove identity. `Failed`
   preserves it.
 
-**Shutdown restoration.** When the actor channel is closed, the caller
-obtains the shared `Arc<VisibilityRegistry>`, calls `seal`, then `drain` to
-receive sorted `AppIdentity` values. For each identity, restoration obtains
-one local `NSRunningApplication` by PID, captures `AppIdentity` from that
-same object, requires equality with the drained identity, requires the app
-to be hidden, and calls `unhide` on the same object before releasing the
-reference. Errors are per-identity, best-effort. The registry lock is
-released before restoration begins so late writes are impossible.
+**Shutdown restoration.** Before `tiling::shutdown`, the coordinator calls
+`handle.seal_and_drain_visibility()` which atomically seals the registry
+against further mutations and drains all owned identities in a single lock
+acquisition. Each drained identity is then restored with exact-instance
+validation: obtain one local `NSRunningApplication` by PID, capture
+`AppIdentity` from that same object, require equality with the drained
+identity, require the app to be hidden, and call `unhide` on the same
+object before releasing the reference. An identity that does not match the
+current process (PID reuse scenario) receives **no** `unhide` call at all.
+Errors are per-identity, best-effort. The registry lock is released before
+restoration begins so late writes are impossible.
 
 **Existing supported shutdown paths** (normal quit, tray quit, tray reload,
 config-watcher restart, IPC reload, SIGTERM/SIGINT) are unchanged. The
@@ -291,11 +299,11 @@ is outside this phase.
 
 ## Verification Summary
 
-| Phase | Verification                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1     | Timestamp logging around visibility flip → event emission; manual repro; p95 ≤200ms                                                                                                                                                                                                                                                                                                                                                                                                 |
-| 2     | Confirm tracing spans emit expected data under `RUST_LOG=stache=debug` during manual repro of both bugs; no behavior change (existing test suite still passes)                                                                                                                                                                                                                                                                                                                      |
-| 3     | TBD once root cause is confirmed; will include a regression test/repro case per fixed bug                                                                                                                                                                                                                                                                                                                                                                                           |
-| 4     | Unit tests per module's `pause`/`resume` where OS calls can be exercised or mocked; existing test suite must still pass; manual check that OS resources are actually released/reacquired (e.g. event tap disabled, tiling `reset()` actually clears init guard so resume succeeds)                                                                                                                                                                                                  |
-| 5     | Manual tray interaction test: toggle each module, confirm menu item state updates and underlying module actually pauses/resumes; confirm config-off items are locked and unavailable items show reason text                                                                                                                                                                                                                                                                         |
-| 6     | Unit: AppIdentity capture/validation, registry seal/drain, identity-keyed lifecycle event forwarding, actor revalidation (hidden/visible/mismatch), exact-instance restoration validation, deterministic delayed/duplicate/missing/PID-reuse tests, and best-effort continuation after individual failures. Manually verify normal quit, reload/restart, SIGTERM, and SIGINT unhide only applications hidden by Stache while preserving minimized and independently hidden windows. |
+| Phase | Verification                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | Timestamp logging around visibility flip → event emission; manual repro; p95 ≤200ms                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 2     | Confirm tracing spans emit expected data under `RUST_LOG=stache=debug` during manual repro of both bugs; no behavior change (existing test suite still passes)                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 3     | TBD once root cause is confirmed; will include a regression test/repro case per fixed bug                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 4     | Unit tests per module's `pause`/`resume` where OS calls can be exercised or mocked; existing test suite must still pass; manual check that OS resources are actually released/reacquired (e.g. event tap disabled, tiling `reset()` actually clears init guard so resume succeeds)                                                                                                                                                                                                                                                                                              |
+| 5     | Manual tray interaction test: toggle each module, confirm menu item state updates and underlying module actually pauses/resumes; confirm config-off items are locked and unavailable items show reason text                                                                                                                                                                                                                                                                                                                                                                     |
+| 6     | Unit: AppIdentity capture/validation, registry seal/drain, identity-keyed lifecycle event forwarding, actor revalidation (hidden/visible/mismatch), exact-instance restoration validation, deterministic delayed/duplicate/missing/PID-reuse tests. PID-reuse: hide-rejected for old identity (fail-closed), restore does not unhide wrong process. Best-effort continuation after individual failures. Manually verify normal quit, reload/restart, SIGTERM, and SIGINT unhide only applications hidden by Stache while preserving minimized and independently hidden windows. |

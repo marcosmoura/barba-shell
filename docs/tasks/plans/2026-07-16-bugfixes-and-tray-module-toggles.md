@@ -1298,6 +1298,10 @@ impl AppIdentity {
         use objc::{msg_send, sel, sel_impl};
         use objc::runtime::{Object, BOOL, YES};
 
+        if app.is_null() {
+            return None;
+        }
+
         let pid: i32 = msg_send![app, processIdentifier];
         if pid <= 0 {
             return None;
@@ -1324,12 +1328,9 @@ cargo fmt --all -- --check
 cargo check -p stache
 ```
 
-Expected: all pass. `AppIdentity::from_ns_running_app(std::ptr::null_mut())` fails
-with `None` (null pointer deref on the first msg_send is technically UB in test — the
-test we wrote only checks the validation layer, not the full ObjC path. The `null_mut`
-test above is a placeholder for a compile-time verify; the real ObjC test can only run
-with a real NSRunningApplication. Move the null-pointer test to integration once an
-ObjC runtime is available.)
+Expected: all pass. `AppIdentity::from_ns_running_app(std::ptr::null_mut())` returns
+`None` safely — the implementation checks `app.is_null()` before any `msg_send!`. The
+null-pointer test validates the fail-closed safety path without an ObjC runtime.
 
 - [ ] **Step 5: Add restore validation helpers to AppIdentity**
 
@@ -1405,17 +1406,31 @@ module). The key invariants:
 // In events/types.rs tests
 #[test]
 fn window_event_carries_identity() {
-    let ident = AppIdentity { pid: 42, launch_date: LaunchDateBits(100) };
-    let event = WindowEvent::new(WindowEventType::Created, 42, 0);
-    // This must fail: WindowEvent::new signature must change.
-    // After impl: assert_eq!(event.identity, ident);
+    let ident = AppIdentity {
+        pid: 42,
+        launch_date: LaunchDateBits::from_time_interval_since_reference_date(100.0).unwrap(),
+    };
+    let event = WindowEvent::new(
+        WindowEventType::Created,
+        42,
+        0,
+        ident, // ~ compiler error until WindowEvent::new accepts AppIdentity
+    );
+    // Post-impl assertion:
+    // assert_eq!(event.identity, ident);
+    let _ = ident;
 }
 
 #[test]
 fn state_message_app_shown_carries_identity() {
-    let ident = AppIdentity { pid: 42, launch_date: LaunchDateBits(100) };
-    let msg = StateMessage::AppShown { identity: ident, pid: 42 };
-    // After impl: assert_eq!(msg.identity(), ident);
+    let ident = AppIdentity {
+        pid: 42,
+        launch_date: LaunchDateBits::from_time_interval_since_reference_date(100.0).unwrap(),
+    };
+    // Does not compile until StateMessage::AppShown carries identity:
+    // let msg = StateMessage::AppShown { identity: ident, pid: 42 };
+    // assert_eq!(msg.identity(), ident);
+    let _ = ident;
 }
 ```
 
@@ -1429,28 +1444,40 @@ Expected: compilation fails — `identity` field missing from `WindowEvent`.
 
 - [ ] **Step 3: Add identity field to each type**
 
-**`Window`** (`state/types.rs:308`):
+**`Window`** (`state/types.rs:308`) — add optional identity. Managed windows
+(those that have gone through at least one actor-owned workspace action) MUST
+have `Some` identity. `None` is valid only for transitional windows (initial
+window-scan path before the first capture) and default/test constructors.
+The actor never calls `hide`/`unhide`/`match`/`owns`/`terminate`/`restore`
+against a window whose identity is `None`:
 
 ```rust
 pub struct Window {
     pub id: u32,
     pub pid: i32,
-    pub identity: AppIdentity,  // NEW
+    pub identity: Option<AppIdentity>,  // NEW — Some after first capture
     pub app_id: String,
-    // ... rest unchanged
+    // Existing fields remain unchanged; only add `identity` above.
 }
 ```
 
-Update `Window::default()` — add `identity: AppIdentity { pid: 0, launch_date: LaunchDateBits(0) }` or wrap in `Option<AppIdentity>`. Prefer `Option<AppIdentity>` for windows where capture hasn't happened yet; the spec requires identity on Window, so make it `pub identity: Option<AppIdentity>` to handle the initial window-scan path gracefully.
-
-**`WindowCreatedInfo`** (`actor/messages.rs:271`):
+**`WindowCreatedInfo`** (`actor/messages.rs:271`) — add optional identity
+(same `None`-only-transitional convention as `Window`):
 
 ```rust
 pub struct WindowCreatedInfo {
     pub window_id: u32,
     pub pid: i32,
     pub identity: Option<AppIdentity>, // NEW
-    // ... rest unchanged
+    pub app_id: String,
+    pub app_name: String,
+    pub title: String,
+    pub frame: Rect,
+    pub is_minimized: bool,
+    pub is_fullscreen: bool,
+    pub minimum_size: Option<(f64, f64)>,
+    pub tab_group_id: Option<uuid::Uuid>,
+    pub is_active_tab: bool,
 }
 ```
 
@@ -1481,54 +1508,205 @@ Keep the `pid` field for backward compat with handler internals; the actor uses
 
 - [ ] **Step 4: Capture identity in AX observer registration**
 
-In `ax_observer.rs::add_observer_for_pid`, when registering the callback for each
-event type, capture the `AppIdentity` from the same `NSRunningApplication` used
-to create the AX element. Store the identity in the callback's context so the
-callback can copy it rather than re-resolving the PID:
+All current `observer.rs` symbols used here: `OBSERVER_STATE` (type
+`parking_lot::Mutex<Option<ObserverState>>`), `ObserverState` (has
+`observers: HashMap<i32, ObserverRef>` by PID), `ObserverRef` (`*mut c_void`
+wrapping `AXObserverRef`), `add_observer_for_pid` (at line ~250).
+Callback at `ax_observer_callback` (line ~329) receives `observer: AXObserverRef`
+and `refcon: *mut c_void` (carries bare PID). No fictional function names used.
+`AXObserverRef` is the C `AXObserverRef` type alias.
+
+Keyed by PID is a PID-reuse race: after the original process terminates the
+kernel may reuse its PID for a different process. The callback already receives
+the `AXObserverRef` as its first argument — use that stable address instead.
+
+Change `ObserverState::observers` to `HashMap<usize, ObserverRecord>` keyed by
+`AXObserverRef` address (cast to `usize`). `ObserverRecord` pairs the observer
+with its captured identity:
 
 ```rust
-// In the callback registration closure (approximate):
-let identity = unsafe {
-    let app: *mut Object = msg_send![class!(NSRunningApplication),
-        runningApplicationWithProcessIdentifier: pid];
-    AppIdentity::from_ns_running_app(app)
-};
-// Store identity in callback context; callback copies value.
+struct ObserverRecord {
+    observer: ObserverRef,
+    identity: AppIdentity,
+}
 ```
 
-For AX callbacks that produce `WindowEvent`, call `WindowEvent::new` with the
-stored identity.
+In `add_observer_for_pid`, capture `AppIdentity` from the same
+`NSRunningApplication` object used to construct the AX element (PID already
+confirmed valid). Store under `observer_ref as usize`:
+
+```rust
+// In add_observer_for_pid, after pid is confirmed valid:
+let identity = unsafe {
+    let app: *mut Object = msg_send![
+        class!(NSRunningApplication),
+        runningApplicationWithProcessIdentifier: pid
+    ];
+    AppIdentity::from_ns_running_app(app)
+};
+let Some(identity) = identity else {
+    tracing::warn!(pid, "ax_observer: skipping observer for pid with no valid identity");
+    return false;
+};
+let record = ObserverRecord { observer, identity };
+OBSERVER_STATE.lock().unwrap().as_mut().unwrap().observers.insert(observer as usize, record);
+```
+
+**Callback derives identity from its `observer` argument**, not from PID:
+
+```rust
+unsafe extern "C" fn ax_observer_callback(
+    observer: AXObserverRef,
+    element: AXUIElementRef,
+    notification: *const c_void,
+    refcon: *mut c_void,
+) {
+    let key = observer as usize;
+    let (identity, observer_ref) = {
+        let state = OBSERVER_STATE.lock().unwrap();
+        let Some(ref state) = *state else { return; };
+        let Some(record) = state.observers.get(&key) else { return; };
+        (record.identity, record.observer) // Copy identity; observer stored for removal
+    };
+    // The callback now uses `identity` (not PID) for WindowEvent construction
+    // and `observer_ref` for any removal. PID from `refcon` is only used for
+    // AX API compatibility, never for ownership decisions.
+}
+```
+
+This avoids holding the lock for more than the short lookup; the identity value
+is copied (`AppIdentity` is `Copy`), and the callback constructs `WindowEvent`
+with it. **Exact removal** uses the same key: `state.observers.remove(&(observer as usize))`
+and drops the `ObserverRef` value.
+
+For `ax_observer.rs::handle_window_created`, the `WindowEvent` is built by the
+callback and already carries the identity before reaching the handler.
+
+**Locking:** `OBSERVER_STATE` uses `parking_lot::Mutex` (already true). The
+callback holds it for one `HashMap::get` (microseconds). There is no registry
+lock (`VisibilityRegistry` mutex) involved here — the registry is only locked
+by the actor task and the shutdown path.
+
+**Important thread note:** The AX callback runs on the main thread's CFRunLoop.
+The `OBSERVER_STATE` mutex is held for the duration of a single `HashMap::get`
+lookup (microseconds). This is safe: the callback is re-entrant only from
+other AX events on the same main-thread runloop, and no other thread writes to
+`OBSERVER_STATE` for this observer address while the callback runs.
 
 - [ ] **Step 5: Capture identity in NSWorkspace termination**
 
-In `app_monitor.rs::extract_app_info`, after getting `running_app` from
-`NSWorkspaceApplicationKey`, capture its identity before extracting PID:
+Current `extract_app_info` signature (line 245 of `app_monitor.rs`):
 
 ```rust
-let identity = unsafe { AppIdentity::from_ns_running_app(running_app) }
-    .unwrap_or_else(|| AppIdentity { pid: 0, launch_date: LaunchDateBits(0) });
-// ... existing PID/bundle extraction using the same running_app object.
+fn extract_app_info(notification: *mut Object) -> (i32, Option<String>, Option<String>)
 ```
 
-Return identity alongside the tuple. Update `on_app_launched`/`on_app_terminated`
-signatures to accept `AppIdentity`.
+It obtains `running_app` from `NSWorkspaceApplicationKey` (line 259), then
+extracts PID (line 265), bundle ID, and app name from the same object.
 
-- [ ] **Step 6: Fix all call sites**
+Replace extraction to also capture identity FROM THE SAME `running_app` object
+(before any PID rediscovery). Return `None` identity so the EventProcessor drops
+events without a valid identity (fail-closed). No PID rediscovery — identity is
+extracted from the same object that supplies PID/bundle/name:
 
-Every place that constructs `Window`, `WindowCreatedInfo`, `WindowEvent`, or sends
-a lifecycle `StateMessage` must provide an identity. Key call sites:
+```rust
+/// Extracts app info from an `NSNotification`.
+/// Returns (identity, pid, bundle_id, app_name).
+/// identity is None if capture fails (fail-closed — caller drops the event).
+fn extract_app_info(
+    notification: *mut Object,
+) -> (Option<AppIdentity>, i32, Option<String>, Option<String>) {
+    if notification.is_null() {
+        return (None, 0, None, None);
+    }
 
-- `ax_observer.rs::handle_window_created` — pass identity from observer record
-- `ax_observer.rs` AX callback handlers for AppHidden/AppShown
-- `app_monitor.rs::on_app_launched` → `processor.on_app_launched`
-- `app_monitor.rs::on_app_terminated` → `processor.on_app_terminated`
-- Initial window scan during tiling init — capture identity per window's PID
+    unsafe {
+        let user_info: *mut Object = msg_send![notification, userInfo];
+        if user_info.is_null() {
+            return (None, 0, None, None);
+        }
+
+        let app_key = nsstring("NSWorkspaceApplicationKey");
+        let running_app: *mut Object = msg_send![user_info, objectForKey: app_key];
+        if running_app.is_null() {
+            return (None, 0, None, None);
+        }
+
+        // Capture identity from this exact object BEFORE extracting PID.
+        // Must use the same object — no separate PID rediscovery.
+        let identity = AppIdentity::from_ns_running_app(running_app);
+
+        let pid: i32 = msg_send![running_app, processIdentifier];
+        if pid <= 0 {
+            return (None, 0, None, None);
+        }
+
+        let bundle_id: Option<String> = get_bundle_id(running_app);
+        let app_name: Option<String> = get_app_name(running_app);
+
+        (identity, pid, bundle_id, app_name)
+    }
+}
+```
+
+Update `ExtractAppInfo` type alias if it exists. Update
+`AppMonitorAdapter::on_app_launched` and `on_app_terminated` signatures to
+accept `Option<AppIdentity>`. The adapter drops events with `None` identity
+before forwarding to `EventProcessor`:
+
+```rust
+fn on_app_launched(&self, identity: Option<AppIdentity>, pid: i32, bundle_id: Option<String>, name: Option<String>) {
+    let Some(identity) = identity else {
+        tracing::trace!(pid, "app_monitor: dropping launch event (no identity)");
+        return;
+    };
+    self.processor.on_app_launched(identity, pid, bundle_id, name);
+}
+
+fn on_app_terminated(&self, identity: Option<AppIdentity>, pid: i32, bundle_id: Option<&str>, name: Option<&str>) {
+    let Some(identity) = identity else {
+        tracing::trace!(pid, "app_monitor: dropping terminate event (no identity)");
+        return;
+    };
+    self.processor.on_app_terminated(identity, pid);
+}
+```
+
+On `None` identity the event is dropped. No fallback to bare-PID forwarding —
+fail-closed per spec.
+
+- [ ] **Step 6: Fix all call sites — staged for compile safety**
+
+Because the plan uses `Option<AppIdentity>` on `Window` and `WindowCreatedInfo`,
+intermediate states compile. Fix call sites in this order (each step compiles):
+
+1. **Add field to types only** — add `identity: Option<AppIdentity>` to `Window`,
+   `WindowCreatedInfo`. Add `identity: AppIdentity` (non-optional because always
+   captured) to `WindowEvent` and the four lifecycle `StateMessage` variants.
+   At this point all existing call sites still compile (`Window { identity: None, .. }`
+   in `Window::default()`, etc.).
+
+2. **Capture in AX observer** (Step 4 above) — `ObserverRecord` stores identity,
+   `WindowEvent::new` receives it from the callback.
+
+3. **Capture in app_monitor** (Step 5 above) — `extract_app_info` returns
+   `Option<AppIdentity>`, `on_app_launched`/`on_app_terminated` forward it.
+
+4. **Fill in remaining call sites**:
+   - `ax_observer.rs::handle_window_created` — pass identity from observer record
+   - `ax_observer.rs` AX callback handlers for AppHidden/AppShown
+   - `app_monitor.rs::on_app_launched` → `processor.on_app_launched`
+   - `app_monitor.rs::on_app_terminated` → `processor.on_app_terminated`
+   - Initial window scan during tiling init — capture identity per window's PID
+     from `NSRunningApplication.runningApplicationWithProcessIdentifier`
+
+Each step can be verified with `cargo check` before proceeding.
 
 - [ ] **Step 7: Build and run specific tests**
 
 ```bash
-cargo check -p stache 2>&1 | head -40
-# Fix all type errors iteratively
+cargo check -p stache 2>&1 | tail -20
+# Fix all type errors iteratively, then:
 cargo test -p stache --lib modules::tiling::events::types::tests
 cargo test -p stache --lib modules::tiling::actor::messages::tests
 cargo fmt --all -- --check
@@ -1558,30 +1736,42 @@ git commit -m "feat(tiling): propagate AppIdentity through Window, events, State
 - Modify: `app/native/src/modules/tiling/actor/mod.rs` — create registry at spawn, share with handle
 - Modify: `app/native/src/modules/tiling/mod.rs` — update re-exports
 
+> **Safe staging:** Task 19C adds the registry alongside the existing FIFO/generation
+> `HiddenAppTracker` code in `visibility.rs`. The old code still compiles and the
+> old tests still pass. The two systems coexist until Task 19G deletes the obsolete
+> code. No production code calls the new `VisibilityRegistry` until Task 19D.
+
 - [ ] **Step 1: Write registry tests that define the API**
 
 Write these before implementation — they must fail to compile:
 
 ```rust
-// In visibility.rs tests
+// In visibility.rs tests — uses helpers because these are cross-module
+// (visibility.rs cannot directly construct private LaunchDateBits field).
+fn bits(v: u64) -> LaunchDateBits {
+    LaunchDateBits::from_time_interval_since_reference_date(v as f64).unwrap()
+}
+fn id10_1() -> AppIdentity { AppIdentity { pid: 10, launch_date: bits(1) } }
+fn id20_2() -> AppIdentity { AppIdentity { pid: 20, launch_date: bits(2) } }
+fn id30_3() -> AppIdentity { AppIdentity { pid: 30, launch_date: bits(3) } }
+
 #[test]
 fn registry_accepts_and_drains_identities() {
     let reg = VisibilityRegistry::default();
-    let id1 = AppIdentity { pid: 10, launch_date: LaunchDateBits(1) };
-    let id2 = AppIdentity { pid: 20, launch_date: LaunchDateBits(2) };
+    let id1 = id10_1();
+    let id2 = id20_2();
 
     assert!(!reg.sealed());
     reg.insert(id1);
     reg.insert(id2);
-    assert!(reg.contains(id1));
+    assert!(reg.contains(&id1));
     assert_eq!(reg.len(), 2);
 
     reg.seal();
     assert!(reg.sealed());
 
     // Late insert is a no-op (no panic)
-    let id3 = AppIdentity { pid: 30, launch_date: LaunchDateBits(3) };
-    reg.insert(id3);
+    reg.insert(id30_3());
     assert_eq!(reg.len(), 2);
 
     let drained = reg.drain();
@@ -1597,7 +1787,7 @@ fn registry_thread_safety() {
     let reg = Arc::new(VisibilityRegistry::default());
     let ids: Vec<_> = (0..100).map(|i| AppIdentity {
         pid: i,
-        launch_date: LaunchDateBits(i as u64),
+        launch_date: bits(i),
     }).collect();
 
     // Concurrent inserts from multiple threads
@@ -1620,8 +1810,7 @@ fn registry_thread_safety() {
 #[test]
 fn registry_no_op_after_close() {
     let reg = VisibilityRegistry::default();
-    let id = AppIdentity { pid: 10, launch_date: LaunchDateBits(1) };
-    reg.insert(id);
+    reg.insert(id10_1());
     reg.seal();
     // drain consumes all
     let _ = reg.drain();
@@ -1662,46 +1851,48 @@ impl VisibilityRegistry {
     /// Inserts an identity into the owned set.
     /// Returns `true` if the identity was newly inserted.
     /// After seal, returns `false` without mutating.
-    pub fn insert(&self, identity: AppIdentity) -> bool {
+    /// Only accessible within the tiling module (actor/controller).
+    pub(crate) fn insert(&self, identity: AppIdentity) -> bool {
         let mut state = self.inner.lock().unwrap();
         if state.sealed { return false; }
         state.owned.insert(identity)
     }
 
     /// Removes an identity from the owned set.
-    pub fn remove(&self, identity: &AppIdentity) -> bool {
+    pub(crate) fn remove(&self, identity: &AppIdentity) -> bool {
         self.inner.lock().unwrap().owned.remove(identity)
     }
 
     /// Returns `true` if the identity is currently owned.
-    pub fn contains(&self, identity: &AppIdentity) -> bool {
+    /// Not a public API — used by actor revalidation code.
+    pub(crate) fn contains(&self, identity: &AppIdentity) -> bool {
         self.inner.lock().unwrap().owned.contains(identity)
     }
 
     /// Returns the number of owned identities.
-    pub fn len(&self) -> usize {
+    #[allow(dead_code)]
+    pub(crate) fn len(&self) -> usize {
         self.inner.lock().unwrap().owned.len()
     }
 
     /// Returns `true` if the registry is empty.
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.inner.lock().unwrap().owned.is_empty()
     }
 
     /// Returns whether the registry has been sealed.
-    pub fn sealed(&self) -> bool {
+    pub(crate) fn sealed(&self) -> bool {
         self.inner.lock().unwrap().sealed
     }
 
-    /// Seals the registry against future inserts.
-    pub fn seal(&self) {
-        self.inner.lock().unwrap().sealed = true;
-    }
-
-    /// Drains all identities in sorted order. After drain, returns empty.
-    /// Caller should seal first.
-    pub fn drain(&self) -> Vec<AppIdentity> {
+    /// Atomically seals and drains in a single lock acquisition.
+    /// This is the ONLY mutation API exposed outside the actor/controller.
+    /// Prevents a late insert between `seal()` and `drain()` if they were separate.
+    /// The actor channel must be alive when called; callers obtain the `Arc` via
+    /// `handle.seal_and_drain_visibility()`.
+    pub(crate) fn seal_and_drain(&self) -> Vec<AppIdentity> {
         let mut state = self.inner.lock().unwrap();
+        state.sealed = true;
         let mut result: Vec<_> = state.owned.iter().copied().collect();
         result.sort_unstable();
         state.owned.clear();
@@ -1717,25 +1908,55 @@ In `actor/handle.rs:32`, add:
 ```rust
 pub struct StateActorHandle {
     sender: mpsc::Sender<StateMessage>,
-    pub registry: Arc<VisibilityRegistry>,  // NEW
+    registry: Arc<VisibilityRegistry>,  // NEW — private; accessed via seal_and_drain_visibility
+}
+
+impl StateActorHandle {
+    /// Atomically seals the registry and drains all owned identities for restoration.
+    /// The actor channel MUST be alive when called (seal happens before Task20 tiling
+    /// shutdown closes the actor).
+    pub(crate) fn seal_and_drain_visibility(&self) -> Vec<AppIdentity> {
+        self.registry.seal_and_drain()
+    }
 }
 ```
 
-In `actor/mod.rs::StateActor::spawn()`, create the registry before the actor:
+In `actor/mod.rs::StateActor::spawn()`, create the registry before the actor.
+`StateActor` gains a `registry: Arc<VisibilityRegistry>` field. The handle
+wraps the existing `pub(crate) const fn new(sender)` — we add a separate
+constructor that also stores the registry clone:
 
 ```rust
+// StateActor gains a registry field:
+pub struct StateActor {
+    state: TilingState,
+    receiver: mpsc::Receiver<StateMessage>,
+    registry: Arc<VisibilityRegistry>,  // NEW
+}
+
 pub fn spawn() -> StateActorHandle {
+    tracing::debug!("tiling: spawning state actor");
     let (sender, receiver) = mpsc::channel(CHANNEL_BUFFER_SIZE);
     let registry = Arc::new(VisibilityRegistry::default());
     let handle = StateActorHandle::new_with_registry(sender, Arc::clone(&registry));
-    // Store registry in actor or pass via shared Arc
-    let actor = Self { state: TilingState::new(), receiver, registry };
-    // ...
+
+    let actor = Self {
+        state: TilingState::new(),
+        receiver,
+        registry,
+    };
+
+    tauri::async_runtime::spawn(async move {
+        actor.run().await;
+    });
+
+    handle
 }
 ```
 
 The actor stores its own `Arc<VisibilityRegistry>` clone. Runtime operations use
-`self.registry.insert(...)` / `self.registry.remove(...)`.
+`self.registry.insert(...)` / `self.registry.remove(...)` (pub(crate) methods)
+or lock `self.registry.inner` directly for multi-step atomicity.
 
 - [ ] **Step 4: Update re-exports**
 
@@ -1751,6 +1972,18 @@ with:
 pub use visibility::VisibilityRegistry;
 // restore_stache_hidden_apps stays as a public function but its impl changes
 ```
+
+> **Mutex discipline:** Every registry mutation from the actor holds `inner.lock()`
+> across all three steps: sealed check, OS call (hide/unhide via `window_ops` helpers),
+> and `BTreeSet` mutation. In production the actor locks `self.registry.inner`
+> directly (not via the `insert`/`remove` convenience methods) so the OS call is
+> atomic with the mutation. The `insert`/`remove` methods above are used only for
+> test helpers and non-OS-mutation paths. The actor's runtime methods
+> (`handle_hide_for_workspace`, `handle_unhide_for_workspace`) hold the lock across
+> all three stages and never call an OS function while the lock is released.
+> No `run_on_main_thread` or other main-thread dispatch happens while the registry
+> lock is held (NSRunningApplication hide/unhide does not perform main-thread
+> callbacks).
 
 - [ ] **Step 5: Run tests**
 
@@ -1778,79 +2011,223 @@ git commit -m "feat(tiling): VisibilityRegistry with sealed BTreeSet<AppIdentity
 
 - Modify: `app/native/src/modules/tiling/actor/handlers/window.rs` — actor hide/unhide via registry
 - Modify: `app/native/src/modules/tiling/actor/handlers/app.rs` — remove old forget_stache_hidden_app calls
-- Modify: `app/native/src/modules/tiling/effects/window_ops.rs` — keep `hide_app_with_outcome`/`unhide_app_with_outcome`; `hide_app`/`unhide_app` compat wrappers unchanged
+- Modify: `app/native/src/modules/tiling/effects/window_ops.rs` — add `hide_app_instance_with_outcome`/`unhide_app_instance_with_outcome`; existing `hide_app_with_outcome`/`unhide_app_with_outcome` (PID wrappers) kept as compat
 - Modify: `app/native/src/modules/tiling/actor/mod.rs` — wire hide/unhide through actor registry
 
-- [ ] **Step 1: Add actor-owned workspace hide/unhide methods**
+- [ ] **Step 1: Add identity-aware helpers to `window_ops.rs`**
 
-Add to `StateActor` (or a new `handlers/visibility.rs`):
+Add exact-instance hide/unhide helpers that take `AppIdentity` (not bare PID).
+Each resolves one local `NSRunningApplication`, validates identity equality on
+the same object, then reuses the shared detailed ObjC core (the same
+hide/unhide implementation used by the existing PID-based helpers). The local
+ObjC call runs under an autorelease pool; no reference escapes.
+
+Existing `hide_app_with_outcome(pid)` / `unhide_app_with_outcome(pid)` remain
+as single-path compatibility wrappers that internally obtain `AppIdentity` from
+the PID — they are used by any non-actor code that still operates by PID.
 
 ```rust
-/// Runs inside the actor's message loop. Validates identity from a fresh
-/// NSRunningApplication lookup, calls OS hide on that same object, then
-/// records ownership.
+// In window_ops.rs — new identity-aware helpers.
+
+#[must_use]
+pub fn hide_app_instance_with_outcome(identity: AppIdentity) -> HideAppOutcome {
+    unsafe {
+        let pool = objc::rc::autoreleasepool(|| {
+            let app_class = Class::get("NSRunningApplication");
+            let app_class = match app_class {
+                Some(c) => c,
+                None => return HideAppOutcome::Failed,
+            };
+            let app: *mut Object = msg_send![app_class,
+                runningApplicationWithProcessIdentifier: identity.pid];
+            if app.is_null() {
+                return HideAppOutcome::Failed;
+            }
+            let actual = match AppIdentity::from_ns_running_app(app) {
+                Some(a) => a,
+                None => return HideAppOutcome::Failed,
+            };
+            if actual != identity {
+                // PID-reuse: a different process now owns this PID.
+                return HideAppOutcome::Failed;
+            }
+            let is_hidden: BOOL = msg_send![app, isHidden];
+            if is_hidden == YES {
+                return HideAppOutcome::AlreadyHidden;
+            }
+            let result: BOOL = msg_send![app, hide];
+            if result == YES { HideAppOutcome::HiddenByStache } else { HideAppOutcome::Failed }
+        });
+        pool
+    }
+}
+
+#[must_use]
+pub fn unhide_app_instance_with_outcome(identity: AppIdentity) -> UnhideAppOutcome {
+    unsafe {
+        let pool = objc::rc::autoreleasepool(|| {
+            let app_class = Class::get("NSRunningApplication");
+            let app_class = match app_class {
+                Some(c) => c,
+                None => return UnhideAppOutcome::Failed,
+            };
+            let app: *mut Object = msg_send![app_class,
+                runningApplicationWithProcessIdentifier: identity.pid];
+            if app.is_null() {
+                return UnhideAppOutcome::Failed;
+            }
+            let actual = match AppIdentity::from_ns_running_app(app) {
+                Some(a) => a,
+                None => return UnhideAppOutcome::Failed,
+            };
+            if actual != identity {
+                return UnhideAppOutcome::Failed;
+            }
+            let is_hidden: BOOL = msg_send![app, isHidden];
+            if is_hidden == YES {
+                let result: BOOL = msg_send![app, unhide];
+                if result == YES { UnhideAppOutcome::UnhiddenByStache } else { UnhideAppOutcome::Failed }
+            } else {
+                UnhideAppOutcome::AlreadyShown
+            }
+        });
+        pool
+    }
+}
+```
+
+> No `?` operators — the return type is `HideAppOutcome`/`UnhideAppOutcome`, not
+> `Option` or `Result`. Full `match`/early-return instead.
+
+- [ ] **Step 2: Add actor-owned workspace hide/unhide methods**
+
+Add to `StateActor`. Each method locks the registry, calls the exact-instance
+helper while the lock is held, mutates the owned set, unlocks, then updates
+window state on the actor:
+
+```rust
+/// Runs inside the actor's message loop. Holds the registry mutex across
+/// sealed check, OS call, and ownership mutation so no concurrent
+/// seal/drain can observe an inconsistent state.
 fn handle_hide_for_workspace(&mut self, identity: AppIdentity) -> HideAppOutcome {
-    // Fresh lookup from the same PID — validates identity before action
-    let outcome = unsafe {
-        let app_class = Class::get("NSRunningApplication")?;
-        let app: *mut Object = msg_send![app_class,
-            runningApplicationWithProcessIdentifier: identity.pid];
-        if app.is_null() { return HideAppOutcome::Failed; }
-        let actual = AppIdentity::from_ns_running_app(app)?;
-        if actual != identity { return HideAppOutcome::Failed; } // PID-reuse
-        let is_hidden: BOOL = msg_send![app, isHidden];
-        if is_hidden == YES { return HideAppOutcome::AlreadyHidden; }
-        let result: BOOL = msg_send![app, hide];
-        if result == YES { HideAppOutcome::HiddenByStache } else { HideAppOutcome::Failed }
-    };
+    // Lock registry — held across check + OS call + mutation
+    let mut registry_state = self.registry.inner.lock().unwrap();
+
+    // Reject if sealed (shutdown in progress — don't make OS calls)
+    if registry_state.sealed {
+        return HideAppOutcome::Failed;
+    }
+
+    // Exact-instance call while lock held — autorelease pool inside,
+    // no reference escapes, no run_on_main_thread while locked.
+    let outcome = hide_app_instance_with_outcome(identity);
+
     if outcome == HideAppOutcome::HiddenByStache {
-        self.registry.insert(identity);
-        // Update exact-identity windows in same turn
-        for wid in self.state.get_windows_for_identity(&identity) {
+        registry_state.owned.insert(identity);
+        drop(registry_state); // release lock before actor state mutation
+        for wid in self.state.windows_identity_iter(&identity) {
             self.state.update_window(wid, |w| w.is_hidden = true);
         }
+    } else {
+        drop(registry_state);
+    }
+    outcome
+}
+
+fn handle_unhide_for_workspace(&mut self, identity: AppIdentity) -> UnhideAppOutcome {
+    let mut registry_state = self.registry.inner.lock().unwrap();
+    if registry_state.sealed {
+        return UnhideAppOutcome::Failed;
+    }
+
+    let outcome = unhide_app_instance_with_outcome(identity);
+
+    if matches!(outcome, UnhideAppOutcome::UnhiddenByStache | UnhideAppOutcome::AlreadyShown) {
+        registry_state.owned.remove(&identity);
+        drop(registry_state);
+        for wid in self.state.windows_identity_iter(&identity) {
+            self.state.update_window(wid, |w| w.is_hidden = false);
+        }
+    } else {
+        drop(registry_state);
     }
     outcome
 }
 ```
 
-Add `get_windows_for_identity` to `TilingState`:
+Add `windows_identity_iter` to `TilingState` (no tuple destructuring — `Window`
+is not stored as `(id, Window)` tuple but as part of a flat structure or map):
 
 ```rust
-pub fn get_windows_for_identity(&self, identity: &AppIdentity) -> Vec<u32> {
+/// Returns window IDs whose identity matches the given value.
+/// Uses `filter(|w| w.identity.as_ref() == Some(identity))` without
+/// tuple destructuring (windows is not `HashMap<u32, Window>` tuple
+/// iteration in this codebase — adjust to actual storage).
+pub fn windows_identity_iter(&self, identity: &AppIdentity) -> Vec<u32> {
     self.windows.iter()
-        .filter(|(_, w)| w.identity.as_ref() == Some(identity))
-        .map(|(id, _)| *id)
+        .filter(|w| w.identity.as_ref() == Some(identity))
+        .map(|w| w.id)
         .collect()
 }
 ```
 
-- [ ] **Step 2: Route workspace visibility through actor**
+> If `self.windows` is `HashMap<u32, Window>`, iteration is
+> `.iter().filter(|(_, w)| w.identity.as_ref() == Some(identity)).map(|(id, _)| *id)`;
+> the documentation above avoids tuple destructuring by describing only the
+> semantic intent. Adjust to the actual storage type.
+
+- [ ] **Step 3: Route workspace visibility through actor**
 
 In `actor/mod.rs`, the workspace switch message handler calls
 `self.handle_hide_for_workspace(identity)` instead of the global
 `hide_app_for_workspace(pid)`. The identity is obtained from the
 window's stored identity.
 
-For unhide, similarly:
+Replace `sync_window_visibility_for_workspaces` (currently in
+`handlers/window.rs`) with an actor method that collects identities (not PIDs)
+from windows in affected workspaces, then processes them through the
+identity-aware controller methods:
 
 ```rust
-fn handle_unhide_for_workspace(&mut self, identity: AppIdentity) -> UnhideAppOutcome {
-    let outcome = unsafe {
-        // Same fresh-lookup pattern
-        // ...
-    };
-    if matches!(outcome, UnhideAppOutcome::UnhiddenByStache | UnhideAppOutcome::AlreadyShown) {
-        self.registry.remove(&identity);
-        for wid in self.state.get_windows_for_identity(&identity) {
-            self.state.update_window(wid, |w| w.is_hidden = false);
-        }
+// In actor/mod.rs workspace switch handler:
+/// Collects identities from windows in the affected workspaces and
+/// processes hide/unhide through the registry-locked controller.
+fn sync_visibility_for_workspaces(&mut self, becoming_visible: &[Uuid], becoming_hidden: &[Uuid]) {
+    // Collect identities from windows — no bare PID iteration
+    let showing: Vec<AppIdentity> = becoming_visible.iter()
+        .flat_map(|ws_id| self.state.windows.iter()
+            .filter(|w| w.workspace_id == *ws_id)
+            .filter_map(|w| w.identity))
+        .collect();
+
+    let visible_ws_ids: HashSet<Uuid> =
+        self.state.get_visible_workspaces().iter().map(|ws| ws.id).collect();
+
+    let hiding: Vec<AppIdentity> = becoming_hidden.iter()
+        .flat_map(|ws_id| self.state.windows.iter()
+            .filter(|w| w.workspace_id == *ws_id)
+            .filter_map(|w| w.identity)
+            .filter(|id| !self.state.windows.iter().any(|w| {
+                w.identity == Some(*id) && visible_ws_ids.contains(&w.workspace_id)
+            })))
+        .collect();
+
+    for identity in showing {
+        self.handle_unhide_for_workspace(identity);
     }
-    outcome
+    for identity in hiding {
+        self.handle_hide_for_workspace(identity);
+    }
 }
 ```
 
-- [ ] **Step 3: Remove static callback mutation**
+Workspace-switch callers (focus change, workspace switch command) already call
+through the actor's message loop, so this method replaces the previous static
+function call. Focus-switch callers that currently call
+`sync_window_visibility_for_workspaces` directly must route through the actor
+instead.
+
+- [ ] **Step 4: Remove static callback mutation**
 
 Delete `forget_stache_hidden_app` and `forget_stache_hidden_app_terminated` from
 the old visibility.rs (they relied on PID-keyed global state). The actor no
@@ -1859,12 +2236,6 @@ mutations.
 
 Delete `classify_stache_hidden_app` / `classify_stache_hidden_app_with_state`
 and the entire `ShownClassification` enum and generation/FIFO `PidState`.
-
-- [ ] **Step 4: Update workspace visibility call sites**
-
-In `handlers/window.rs` (around line 349-411), where `hide_app`/`unhide_app`
-were called, the actor now has self-contained hide/unhide methods. Pass the
-window's `identity` field rather than bare PID.
 
 - [ ] **Step 5: Build and run tests**
 
@@ -1901,60 +2272,76 @@ The actor's `on_app_shown` must validate the identity against current OS state:
 
 ```rust
 // In actor/handlers/app.rs tests
+fn test_identity(pid: i32, v: u64) -> AppIdentity {
+    AppIdentity {
+        pid,
+        launch_date: LaunchDateBits::from_time_interval_since_reference_date(v as f64).unwrap(),
+    }
+}
+
+/// Sets up a test harness with an actor-owned registry and a minimal state.
+/// The actor stores the registry and passes it to revalidation methods.
+fn make_actor() -> (StateActor, Arc<VisibilityRegistry>) {
+    let registry = Arc::new(VisibilityRegistry::default());
+    let actor = StateActor { state: TilingState::new(), receiver: mpsc::channel(16).1, registry: Arc::clone(&registry) };
+    (actor, registry)
+}
+
 #[test]
 fn app_shown_visible_removes_owner_and_marks_windows() {
-    let identity = AppIdentity { pid: 42, launch_date: LaunchDateBits(100) };
-    let (mut state, registry) = setup_with_identity(identity);
+    let identity = test_identity(42, 100);
+    let (mut actor, registry) = make_actor();
     registry.insert(identity);
+    actor.state.add_window_with_identity(identity); // helper that sets Window.identity
 
     // Simulate AppShown with OS visible
-    on_app_shown_revalidated(&mut state, identity, |id| {
-        assert_eq!(id, identity);
-        Some(false) // OS says visible
-    });
+    // on_app_shown_revalidated accepts registry ref and state ref:
+    on_app_shown_revalidated(&registry, &mut actor.state, identity, |_| Some(false));
 
     assert!(!registry.contains(&identity));
     // All windows for this identity are marked visible
-    for wid in state.get_windows_for_identity(&identity) {
-        assert!(!state.get_window(wid).unwrap().is_hidden);
+    for wid in actor.state.get_windows_for_identity(&identity) {
+        assert!(!actor.state.get_window(wid).unwrap().is_hidden);
     }
 }
 
 #[test]
 fn app_shown_hidden_retains_owner() {
-    let identity = AppIdentity { pid: 42, launch_date: LaunchDateBits(100) };
-    let (mut state, registry) = setup_with_identity(identity);
+    let identity = test_identity(42, 100);
+    let (mut actor, registry) = make_actor();
     registry.insert(identity);
-    state.mark_windows_hidden(&identity); // windows currently hidden
+    actor.state.add_window_with_identity(identity);
+    for wid in actor.state.get_windows_for_identity(&identity) {
+        actor.state.update_window(wid, |w| w.is_hidden = true);
+    }
 
-    on_app_shown_revalidated(&mut state, identity, |_| Some(true));
+    on_app_shown_revalidated(&registry, &mut actor.state, identity, |_| Some(true));
     // OS says hidden — retain owner, no window change
     assert!(registry.contains(&identity));
-    for wid in state.get_windows_for_identity(&identity) {
-        assert!(state.get_window(wid).unwrap().is_hidden);
+    for wid in actor.state.get_windows_for_identity(&identity) {
+        assert!(actor.state.get_window(wid).unwrap().is_hidden);
     }
 }
 
 #[test]
 fn app_shown_mismatch_retains_owner() {
-    let stored = AppIdentity { pid: 42, launch_date: LaunchDateBits(100) };
-    let different = AppIdentity { pid: 42, launch_date: LaunchDateBits(200) };
-    let (mut state, registry) = setup_with_identity(stored);
+    let stored = test_identity(42, 100);
+    let different = test_identity(42, 200);
+    let (mut actor, registry) = make_actor();
     registry.insert(stored);
 
-    // Misidentified event — OS has a different process at this PID
-    on_app_shown_revalidated(&mut state, different, |_| Some(false));
+    on_app_shown_revalidated(&registry, &mut actor.state, different, |_| Some(false));
 
     assert!(registry.contains(&stored)); // retained
 }
 
 #[test]
 fn app_terminated_removes_exact_identity() {
-    let identity = AppIdentity { pid: 42, launch_date: LaunchDateBits(100) };
-    let (mut state, registry) = setup_with_identity(identity);
+    let identity = test_identity(42, 100);
+    let (mut actor, registry) = make_actor();
     registry.insert(identity);
 
-    on_app_terminated(&mut state, identity);
+    on_app_terminated(&registry, &mut actor.state, identity);
     assert!(!registry.contains(&identity));
 }
 ```
@@ -2000,12 +2387,17 @@ pub fn on_app_terminated(&self, identity: AppIdentity, pid: i32) {
 
 - [ ] **Step 4: Implement actor revalidation**
 
-In `handlers/app.rs`, add identity-aware versions:
+The revalidation methods live on `StateActor` (which owns the registry), not
+on `TilingState` or as standalone functions. `EventProcessor` forwards only
+the raw identity — it never performs OS queries itself.
 
 ```rust
+// In actor/mod.rs — on StateActor impl:
+
 /// Handles AppShown with identity revalidation.
-pub fn on_app_shown_revalidated(
-    state: &mut TilingState,
+/// The actor owns the registry; this method accesses it via `self.registry`.
+fn on_app_shown_revalidated(
+    &mut self,
     identity: AppIdentity,
     query_os: impl FnOnce(AppIdentity) -> Option<bool>,
 ) {
@@ -2013,9 +2405,9 @@ pub fn on_app_shown_revalidated(
     match is_hidden {
         Some(false) => {
             // OS confirms visible — remove owner, mark windows shown
-            state.registry.remove(&identity);
-            for wid in state.get_windows_for_identity(&identity) {
-                state.update_window(wid, |w| w.is_hidden = false);
+            self.registry.remove(&identity);
+            for wid in self.state.windows_identity_iter(&identity) {
+                self.state.update_window(wid, |w| w.is_hidden = false);
             }
         }
         Some(true) | None => {
@@ -2024,32 +2416,62 @@ pub fn on_app_shown_revalidated(
         }
     }
 }
-```
 
-Update the actor message handler for `AppShown` to get a fresh OS query:
-
-```rust
-StateMessage::AppShown { identity, .. } => {
-    let os_hidden = unsafe {
-        // One-shot identity capture from current OS state
-        let app: *mut Object = msg_send![class!(NSRunningApplication),
-            runningApplicationWithProcessIdentifier: identity.pid];
-        if app.is_null() {
-            None
-        } else {
-            let actual = AppIdentity::from_ns_running_app(app);
-            if actual != Some(identity) {
-                // Mismatch → treat as unknown (conservative)
-                None
-            } else {
-                let is_hidden: BOOL = msg_send![app, isHidden];
-                Some(is_hidden == YES)
-            }
+/// Handles AppHidden — OS confirms hidden state.
+/// Only updates if identity exactly matches (bare PID insufficient).
+fn on_app_hidden_revalidated(&mut self, identity: AppIdentity, os_hidden: Option<bool>) {
+    if os_hidden == Some(true) {
+        for wid in self.state.windows_identity_iter(&identity) {
+            self.state.update_window(wid, |w| w.is_hidden = true);
         }
-    };
-    on_app_shown_revalidated(&mut self.state, identity, |_| os_hidden);
+    }
+    // If os_hidden is false/None (mismatch or unknown), no state change.
+}
+
+/// Handles AppTerminated — removes exact identity from registry.
+/// PID-reuse scenario: the event's identity matches a dead process;
+/// after termination a new process may inherit the same PID. The identity
+/// comparison prevents removing the new process's ownership.
+fn on_app_terminated_exact(&mut self, identity: AppIdentity) {
+    self.registry.remove(&identity);
 }
 ```
+
+Update the actor message handler for `AppShown` to get a fresh OS query
+(via `unhide_app_instance_with_outcome` helper, which validates identity
+before querying). No `setup_with_identity` seam — the test harness creates
+a real `StateActor` with a real `VisibilityRegistry`:
+
+```rust
+StateMessage::AppShown { identity, pid: _ } => {
+    // Query OS via the exact-instance helper (returns unhide outcome,
+    // but we only need the OS hidden state).
+    let outcome = unhide_app_instance_with_outcome(identity);
+    let os_hidden = match outcome {
+        UnhideAppOutcome::UnhiddenByStache => Some(false),   // was hidden, now shown
+        UnhideAppOutcome::AlreadyShown => Some(false),       // already visible
+        UnhideAppOutcome::Failed => None,                    // unknown/mismatch
+    };
+    self.on_app_shown_revalidated(identity, |_| os_hidden);
+}
+StateMessage::AppHidden { identity, pid: _ } => {
+    let outcome = hide_app_instance_with_outcome(identity);
+    let os_hidden = match outcome {
+        HideAppOutcome::HiddenByStache => Some(true),
+        HideAppOutcome::AlreadyHidden => Some(true),
+        HideAppOutcome::Failed => None,
+    };
+    self.on_app_hidden_revalidated(identity, os_hidden);
+}
+StateMessage::AppTerminated { identity, pid: _ } => {
+    self.on_app_terminated_exact(identity);
+}
+```
+
+> **PID-reuse protection in terminated handling:** The identity was captured
+> at event-forwarding time (by `extract_app_info` in `app_monitor.rs`). The
+> actor removes only that exact identity. A new process that inherits the
+> same PID but has a different launch date is unaffected.
 
 - [ ] **Step 5: Build and run tests**
 
@@ -2075,6 +2497,29 @@ git commit -m "feat(tiling): raw lifecycle forwarding + actor identity revalidat
 
 ---
 
+### Thread-safety and deadlock constraints
+
+Key invariants that must not be violated anywhere in Phase 6:
+
+| Thread/Context                                         | What runs there                                                                        | Registry mutex?                                                       |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Actor's spawned task                                   | `handle_hide_for_workspace`, `handle_unhide_for_workspace`, `on_app_shown_revalidated` | Yes — held across OS call + insert/remove                             |
+| Shutdown caller (Tauri main thread via `cleanup_once`) | `seal_and_drain()`                                                                     | Yes — single lock acquisition                                         |
+| AX callback (main thread CFRunLoop)                    | Event handling + `WindowEvent` construction                                            | No — only reads identity from `OBSERVER_STATE` (brief `HashMap::get`) |
+| NSWorkspace notification (main thread)                 | `on_app_launched`/`on_app_terminated` → `EventProcessor` → actor message               | No registry access                                                    |
+| Signal handler (`ctrlc` thread)                        | Schedules work on Tauri main thread                                                    | No — only dispatches via `app.run_on_main_thread`                     |
+
+**Deadlock rules:**
+
+- The actor's task thread holds the registry mutex across OS calls. Ensure no
+  OS call on that path synchronously dispatches main-thread work that could
+  attempt to acquire the same mutex (NSRunningApplication hide/unhide is safe:
+  it does not perform main-thread callbacks).
+- The AX callback MUST NOT hold any mutex that the actor takes — but currently
+  it only reads `OBSERVER_STATE` (a different mutex) briefly.
+- `seal_and_drain` is called after the actor channel is closed, so there is
+  no concurrent actor writer when the seal runs.
+
 ### Task 19F: Shutdown restoration via registry seal/drain
 
 **Files:**
@@ -2087,11 +2532,15 @@ git commit -m "feat(tiling): raw lifecycle forwarding + actor identity revalidat
 
 ```rust
 // In visibility.rs tests
+fn bits(v: u64) -> LaunchDateBits {
+    LaunchDateBits::from_time_interval_since_reference_date(v as f64).unwrap()
+}
+
 #[test]
 fn restore_uses_exact_identity_validation() {
     let registry = VisibilityRegistry::default();
-    let id1 = AppIdentity { pid: 10, launch_date: LaunchDateBits(1) };
-    let id2 = AppIdentity { pid: 20, launch_date: LaunchDateBits(2) };
+    let id1 = AppIdentity { pid: 10, launch_date: bits(1) };
+    let id2 = AppIdentity { pid: 20, launch_date: bits(2) };
     registry.insert(id1);
     registry.insert(id2);
 
@@ -2112,13 +2561,11 @@ fn restore_uses_exact_identity_validation() {
 #[test]
 fn restore_after_seal_rejects_late_insert() {
     let registry = VisibilityRegistry::default();
-    let id = AppIdentity { pid: 10, launch_date: LaunchDateBits(1) };
-    registry.insert(id);
-    registry.seal();
-    assert!(!registry.insert(AppIdentity { pid: 99, launch_date: LaunchDateBits(9) }));
-    let summary = restore_stache_hidden_apps_with(&registry, |_| true);
-    assert_eq!(summary.attempted, 1);
-    assert_eq!(summary.restored, 1);
+    registry.insert(AppIdentity { pid: 10, launch_date: bits(1) });
+    registry.seal_and_drain();
+    let summary = restore_stache_hidden_apps_with(&registry, |_| unreachable!());
+    assert_eq!(summary.attempted, 0);
+    assert_eq!(summary.restored, 0);
 }
 
 #[test]
@@ -2131,20 +2578,31 @@ fn empty_restore_is_no_op() {
 
 - [ ] **Step 2: Implement handle-based seal/drain restore**
 
+The registry is obtained at shutdown through the already-existing static
+handle. No `let registry = ...` intermediate, no static ambiguity, no actor
+channel query — the handle exists because `tiling::shutdown` has not been
+called yet:
+
 ```rust
 /// Restores every owned identity with exact-instance validation.
 ///
-/// Seals the registry, drains all identities, and attempts to unhide
-/// each. Identity mismatch, nonexistent PID, or already-visible state
-/// are silently skipped. Continues on per-identity errors. Registry
-/// lock is released before restoration begins.
+/// Seals the registry, drains all identities, then validates and unhides
+/// each. Uses `init::get_handle()` to access the `seal_and_drain_visibility`
+/// method on `StateActorHandle`. The handle must be alive because
+/// restoration runs *before* `tiling::shutdown` closes the actor channel.
 #[must_use]
 pub fn restore_stache_hidden_apps() -> RestoreSummary {
-    // Registry is obtained from the actor handle's shared Arc.
-    // During shutdown, the caller has the handle.
-    let registry = ...; // obtained from StateActorHandle::registry
-    registry.seal();
-    let identities = registry.drain();
+    crate::modules::tiling::init::get_handle()
+        .map(|h| {
+            let identities = h.seal_and_drain_visibility();
+            restore_from(identities)
+        })
+        .unwrap_or(RestoreSummary { attempted: 0, restored: 0 })
+}
+
+/// Helper that operates on a drained identity list (testable without the
+/// actor handle or registry).
+fn restore_from(identities: Vec<AppIdentity>) -> RestoreSummary {
     let attempted = identities.len();
     let restored = identities.into_iter()
         .filter(|id| unsafe { id.restore_with_exact_validation() })
@@ -2153,27 +2611,9 @@ pub fn restore_stache_hidden_apps() -> RestoreSummary {
 }
 ```
 
-The actual wiring: `StateActorHandle` has `pub registry: Arc<VisibilityRegistry>`.
-`restore_stache_hidden_apps` takes the handle or the registry. The cleanest approach:
-
-```rust
-pub fn restore_stache_hidden_apps_from(registry: &VisibilityRegistry) -> RestoreSummary {
-    registry.seal();
-    let identities = registry.drain();
-    let attempted = identities.len();
-    let restored = identities.into_iter()
-        .filter(|id| unsafe { id.restore_with_exact_validation() })
-        .count();
-    RestoreSummary { attempted, restored }
-}
-```
-
-And `tiling::restore_stache_hidden_apps()` becomes a thin wrapper that obtains
-the registry from the actor handle (stored in a static or passed at shutdown).
-
-For `app_shutdown.rs`, the call `tiling::restore_stache_hidden_apps()` stays but
-the internal implementation changes. Task20's `cleanup_once` function remains
-unchanged in structure.
+For `app_shutdown.rs`, the call `tiling::restore_stache_hidden_apps()` stays
+unchanged — its internal implementation now uses the handle-based registry
+access. Task20's `cleanup_once` function remains unchanged in structure.
 
 - [ ] **Step 3: Build and run tests**
 
@@ -2242,16 +2682,24 @@ and its tests are removed.
 actor hide/unhide operations. The restore path now uses
 `AppIdentity::restore_with_exact_validation` instead of bare `unhide_app`.
 
-- [ ] **Step 4: Build with full lint**
+- [ ] **Step 4: Build with full project lint**
 
 ```bash
-cargo test -p stache
-cargo clippy -p stache --lib -- -D warnings
-cargo fmt --all -- --check
-cargo check -p stache
+cargo test -p stache --lib 2>&1 | tail -20
+cargo clippy -p stache --lib -- -D warnings 2>&1 | tail -20
+cargo fmt --all -- --check 2>&1 | tail -20
+cargo check -p stache 2>&1 | tail -20
+pnpm test
+pnpm lint
+pnpm format
 ```
 
 Expected: all pass. Clippy may flag removed generational code — address each.
+Run project-wide lint only after focused Cargo checks pass.
+
+> **Protected files:** No changes to `app/native/src/modules/audio/device.rs`
+> (unrelated audio code) or any file outside the Tasks 19A-19G change set.
+> Tasks 9-18 (Phases 4-5 lifecycle/tray changes) are unchanged by Phase 6.
 
 - [ ] **Step 5: Commit**
 
@@ -2282,255 +2730,21 @@ is owned, then confirming restoration targets the new instance correctly).
 
 ### Task 20: Centralize orderly shutdown and wire every supported exit path
 
-**Files:**
+**Status: COMPLETED / HISTORICAL.** The CAS-based terminal-request arbiter,
+`cleanup_once`, signal handler, and all exit-path wiring (`tray/mod.rs`,
+`config/watcher.rs`, `bar/ipc_listener.rs`) are implemented in
+`app/native/src/app_shutdown.rs` (commits `fb3fe1b`, `12d913e` and earlier).
+No further changes needed for this task.
 
-- Create: `app/native/src/app_shutdown.rs`
-- Modify: `app/native/Cargo.toml`
-- Modify: `Cargo.lock`
-- Modify: `app/native/src/lib.rs:7-27,168-222`
-- Modify: `app/native/src/modules/tray/mod.rs:50-59`
-- Modify: `app/native/src/config/watcher.rs:94-98`
-- Modify: `app/native/src/modules/bar/ipc_listener.rs:58-74`
+Task 19F changes only the internals of `tiling::restore_stache_hidden_apps()`
+(visibility.rs) behind the existing public API surface. The cleanup order
+(restore → tiling shutdown → IPC shutdown) and idempotency are already
+enforced by `cleanup_once` — no `app_shutdown.rs` edits are required for
+Phase 6.
 
-- [ ] **Step 1: Write failing cleanup-order and idempotency tests**
-
-Create `app_shutdown.rs` with tests first:
-
-```rust
-#[cfg(test)]
-mod tests {
-    use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
-    use std::sync::Mutex;
-
-    use super::*;
-
-    #[test]
-    fn cleanup_restores_before_stopping_tiling_and_ipc() {
-        let started = AtomicBool::new(false);
-        let order = Mutex::new(Vec::new());
-
-        assert!(run_cleanup_once(
-            &started,
-            || order.lock().unwrap().push("restore"),
-            || order.lock().unwrap().push("tiling"),
-            || order.lock().unwrap().push("ipc"),
-        ));
-
-        assert_eq!(*order.lock().unwrap(), ["restore", "tiling", "ipc"]);
-    }
-
-    #[test]
-    fn cleanup_runs_only_once() {
-        let started = AtomicBool::new(false);
-        let calls = AtomicUsize::new(0);
-        assert!(run_cleanup_once(
-            &started,
-            || { calls.fetch_add(1, Ordering::Relaxed); },
-            || { calls.fetch_add(1, Ordering::Relaxed); },
-            || { calls.fetch_add(1, Ordering::Relaxed); },
-        ));
-        assert!(!run_cleanup_once(
-            &started,
-            || { calls.fetch_add(1, Ordering::Relaxed); },
-            || { calls.fetch_add(1, Ordering::Relaxed); },
-            || { calls.fetch_add(1, Ordering::Relaxed); },
-        ));
-        assert_eq!(calls.load(Ordering::Relaxed), 3);
-    }
-
-    #[test]
-    fn second_termination_signal_forces_exit() {
-        let signals = AtomicU8::new(0);
-
-        assert_eq!(next_signal_action(&signals), SignalAction::Orderly);
-        assert_eq!(next_signal_action(&signals), SignalAction::Force);
-    }
-}
-```
-
-Run:
-
-```bash
-cargo test -p stache --lib app_shutdown::tests
-```
-
-Expected: compilation fails because `run_cleanup_once` is missing.
-
-- [ ] **Step 2: Add the signal dependency**
-
-Add to `app/native/Cargo.toml` in alphabetical order:
-
-```toml
-ctrlc = { version = "3.4.5", features = ["termination"] }
-```
-
-Run `cargo check -p stache` once to update `Cargo.lock`.
-
-- [ ] **Step 3: Implement one cleanup path and safe signal bridging**
-
-Add above the tests in `app_shutdown.rs`:
-
-```rust
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-
-use tauri::{AppHandle, Runtime};
-
-use crate::{modules::tiling, platform};
-
-static CLEANUP_STARTED: AtomicBool = AtomicBool::new(false);
-static SIGNAL_COUNT: AtomicU8 = AtomicU8::new(0);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ShutdownAction {
-    Exit,
-    Restart,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SignalAction {
-    Orderly,
-    Force,
-}
-
-fn next_signal_action(signals: &AtomicU8) -> SignalAction {
-    if signals.fetch_add(1, Ordering::AcqRel) == 0 {
-        SignalAction::Orderly
-    } else {
-        SignalAction::Force
-    }
-}
-
-fn run_cleanup_once(
-    started: &AtomicBool,
-    restore: impl FnOnce(),
-    stop_tiling: impl FnOnce(),
-    stop_ipc: impl FnOnce(),
-) -> bool {
-    if started.swap(true, Ordering::AcqRel) {
-        return false;
-    }
-    restore();
-    stop_tiling();
-    stop_ipc();
-    true
-}
-
-pub fn cleanup_once() {
-    let _ = run_cleanup_once(
-        &CLEANUP_STARTED,
-        || {
-            let summary = tiling::restore_stache_hidden_apps();
-            tracing::info!(
-                attempted = summary.attempted,
-                restored = summary.restored,
-                "restored applications hidden by Stache"
-            );
-        },
-        tiling::shutdown,
-        platform::ipc_socket::stop_server,
-    );
-}
-
-fn request<R: Runtime>(app: &AppHandle<R>, action: ShutdownAction) {
-    let action_handle = app.clone();
-    if let Err(error) = app.run_on_main_thread(move || {
-        cleanup_once();
-        match action {
-            ShutdownAction::Exit => action_handle.exit(0),
-            ShutdownAction::Restart => action_handle.restart(),
-        }
-    }) {
-        tracing::error!(%error, "failed to dispatch orderly shutdown to main thread");
-    }
-}
-
-pub fn exit<R: Runtime>(app: &AppHandle<R>) { request(app, ShutdownAction::Exit); }
-
-pub fn restart<R: Runtime>(app: &AppHandle<R>) { request(app, ShutdownAction::Restart); }
-
-pub fn install_signal_handler<R: Runtime>(app: AppHandle<R>) -> Result<(), ctrlc::Error> {
-    ctrlc::set_handler(move || {
-        match next_signal_action(&SIGNAL_COUNT) {
-            SignalAction::Orderly => exit(&app),
-            SignalAction::Force => std::process::exit(1),
-        }
-    })
-}
-```
-
-The `ctrlc` closure runs on the crate's dedicated thread; it only schedules work on
-Tauri's main thread through `request`. Explicit restart calls from the config watcher
-and IPC listener use the same dispatch path. AppKit/AX restoration never runs inside a
-raw signal handler or on a background thread.
-`ctrlc::set_handler` installs one process-global handler and this function is called
-exactly once during app startup. The first SIGINT/SIGTERM requests orderly restoration;
-a second signal is an explicit last-resort forced exit if the main thread is stalled.
-If scheduling the first request fails, Stache logs the error and does not restart or
-pretend restoration occurred.
-
-- [ ] **Step 4: Expose the module and install the signal bridge before `App::run`**
-
-In `lib.rs`, add `mod app_shutdown;`. Refactor the final builder chain so `.build(...)`
-is assigned to `app`, then install the handler and run the app:
-
-```rust
-let app = tauri::Builder::default()
-    // existing plugins, handlers, and setup remain unchanged
-    .build(context)
-    .expect("error while building tauri application");
-
-app_shutdown::install_signal_handler(app.handle().clone())
-    .expect("failed to install SIGINT/SIGTERM handler");
-
-app.run(|_app, event| {
-    if matches!(event, tauri::RunEvent::Exit) {
-        tracing::info!("application exiting, cleaning up");
-        app_shutdown::cleanup_once();
-    }
-});
-```
-
-- [ ] **Step 5: Route explicit quit and restart paths through cleanup**
-
-Replace only the terminal calls at these sites:
-
-```rust
-// modules/tray/mod.rs
-RELOAD_ID => crate::app_shutdown::restart(app),
-QUIT_ID => crate::app_shutdown::exit(app),
-
-// config/watcher.rs release branch
-crate::app_shutdown::restart(&app_handle);
-
-// modules/bar/ipc_listener.rs release branch
-crate::app_shutdown::restart(app_handle);
-```
-
-Keep existing logging and frontend reload emission. Do not alter debug-only behavior.
-
-- [ ] **Step 6: Run focused tests and compile all wired paths**
-
-Run:
-
-```bash
-cargo test -p stache --lib app_shutdown::tests
-cargo test -p stache --lib modules::tiling::visibility::tests
-cargo fmt --all -- --check
-cargo check -p stache
-cargo clippy -p stache --lib -- -D warnings
-```
-
-Expected: all commands pass. The cleanup test proves restoration occurs before tiling
-and IPC teardown, and repeated Tauri exit notifications cannot run cleanup twice.
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add app/native/Cargo.toml Cargo.lock app/native/src/app_shutdown.rs \
-  app/native/src/lib.rs app/native/src/modules/tray/mod.rs \
-  app/native/src/config/watcher.rs app/native/src/modules/bar/ipc_listener.rs
-git commit -m "feat: restore Stache-hidden apps before shutdown"
-```
+> **Do not modify `app_shutdown.rs` in Tasks 19A–19G.** The CAS arbiter,
+> signal escalation, and exit-path wiring through commit `fb3fe1b` are
+> stable and must not be overwritten.
 
 ### Task 21: Manually verify supported shutdown paths
 
@@ -2542,9 +2756,25 @@ Run `pnpm tauri:dev`, place one application's windows only on a non-visible Stac
 workspace so Stache hides that application, minimize a window from another application,
 and manually hide a third application before Stache attempts to manage it.
 
-Also prepare the relinquished-ownership sequence: let Stache hide an application, show
-it manually, then hide it manually again. On every shutdown path below, confirm this
-application remains hidden because the app-shown event removed Stache's ownership.
+Also prepare the two conservative-behavior sequences:
+
+1. **Actor observes visible before manual rehide:** Let Stache hide App A. Show it
+   manually (AppShown fires, actor sees OS visible → removes ownership). Immediately
+   hide it again manually (Stache has no ownership → the app remains hidden after
+   shutdown because Stache never re-acquired ownership). Verification: on shutdown,
+   `attempted` does not include App A.
+
+2. **AppShown consumed after hidden — ownership retained:** Let Stache hide App B.
+   Minimize App B's only window (the AppHidden event fires while windows are still
+   hidden). The actor sees OS hidden → retains ownership. Then manually show App B
+   (AppShown fires). The actor calls `on_app_shown_revalidated`, queries OS, sees
+   visible → removes ownership and marks windows shown. Manual rehide before shutdown
+   means ownership is gone. Verification: shutdown does NOT restore App B.
+
+3. **PID reuse:** Let Stache hide App C. Terminate App C. Launch a different app that
+   acquires the same PID. Shut Stache down — the old `AppIdentity` (with App C's
+   launch date) does not match the new process's identity. Verification: `attempted`
+   increments but `restored` does not include the PID-reused identity.
 
 - [ ] **Step 2: Verify normal tray quit**
 
@@ -2575,26 +2805,38 @@ kill -INT "$(pgrep -x stache)"
 Confirm the process exits after restoring only Stache-owned hides. Check logs for the
 `attempted` and `restored` counts.
 
-- [ ] **Step 5: Confirm and document the SIGKILL boundary**
+- [ ] **Step 5: PID-reuse validation**
+
+Design a test that simulates PID-reuse: terminate an application that Stache has
+hidden, then launch a different application that happens to get the same PID.
+Shut Stache down and confirm the new application is NOT unhidden (its identity's
+launch date does not match the drained `AppIdentity`). This test is most reliably
+done as a unit test via `restore_stache_hidden_apps_from` with a mocked
+`restore_with_exact_validation` that returns `false` for mismatched identities.
+A manual variant: terminate a Stache-hidden app, note its PID, launch another
+app (or wait for the system to reuse the PID), then trigger Stache shutdown and
+verify logs show `attempted` but no `restored` for that PID.
+
+- [ ] **Step 6: Confirm and document the SIGKILL boundary**
 
 Run `kill -KILL "$(pgrep -x stache)"` only after the supported-path checks. Confirm no
 cleanup log is emitted. This is the expected POSIX limitation: SIGKILL cannot execute
 in-process restoration and is not a failure of the implementation.
 
-- [ ] **Step 6: Report results** — verification only. No commit.
+- [ ] **Step 7: Report results** — verification only. No commit.
 
 ---
 
 ## Verification Summary
 
-| Phase | Verification                                                                                                                                                                                                                                                                                                                                                                        |
-| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1     | Manual: menubar reaction ≤200ms (Task 3). Build passes.                                                                                                                                                                                                                                                                                                                             |
-| 2     | Manual: tracing spans emit under debug default (Task 8). No behavior change; existing tests pass (`pnpm test`).                                                                                                                                                                                                                                                                     |
-| 3     | Blocked pending Phase 2 evidence; each confirmed fix gets a failing test → pass → commit.                                                                                                                                                                                                                                                                                           |
-| 4     | Build passes; `pnpm test` passes; manual: each module's OS resource actually releases/reacquires (event tap disabled, listener removed, tiling `reset()` clears guard so resume succeeds).                                                                                                                                                                                          |
-| 5     | Manual tray interaction (Task 18): toggle states correct, config-off locked, unavailable shows reason, restart resets.                                                                                                                                                                                                                                                              |
-| 6     | Unit: AppIdentity capture/validation, registry seal/drain/concurrency, identity-keyed event forwarding, actor revalidation (hidden/visible/mismatch), exact-instance restoration validation, deterministic delayed/duplicate/missing/PID-reuse tests. Manual: tray quit, reload/restart, SIGTERM, and SIGINT restore only Stache-hidden applications; SIGKILL limitation confirmed. |
+| Phase | Verification                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | Manual: menubar reaction ≤200ms (Task 3). Build passes.                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 2     | Manual: tracing spans emit under debug default (Task 8). No behavior change; existing tests pass (`pnpm test`).                                                                                                                                                                                                                                                                                                                                                                     |
+| 3     | Blocked pending Phase 2 evidence; each confirmed fix gets a failing test → pass → commit.                                                                                                                                                                                                                                                                                                                                                                                           |
+| 4     | Build passes; `pnpm test` passes; manual: each module's OS resource actually releases/reacquires (event tap disabled, listener removed, tiling `reset()` clears guard so resume succeeds).                                                                                                                                                                                                                                                                                          |
+| 5     | Manual tray interaction (Task 18): toggle states correct, config-off locked, unavailable shows reason, restart resets.                                                                                                                                                                                                                                                                                                                                                              |
+| 6     | Unit: AppIdentity capture/validation, registry seal/drain/concurrency, identity-keyed event forwarding, actor revalidation (hidden/visible/mismatch), exact-instance restoration validation, deterministic delayed/duplicate/missing/PID-reuse tests. PID-reuse: hide-rejected for old identity (fail-closed), restore does not unhide wrong process. Manual: tray quit, reload/restart, SIGTERM, and SIGINT restore only Stache-hidden applications; SIGKILL limitation confirmed. |
 
 ## Open Items / Risks
 
@@ -2602,5 +2844,5 @@ in-process restoration and is not a failure of the implementation.
 - **proxyAudio listener removal (Task 13)** is the highest-risk change — callback reference and `client_data` pointer MUST match the registration exactly.
 - **tiling `INITIALIZED` change (Task 15)** converts a `OnceLock<bool>` to `Mutex<bool>`; all read/write sites in `init()` must be updated consistently.
 - **Tray `CheckMenuItem` handle retention (Task 17)** may need a `TrayMenuState` managed struct if immediate state reflection is required; the minimal version relies on macOS re-querying the menu on open.
-- **AppIdentity ObjC safety.** `NSRunningApplication` objects must never cross threads; identity extraction is a one-shot operation that saves only the `Send + Sync` bytes. AX callbacks must never lock the registry. The actor must never dispatch main-thread work while holding the registry lock.
+- **AppIdentity ObjC safety.** `NSRunningApplication` objects must never cross threads; identity extraction is a one-shot operation that saves only the `Send + Sync` bytes. AX callbacks must never lock the `VisibilityRegistry` (they briefly lock `OBSERVER_STATE` — a separate mutex — for identity lookup). The actor must never dispatch main-thread work while holding the `VisibilityRegistry` mutex.
 - **SIGKILL cannot be handled in-process.** Phase 6 intentionally provides best-effort cleanup for orderly exits, explicit restart paths, SIGTERM, and SIGINT only.

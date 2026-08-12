@@ -20,6 +20,7 @@ pub mod cmd_q;
 pub mod hotkey;
 pub mod menu_anywhere;
 pub mod notunes;
+pub mod services;
 pub mod tiling;
 pub mod tray;
 pub mod wallpaper;

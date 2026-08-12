@@ -31,16 +31,18 @@
 //! }
 //! ```
 
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use parking_lot::Mutex;
 use tauri::Emitter;
 
 use super::actor::{StateActor, StateActorHandle, StateMessage};
 use super::borders;
 use super::effects::subscriber::EffectSubscriberHandle;
 use super::effects::{EffectExecutor, EffectSubscriber};
-use super::events::{AppMonitorAdapter, EventProcessor, ScreenMonitorAdapter};
+use super::events::{AXObserverAdapter, AppMonitorAdapter, EventProcessor, ScreenMonitorAdapter};
 use crate::config::get_config;
 use crate::{events, is_accessibility_granted};
 
@@ -48,20 +50,114 @@ use crate::{events, is_accessibility_granted};
 // Global State
 // ============================================================================
 
-/// Global state actor handle.
-static HANDLE: OnceLock<StateActorHandle> = OnceLock::new();
+/// Serialized lifecycle state guarding concurrent start/pause requests.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LifecycleState {
+    Stopped,
+    Starting,
+    Running,
+    Stopping,
+}
 
-/// Global event processor.
-static PROCESSOR: OnceLock<Arc<EventProcessor>> = OnceLock::new();
+/// Named startup stages so a failure can be attributed and injected.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InitStage {
+    Actor,
+    Processor,
+    Subscriber,
+    AppMonitor,
+    ScreenMonitor,
+    AxAdapter,
+    StandaloneObservers,
+    InitialState,
+    MouseMonitor,
+    Borders,
+}
 
-/// Global effect subscriber handle for notifying the subscriber of state changes.
-static SUBSCRIBER_HANDLE: OnceLock<EffectSubscriberHandle> = OnceLock::new();
+/// Owns every resource created so far during startup. Optional fields permit
+/// rollback/quarantine after failure at any fatal `InitStage`.
+#[allow(dead_code)] // adapter fields are consumed by the pause task (15D)
+struct PartialRuntime {
+    generation: u64,
+    actor: Option<StateActorHandle>,
+    actor_stopped: Option<CompletionLatch>,
+    processor: Option<Arc<EventProcessor>>,
+    subscriber: Option<EffectSubscriberHandle>,
+    subscriber_stopped: Option<CompletionLatch>,
+    app_monitor: Option<Arc<AppMonitorAdapter>>,
+    screen_monitor: Option<Arc<ScreenMonitorAdapter>>,
+    ax_adapter: Option<Arc<AXObserverAdapter>>,
+    teardown: TeardownProgress,
+}
+
+/// Fully populated runtime required for a clean `Running` publish.
+#[allow(dead_code)] // adapter fields are consumed by the pause task (15D)
+struct TilingRuntime {
+    generation: u64,
+    actor: StateActorHandle,
+    actor_stopped: CompletionLatch,
+    processor: Arc<EventProcessor>,
+    subscriber: EffectSubscriberHandle,
+    subscriber_stopped: CompletionLatch,
+    app_monitor: Arc<AppMonitorAdapter>,
+    screen_monitor: Arc<ScreenMonitorAdapter>,
+    ax_adapter: Arc<AXObserverAdapter>,
+    teardown: TeardownProgress,
+}
+
+/// Per-stage teardown flags advanced by the runtime pause task.
+#[allow(dead_code)] // advanced by the pause/retry task (15D)
+#[allow(clippy::struct_excessive_bools)] // one flag per teardown stage by design
+#[derive(Default)]
+struct TeardownProgress {
+    visibility_restored: bool,
+    main_thread_sources_removed: bool,
+    processor_stopped: bool,
+    transient_services_paused: bool,
+    subscriber_stopped: bool,
+    actor_stopped: bool,
+    caches_cleared: bool,
+}
+
+/// Restartable runtime holder. `Quarantined` is produced by the pause/retry
+/// task; a running runtime is the only state published here.
+enum RuntimeSlot {
+    Empty,
+    Running(TilingRuntime),
+    #[allow(dead_code)] // produced by the 15D pause/retry task
+    Quarantined(PartialRuntime),
+}
+
+impl TryFrom<PartialRuntime> for TilingRuntime {
+    type Error = String;
+
+    fn try_from(partial: PartialRuntime) -> Result<Self, String> {
+        Ok(Self {
+            generation: partial.generation,
+            actor: partial.actor.ok_or("tiling: actor missing from runtime")?,
+            actor_stopped: partial.actor_stopped.ok_or("tiling: actor completion latch missing")?,
+            processor: partial.processor.ok_or("tiling: processor missing from runtime")?,
+            subscriber: partial.subscriber.ok_or("tiling: subscriber missing from runtime")?,
+            subscriber_stopped: partial
+                .subscriber_stopped
+                .ok_or("tiling: subscriber completion latch missing")?,
+            app_monitor: partial.app_monitor.ok_or("tiling: app monitor missing from runtime")?,
+            screen_monitor: partial
+                .screen_monitor
+                .ok_or("tiling: screen monitor missing from runtime")?,
+            ax_adapter: partial.ax_adapter.ok_or("tiling: ax adapter missing from runtime")?,
+            teardown: partial.teardown,
+        })
+    }
+}
+
+static LIFECYCLE: Mutex<LifecycleState> = Mutex::new(LifecycleState::Stopped);
+static RUNTIME: Mutex<RuntimeSlot> = Mutex::new(RuntimeSlot::Empty);
+static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
+const RUNTIME_STOP_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Stored Tauri app handle for emitting events.
 static APP_HANDLE: Mutex<Option<tauri::AppHandle>> = Mutex::new(None);
-
-/// Whether the tiling system has been initialized.
-static INITIALIZED: OnceLock<bool> = OnceLock::new();
 
 // ============================================================================
 // Repeatable Completion
@@ -107,35 +203,42 @@ impl CompletionLatch {
 // Public API
 // ============================================================================
 
-/// Gets the global state actor handle.
+/// Gets the state actor handle for the current running runtime.
 ///
-/// Returns `None` if the tiling system hasn't been initialized yet.
+/// Returns `None` if the tiling runtime is not currently `Running`.
 #[must_use]
-pub fn get_handle() -> Option<&'static StateActorHandle> {
-    let handle = HANDLE.get();
-    if handle.is_none() {
-        tracing::trace!("tiling: get_handle called before initialization");
+pub fn get_handle() -> Option<StateActorHandle> {
+    match &*RUNTIME.lock() {
+        RuntimeSlot::Running(rt) => Some(rt.actor.clone()),
+        RuntimeSlot::Empty | RuntimeSlot::Quarantined(_) => None,
     }
-    handle
 }
 
-/// Gets the global event processor.
+/// Gets the current event processor.
 ///
-/// Returns `None` if the tiling system hasn't been initialized yet.
+/// Returns `None` if the tiling runtime is not currently `Running`.
 #[must_use]
-pub fn get_processor() -> Option<Arc<EventProcessor>> { PROCESSOR.get().cloned() }
-
-/// Gets the global effect subscriber handle.
-///
-/// Returns `None` if the tiling system hasn't been initialized yet.
-#[must_use]
-pub fn get_subscriber_handle() -> Option<&'static EffectSubscriberHandle> {
-    SUBSCRIBER_HANDLE.get()
+pub fn get_processor() -> Option<Arc<EventProcessor>> {
+    match &*RUNTIME.lock() {
+        RuntimeSlot::Running(rt) => Some(Arc::clone(&rt.processor)),
+        RuntimeSlot::Empty | RuntimeSlot::Quarantined(_) => None,
+    }
 }
 
-/// Returns whether the tiling system has been initialized.
+/// Gets the current effect subscriber handle.
+///
+/// Returns `None` if the tiling runtime is not currently `Running`.
 #[must_use]
-pub fn is_initialized() -> bool { INITIALIZED.get().copied().unwrap_or(false) }
+pub fn get_subscriber_handle() -> Option<EffectSubscriberHandle> {
+    match &*RUNTIME.lock() {
+        RuntimeSlot::Running(rt) => Some(rt.subscriber.clone()),
+        RuntimeSlot::Empty | RuntimeSlot::Quarantined(_) => None,
+    }
+}
+
+/// Returns whether the tiling runtime is currently `Running`.
+#[must_use]
+pub fn is_initialized() -> bool { *LIFECYCLE.lock() == LifecycleState::Running }
 
 /// Returns whether tiling is enabled in config.
 #[must_use]
@@ -143,218 +246,329 @@ pub fn is_enabled() -> bool { get_config().tiling.is_enabled() }
 
 /// Initializes the `tiling` window manager.
 ///
-/// This function:
-/// 1. Checks if tiling is enabled in configuration
-/// 2. Verifies accessibility permissions
-/// 3. Creates and starts the state actor
-/// 4. Creates and starts the event processor
-/// 5. Creates and starts the effect subscriber
-/// 6. Detects screens and creates initial workspaces
-/// 7. Starts monitoring for window/app/screen events
-///
-/// # Arguments
-///
-/// * `app_handle` - Tauri app handle for emitting events to the frontend.
-///
-/// # Returns
-///
-/// `true` if initialization succeeded, `false` otherwise.
+/// Gates on config and accessibility, stores the app handle, then starts a
+/// fresh runtime generation.
 #[allow(clippy::needless_pass_by_value)] // AppHandle is intentionally passed by value for storage
 pub fn init(app_handle: tauri::AppHandle) -> bool {
-    // Check if already initialized
-    if INITIALIZED.get().is_some() {
+    if is_initialized() {
         tracing::warn!("tiling: already initialized");
         return false;
     }
 
-    tracing::debug!("tiling: init: proceeding with initialization");
-
     let config = get_config();
-
-    // Bind log: observable value of configured-enabled
     tracing::debug!("tiling: enabled = {}", config.tiling.is_enabled());
 
-    // Check if tiling is enabled
     if !config.tiling.is_enabled() {
         tracing::info!("tiling: disabled in config (set enabled=true to enable)");
-        let _ = INITIALIZED.set(false);
         return false;
     }
 
-    // Bind log: observable value of accessibility-granted
     tracing::debug!("tiling: accessibility_granted = {}", is_accessibility_granted());
-
-    // Check accessibility permissions
     if !is_accessibility_granted() {
         tracing::warn!("tiling: accessibility permissions not granted");
-        let _ = INITIALIZED.set(false);
         return false;
     }
 
-    // Store app handle for event emission
-    store_app_handle(app_handle.clone());
-
-    // Initialize the system
-    match init_internal() {
+    match start_runtime(app_handle.clone()) {
         Ok(()) => {
-            let _ = INITIALIZED.set(true);
             tracing::info!("tiling: initialized successfully");
-
-            // Emit initialized event
             if let Err(e) = app_handle.emit(
                 events::tiling::INITIALIZED,
                 serde_json::json!({ "enabled": true, "version": "v2" }),
             ) {
                 tracing::warn!("tiling: failed to emit initialized event: {e}");
             }
-
             true
         }
         Err(e) => {
             tracing::error!("tiling: initialization failed: {e}");
-            let _ = INITIALIZED.set(false);
             false
         }
     }
 }
 
 /// Shuts down the tiling system.
-///
-/// This sends a shutdown message to the state actor and stops the processor.
 pub fn shutdown() {
-    if let Some(handle) = HANDLE.get() {
-        let _ = handle.send(StateMessage::Shutdown);
-        tracing::info!("tiling: shutdown requested");
-    }
-
-    if let Some(processor) = PROCESSOR.get() {
-        processor.stop();
+    if let Err(e) = pause_runtime() {
+        tracing::error!("tiling: shutdown failed: {e}");
     }
 }
 
 // ============================================================================
-// Internal Initialization
+// Staged Startup Factory
 // ============================================================================
 
-/// Internal initialization that can return errors.
-fn init_internal() -> Result<(), String> {
-    // Spawn the state actor and get the handle
-    // StateActor::spawn() creates the actor and returns the handle
-    let (handle, _stopped) = StateActor::spawn();
+/// Staged startup factory: each method maps to one `InitStage`, lets tests fail
+/// a named stage, and routes AppKit/AX work through the synchronous
+/// main-thread helper.
+struct RuntimeFactory {
+    fail_stage: Option<InitStage>,
+}
 
-    // Store the handle globally
-    HANDLE
-        .set(handle.clone())
-        .map_err(|_| "Failed to store handle - already initialized")?;
+impl RuntimeFactory {
+    const fn new(fail_stage: Option<InitStage>) -> Self { Self { fail_stage } }
 
-    tracing::debug!("tiling: init: state actor spawned and stored");
-
-    // Create the event processor
-    let processor = Arc::new(EventProcessor::new(handle.clone()));
-
-    // Store the processor globally
-    PROCESSOR
-        .set(processor.clone())
-        .map_err(|_| "Failed to store processor - already initialized")?;
-
-    tracing::debug!("tiling: init: event processor created and stored");
-
-    // Start the event processor
-    processor.start();
-
-    tracing::debug!("tiling: init: event processor started");
-
-    // Create the effect executor with app handle for event emission
-    let mut executor = get_app_handle().map_or_else(
-        || {
-            tracing::warn!("tiling: no app handle available, events will not be emitted");
-            EffectExecutor::new()
-        },
-        EffectExecutor::with_app_handle,
-    );
-
-    // Enable border updates if borders are configured
-    let config = crate::config::get_config();
-    if config.tiling.borders.is_enabled() {
-        tracing::debug!("tiling: borders enabled in config, enabling border updates in executor");
-        executor.set_borders_enabled(true);
+    fn fail(&self, stage: InitStage) -> Result<(), String> {
+        if self.fail_stage == Some(stage) {
+            return Err(format!("tiling: injected startup failure at {stage:?}"));
+        }
+        Ok(())
     }
 
-    // Create and spawn the effect subscriber using Tauri's async runtime
-    let (subscriber, subscriber_handle, _subscriber_stopped) =
-        EffectSubscriber::new(handle.clone(), executor);
-
-    // Store the subscriber handle globally so handlers can notify the subscriber
-    if SUBSCRIBER_HANDLE.set(subscriber_handle).is_err() {
-        tracing::warn!("tiling: subscriber handle already set");
+    fn create_actor(&self) -> Result<(StateActorHandle, CompletionLatch), String> {
+        self.fail(InitStage::Actor)?;
+        Ok(StateActor::spawn())
     }
 
-    tauri::async_runtime::spawn(subscriber.run());
-
-    tracing::debug!("tiling: init: effect subscriber created and spawned");
-
-    // Create and initialize the app monitor adapter
-    let app_monitor = Arc::new(AppMonitorAdapter::new(processor.clone()));
-    if !app_monitor.init() {
-        tracing::warn!("tiling: app monitor initialization failed");
-    }
-    // Install the adapter globally so callbacks can access it
-    super::events::app_monitor::install_adapter(app_monitor);
-
-    tracing::debug!("tiling: init: app monitor adapter installed");
-
-    // Create and initialize the screen monitor adapter
-    let screen_monitor = Arc::new(ScreenMonitorAdapter::new(processor.clone()));
-    if !screen_monitor.init() {
-        tracing::warn!("tiling: screen monitor initialization failed");
-    }
-    // Install the adapter globally so callbacks can access it
-    super::events::screen_monitor::install_adapter(screen_monitor);
-
-    tracing::debug!("tiling: init: screen monitor adapter installed");
-
-    tracing::debug!("tiling: init: observer activation: beginning");
-
-    // Create and install the AX observer adapter
-    let ax_adapter = Arc::new(super::events::AXObserverAdapter::new(processor));
-    super::events::ax_observer::install_adapter(ax_adapter.clone());
-    ax_adapter.activate();
-
-    // Initialize the standalone v2 AXObserver system
-    if super::events::observer::init() {
-        tracing::debug!("tiling: AXObserver initialized");
-    } else {
-        tracing::warn!("tiling: AXObserver initialization failed");
+    fn create_processor(&self, actor: StateActorHandle) -> Result<Arc<EventProcessor>, String> {
+        self.fail(InitStage::Processor)?;
+        let processor = Arc::new(EventProcessor::new(actor));
+        processor.start();
+        Ok(processor)
     }
 
-    tracing::debug!("tiling: init: observer activation: finished");
-
-    // Initialize the mouse monitor for drag/resize detection
-    if super::events::mouse_monitor::init() {
-        // Set up the callback for when mouse is released after a drag/resize
-        super::events::mouse_monitor::set_mouse_up_callback(on_mouse_up);
-        tracing::debug!("tiling: mouse monitor initialized");
-    } else {
-        tracing::warn!("tiling: mouse monitor initialization failed");
+    fn create_subscriber(
+        &self,
+        actor: StateActorHandle,
+    ) -> Result<(EffectSubscriberHandle, CompletionLatch), String> {
+        self.fail(InitStage::Subscriber)?;
+        let mut executor =
+            get_app_handle().map_or_else(EffectExecutor::new, EffectExecutor::with_app_handle);
+        if get_config().tiling.borders.is_enabled() {
+            executor.set_borders_enabled(true);
+        }
+        let (subscriber, subscriber_handle, stopped) = EffectSubscriber::new(actor, executor);
+        tauri::async_runtime::spawn(subscriber.run());
+        Ok((subscriber_handle, stopped))
     }
 
-    // Initialize the border system (connects to JankyBorders if available)
-    if !borders::init() {
-        tracing::warn!("tiling: borders initialization failed (JankyBorders may not be installed)");
+    fn create_app_monitor(
+        &self,
+        processor: Arc<EventProcessor>,
+    ) -> Result<Arc<AppMonitorAdapter>, String> {
+        self.fail(InitStage::AppMonitor)?;
+        Ok(crate::platform::thread::dispatch_on_main_sync(move || {
+            let app_monitor = Arc::new(AppMonitorAdapter::new(processor));
+            if !app_monitor.init() {
+                tracing::warn!("tiling: app monitor initialization failed");
+            }
+            super::events::app_monitor::install_adapter(Arc::clone(&app_monitor));
+            app_monitor
+        }))
     }
 
-    tracing::debug!("tiling: init: borders setup done");
+    fn create_screen_monitor(
+        &self,
+        processor: Arc<EventProcessor>,
+    ) -> Result<Arc<ScreenMonitorAdapter>, String> {
+        self.fail(InitStage::ScreenMonitor)?;
+        Ok(crate::platform::thread::dispatch_on_main_sync(move || {
+            let screen_monitor = Arc::new(ScreenMonitorAdapter::new(processor));
+            if !screen_monitor.init() {
+                tracing::warn!("tiling: screen monitor initialization failed");
+            }
+            super::events::screen_monitor::install_adapter(Arc::clone(&screen_monitor));
+            screen_monitor
+        }))
+    }
 
-    tracing::debug!(
-        "tiling: init: initial state tracking: beginning (screens and windows enumeration)"
-    );
+    fn create_ax_adapter(
+        &self,
+        processor: Arc<EventProcessor>,
+    ) -> Result<Arc<AXObserverAdapter>, String> {
+        self.fail(InitStage::AxAdapter)?;
+        Ok(crate::platform::thread::dispatch_on_main_sync(move || {
+            let ax_adapter = Arc::new(super::events::AXObserverAdapter::new(processor));
+            super::events::ax_observer::install_adapter(Arc::clone(&ax_adapter));
+            ax_adapter.activate();
+            ax_adapter
+        }))
+    }
 
-    // Initialize screens and workspaces
-    initialize_state(&handle);
+    fn setup_standalone_observers(&self) -> Result<(), String> {
+        self.fail(InitStage::StandaloneObservers)?;
+        crate::platform::thread::dispatch_on_main_sync(|| {
+            if super::events::observer::init() {
+                tracing::debug!("tiling: AXObserver initialized");
+                Ok(())
+            } else {
+                Err("tiling: AXObserver initialization failed".to_string())
+            }
+        })
+    }
 
-    tracing::debug!("tiling: init: initial state tracking call returned");
+    fn setup_mouse_monitor(&self) -> Result<(), String> {
+        self.fail(InitStage::MouseMonitor)?;
+        if super::events::mouse_monitor::init() {
+            super::events::mouse_monitor::set_mouse_up_callback(on_mouse_up);
+            Ok(())
+        } else {
+            Err("tiling: mouse monitor initialization failed".to_string())
+        }
+    }
 
-    tracing::info!("tiling: all components started");
+    fn setup_borders(&self) -> Result<(), String> {
+        self.fail(InitStage::Borders)?;
+        if borders::init() {
+            Ok(())
+        } else {
+            Err("tiling: borders initialization failed".to_string())
+        }
+    }
+
+    fn enumerate_initial_state(
+        &self,
+        actor: StateActorHandle,
+        processor: Arc<EventProcessor>,
+    ) -> Result<(), String> {
+        self.fail(InitStage::InitialState)?;
+        crate::platform::thread::dispatch_on_main_sync(move || {
+            initialize_state(&actor, &processor);
+        });
+        Ok(())
+    }
+}
+
+/// Builds a full runtime for one generation, assigning every fatal stage to
+/// `PartialRuntime` as it succeeds. A failure at any fatal stage drops the
+/// partial (rollback by drop: closed channels stop the actor and subscriber,
+/// and `EventProcessor::drop` stops its timers) and returns the error.
+fn build_runtime(factory: &RuntimeFactory, generation: u64) -> Result<TilingRuntime, String> {
+    let mut partial = PartialRuntime {
+        generation,
+        actor: None,
+        actor_stopped: None,
+        processor: None,
+        subscriber: None,
+        subscriber_stopped: None,
+        app_monitor: None,
+        screen_monitor: None,
+        ax_adapter: None,
+        teardown: TeardownProgress::default(),
+    };
+
+    let (actor, actor_stopped) = factory.create_actor()?;
+    partial.actor = Some(actor.clone());
+    partial.actor_stopped = Some(actor_stopped);
+
+    let processor = factory.create_processor(actor.clone())?;
+    partial.processor = Some(Arc::clone(&processor));
+
+    let (subscriber_handle, subscriber_stopped) = factory.create_subscriber(actor.clone())?;
+    partial.subscriber = Some(subscriber_handle);
+    partial.subscriber_stopped = Some(subscriber_stopped);
+
+    let app_monitor = factory.create_app_monitor(Arc::clone(&processor))?;
+    partial.app_monitor = Some(app_monitor);
+
+    let screen_monitor = factory.create_screen_monitor(Arc::clone(&processor))?;
+    partial.screen_monitor = Some(screen_monitor);
+
+    let ax_adapter = factory.create_ax_adapter(Arc::clone(&processor))?;
+    partial.ax_adapter = Some(ax_adapter);
+
+    factory.setup_standalone_observers()?;
+
+    // Optional stages: failure logs degraded mode but still permits Running.
+    if let Err(e) = factory.setup_mouse_monitor() {
+        tracing::warn!("{e}");
+    }
+    if let Err(e) = factory.setup_borders() {
+        tracing::warn!("{e}");
+    }
+
+    factory.enumerate_initial_state(actor, processor)?;
+
+    TilingRuntime::try_from(partial)
+}
+
+/// Starts a fresh runtime generation and publishes `RuntimeSlot::Running`.
+///
+/// The handle is stored for event emission (idempotent with `init`). No
+/// lifecycle or runtime lock is held across the staged factory calls, which
+/// dispatch to the main thread.
+///
+/// # Errors
+///
+/// Returns an error when the lifecycle is not `Stopped` or any fatal startup
+/// stage fails.
+pub fn start_runtime(app_handle: tauri::AppHandle) -> Result<(), String> {
+    store_app_handle(app_handle);
+
+    {
+        let mut lifecycle = LIFECYCLE.lock();
+        if *lifecycle != LifecycleState::Stopped {
+            return Err(format!("tiling: cannot start while {lifecycle:?}"));
+        }
+        *lifecycle = LifecycleState::Starting;
+    }
+
+    let generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
+    let factory = RuntimeFactory::new(None);
+
+    match build_runtime(&factory, generation) {
+        Ok(runtime) => {
+            *RUNTIME.lock() = RuntimeSlot::Running(runtime);
+            *LIFECYCLE.lock() = LifecycleState::Running;
+            tracing::info!("tiling: runtime {generation} started");
+            Ok(())
+        }
+        Err(e) => {
+            *LIFECYCLE.lock() = LifecycleState::Stopped;
+            Err(e)
+        }
+    }
+}
+
+/// Stops the published runtime and publishes `Empty`/`Stopped`.
+///
+/// Ordered teardown, quarantine/retry, and main-thread observer unregister are
+/// owned by the pause task (15D); this step waits on the subscriber/actor
+/// latches so a 15B-only tree is still shippable.
+#[allow(clippy::unnecessary_wraps)] // 15D replaces this with the quarantine/retry version that returns Err
+fn pause_runtime() -> Result<(), String> {
+    {
+        let mut lifecycle = LIFECYCLE.lock();
+        if *lifecycle != LifecycleState::Running {
+            return Ok(());
+        }
+        *lifecycle = LifecycleState::Stopping;
+    }
+
+    let runtime = {
+        let mut slot = RUNTIME.lock();
+        let taken = std::mem::replace(&mut *slot, RuntimeSlot::Empty);
+        drop(slot);
+        match taken {
+            RuntimeSlot::Running(rt) => rt,
+            RuntimeSlot::Empty => {
+                *LIFECYCLE.lock() = LifecycleState::Stopped;
+                return Ok(());
+            }
+            RuntimeSlot::Quarantined(partial) => {
+                *RUNTIME.lock() = RuntimeSlot::Quarantined(partial);
+                *LIFECYCLE.lock() = LifecycleState::Stopped;
+                return Ok(());
+            }
+        }
+    };
+
+    runtime.processor.stop();
+
+    runtime.subscriber.shutdown();
+    if !runtime.subscriber_stopped.wait_timeout(RUNTIME_STOP_TIMEOUT) {
+        tracing::warn!("tiling: subscriber did not stop within {RUNTIME_STOP_TIMEOUT:?}");
+    }
+
+    let _ = runtime.actor.shutdown();
+    if !runtime.actor_stopped.wait_timeout(RUNTIME_STOP_TIMEOUT) {
+        tracing::warn!("tiling: actor did not stop within {RUNTIME_STOP_TIMEOUT:?}");
+    }
+
+    let generation = runtime.generation;
+    drop(runtime);
+    *LIFECYCLE.lock() = LifecycleState::Stopped;
+    tracing::info!("tiling: runtime {generation} stopped");
     Ok(())
 }
 
@@ -362,7 +576,7 @@ fn init_internal() -> Result<(), String> {
 ///
 /// Detects screens on the main thread (where macOS APIs work) and sends
 /// them to the actor via `SetScreens` message.
-fn initialize_state(handle: &StateActorHandle) {
+fn initialize_state(handle: &StateActorHandle, processor: &EventProcessor) {
     // Detect screens on the main thread (this is called during Tauri setup)
     // NSScreen APIs must be called from the main thread
     tracing::debug!("tiling: detecting screens on main thread...");
@@ -386,7 +600,7 @@ fn initialize_state(handle: &StateActorHandle) {
     }
 
     // Track existing windows
-    track_existing_windows(handle);
+    track_existing_windows(handle, processor);
 }
 
 // ============================================================================
@@ -399,7 +613,7 @@ fn initialize_state(handle: &StateActorHandle) {
 /// a batch `BatchWindowsCreated` message to the actor.
 /// Also sends a `WindowFocused` message for the currently focused window,
 /// and an `InitComplete` message to trigger initial layouts.
-fn track_existing_windows(handle: &StateActorHandle) {
+fn track_existing_windows(handle: &StateActorHandle, processor: &EventProcessor) {
     use super::actor::WindowCreatedInfo;
     use super::rules::should_tile_window;
     use super::window::{get_all_windows_including_hidden, get_focused_window_id};
@@ -481,11 +695,8 @@ fn track_existing_windows(handle: &StateActorHandle) {
 
     // Also track these windows in the event processor for destroy detection
     // This is necessary because BatchWindowsCreated bypasses the processor
-    if let Some(processor) = get_processor() {
-        let window_pids: Vec<(u32, i32)> =
-            window_infos.iter().map(|w| (w.window_id, w.pid)).collect();
-        processor.track_windows_for_destroy_detection(&window_pids);
-    }
+    let window_pids: Vec<(u32, i32)> = window_infos.iter().map(|w| (w.window_id, w.pid)).collect();
+    processor.track_windows_for_destroy_detection(&window_pids);
 
     // Send batch message (no individual layout notifications)
     if !window_infos.is_empty()
@@ -518,17 +729,11 @@ fn track_existing_windows(handle: &StateActorHandle) {
 // ============================================================================
 
 /// Stores the Tauri app handle for later use in event emission.
-pub fn store_app_handle(handle: tauri::AppHandle) {
-    if let Ok(mut stored) = APP_HANDLE.lock() {
-        *stored = Some(handle);
-    }
-}
+pub fn store_app_handle(handle: tauri::AppHandle) { *APP_HANDLE.lock() = Some(handle); }
 
 /// Gets the stored app handle.
 #[must_use]
-pub fn get_app_handle() -> Option<tauri::AppHandle> {
-    APP_HANDLE.lock().ok().and_then(|guard| guard.clone())
-}
+pub fn get_app_handle() -> Option<tauri::AppHandle> { APP_HANDLE.lock().clone() }
 
 // ============================================================================
 // Event Emission Helpers
@@ -1224,8 +1429,8 @@ fn on_mouse_up() {
 
     // Process the completed operation
     match info.operation {
-        DragOperation::Move => handle_move_finished(&info, handle),
-        DragOperation::Resize => handle_resize_finished(&info, handle),
+        DragOperation::Move => handle_move_finished(&info, &handle),
+        DragOperation::Resize => handle_resize_finished(&info, &handle),
     }
 }
 
@@ -1477,5 +1682,60 @@ mod tests {
         let clone = latch.clone();
         latch.mark_complete();
         assert!(clone.wait_timeout(Duration::from_millis(20)));
+    }
+
+    /// Serializes tests that mutate the process-global lifecycle statics.
+    static TEST_LIFECYCLE_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
+    #[test]
+    fn runtime_slot_is_empty_by_default() {
+        let _guard = TEST_LIFECYCLE_LOCK.lock();
+        assert!(matches!(&*RUNTIME.lock(), RuntimeSlot::Empty));
+    }
+
+    #[test]
+    fn lifecycle_starts_stopped() {
+        let _guard = TEST_LIFECYCLE_LOCK.lock();
+        assert_eq!(*LIFECYCLE.lock(), LifecycleState::Stopped);
+    }
+
+    #[test]
+    fn getters_return_none_before_start() {
+        let _guard = TEST_LIFECYCLE_LOCK.lock();
+        assert!(get_handle().is_none());
+        assert!(get_processor().is_none());
+        assert!(get_subscriber_handle().is_none());
+        assert!(!is_initialized());
+    }
+
+    #[test]
+    fn tiling_runtime_from_partial_requires_mandatory_fields() {
+        let partial = PartialRuntime {
+            generation: 1,
+            actor: None,
+            actor_stopped: None,
+            processor: None,
+            subscriber: None,
+            subscriber_stopped: None,
+            app_monitor: None,
+            screen_monitor: None,
+            ax_adapter: None,
+            teardown: TeardownProgress::default(),
+        };
+        assert!(TilingRuntime::try_from(partial).is_err());
+    }
+
+    #[tokio::test]
+    async fn runtime_factory_fails_named_stage_and_actor_exits_on_drop() {
+        let failing = RuntimeFactory::new(Some(InitStage::Actor));
+        assert!(failing.create_actor().is_err());
+
+        let passing = RuntimeFactory::new(None);
+        let (actor, stopped) = passing.create_actor().expect("actor stage must not fail");
+        drop(actor);
+        assert!(
+            stopped.wait_timeout(Duration::from_secs(2)),
+            "actor must stop after the last handle is dropped"
+        );
     }
 }

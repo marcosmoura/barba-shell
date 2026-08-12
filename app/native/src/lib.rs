@@ -130,7 +130,10 @@ fn lazy_load_modules(app: &App, config: &config::StacheConfig) {
         // Initialize tiling window manager if enabled (after other modules)
         if tiling_config.is_enabled() {
             tracing::info!("tiling window manager enabled, initializing");
-            tiling::init(handle.clone());
+            let h = handle.clone();
+            // AppKit/AX stages inside start_runtime must run on the main thread;
+            // dispatch_on_main_sync executes inline when already on it.
+            crate::platform::thread::dispatch_on_main_sync(move || tiling::init(h));
             tracing::debug!("tiling initialization complete");
         }
 

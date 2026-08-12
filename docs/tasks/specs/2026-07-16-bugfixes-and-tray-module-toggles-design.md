@@ -91,7 +91,7 @@ UI-facing flag, otherwise OS resources (event taps, listeners, observers) keep r
 even when the tray shows a module as paused.
 
 **Design:** Define a new, minimal trait (not reusing the existing but unused
-`modules/services/traits.rs` `Module`/`BackgroundService` definitions):
+`services/traits.rs` `Module`/`BackgroundService` definitions at the top level):
 
 ```rust
 pub trait LifecycleModule {
@@ -287,7 +287,7 @@ is outside this phase.
 ## Out of Scope
 
 - Hot config reload without process restart.
-- Adopting/refactoring the existing dead `modules/services/traits.rs` code (left as-is,
+- Adopting/refactoring the existing dead `services/traits.rs` code (top-level `crate::services`, left as-is,
   unrelated to the new trait).
 - Any UI change beyond the tray menu (no changes to the bar/status widgets).
 - Persistent recovery or an external watchdog for SIGKILL and unrecoverable crashes.

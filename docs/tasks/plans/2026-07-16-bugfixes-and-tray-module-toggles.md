@@ -23,6 +23,7 @@
 | `app/native/src/modules/tiling/init.rs`                 | Phase 2: tracing in observer ordering; Phase 4: `reset()` for tiling                 |
 | `app/native/src/modules/tiling/effects/subscriber.rs`   | Phase 2: tracing in `handle_visibility_changed` + `is_layoutable` path               |
 | `app/native/src/modules/services/lifecycle.rs`          | Phase 4: new `LifecycleModule` trait + `ModuleStatus` enum                           |
+| `app/native/src/modules/mod.rs`                         | Phase 4: expose the new `services` submodule (add `pub mod services;`)               |
 | `app/native/src/modules/wallpaper/manager.rs`           | Phase 4: retain manager handle; `pause`/`resume` via timer flag                      |
 | `app/native/src/modules/cmd_q/mod.rs`                   | Phase 4: retain `CGEventTap` handle; `pause`/`resume` via `CGEventTapEnable`         |
 | `app/native/src/modules/notunes/mod.rs`                 | Phase 4: retain observer; `pause`/`resume` via `removeObserver`/`addObserver`        |
@@ -44,6 +45,14 @@
 ---
 
 ## Phase 1 — Menubar Latency Fix
+
+> **Status: Tasks 1-2 are merged (`d03e811`..`7db3e82`) but failed manual
+> verification.** `NSMenu.menuBarVisible()` reports application menu-bar
+> policy, not transient auto-hide reveal state; it stayed constant during
+> mouse reveal/hide and its success suppressed the `CGWindowList` fallback, so
+> Stache never reacted. Task 3 is pending a corrected detector design. Do not
+> re-implement `query_menu_bar_visible_via_nsmenu`; replace it after a design
+> decision (owner: user).
 
 ### Task 1: Add `NSMenu.menuBarVisible()` query helper
 
@@ -101,7 +110,7 @@ let initial_state = query_menu_bar_visible_via_nsmenu()
 
 - [ ] **Step 3: Build to confirm it compiles**
 
-Run: `cd /Users/marcosmoura/Projects/stache && cargo build -p native 2>&1 | tail -20`
+Run: `cd /Users/marcosmoura/Projects/stache && cargo build -p stache 2>&1 | tail -20`
 Expected: compiles with no errors (warnings about unused `query_menu_bar_visible` are fine for now; it is still used as fallback).
 
 - [ ] **Step 4: Commit**
@@ -127,7 +136,7 @@ const MENU_BAR_FALLBACK_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 - [ ] **Step 2: Build**
 
-Run: `cd /Users/marcosmoura/Projects/stache && cargo build -p native 2>&1 | tail -20`
+Run: `cd /Users/marcosmoura/Projects/stache && cargo build -p stache 2>&1 | tail -20`
 Expected: compiles.
 
 - [ ] **Step 3: Commit**
@@ -146,15 +155,26 @@ git commit -m "fix(bar): reduce menubar fallback poll to 100ms"
 Run: `cd /Users/marcosmoura/Projects/stache && pnpm tauri:dev`
 Move the mouse to the top screen edge to reveal the system menu bar, then away. Observe the Stache bar reaction.
 
-- [ ] **Step 2: Confirm reaction is ≤200ms**
+- [ ] **Step 2: Confirm reaction is ≤200ms (blocked)**
 
-The debug build already logs at `stache=debug`. Watch the menubar visibility event emission timing in the terminal. The reaction should now be near-instant (≤100ms poll + event dispatch). If it is still >200ms, re-check that `query_menu_bar_visible_via_nsmenu` is actually being called (add a temporary `tracing::debug!` around it, then remove it).
+This step failed with the merged detector: `NSMenu.menuBarVisible()` stayed
+constant during mouse reveal/hide and suppressed the CG fallback, so Stache
+never reacted (manual Phase 1/2 session). Verification cannot pass until a
+corrected detector is designed and merged. Do not re-run this step against the
+current NSMenu-first path; do not add temporary tracing around
+`query_menu_bar_visible_via_nsmenu` (it is being removed by the redesign).
 
 - [ ] **Step 3: Commit nothing** — verification only. Report result.
 
 ---
 
 ## Phase 2 — Diagnostic Tracing (No Fixes)
+
+> **Status: Tasks 4-7 are merged and reviewed (`de63053`..`76c960a`).** Task 8
+> was attempted in the combined manual session: neither the Ghostty nor the
+> floating-window bug reproduced (Ghostty was managed as a standard window),
+> and no logs were saved. Phase 3 remains blocked until the user supplies a
+> repro log.
 
 > All tracing uses `tracing::debug!`. Debug builds default to `RUST_LOG=warn,stache=debug`, so spans appear automatically. No new env var.
 
@@ -193,7 +213,7 @@ let should_manage = match subrole.as_deref() {
 
 - [ ] **Step 2: Build**
 
-Run: `cd /Users/marcosmoura/Projects/stache && cargo build -p native 2>&1 | tail -20`
+Run: `cd /Users/marcosmoura/Projects/stache && cargo build -p stache 2>&1 | tail -20`
 Expected: compiles.
 
 - [ ] **Step 3: Commit**
@@ -240,7 +260,7 @@ pub fn is_new_window_a_tab(pid: i32, new_window_id: u32, workspace_window_ids: &
 
 - [ ] **Step 2: Build**
 
-Run: `cd /Users/marcosmoura/Projects/stache && cargo build -p native 2>&1 | tail -20`
+Run: `cd /Users/marcosmoura/Projects/stache && cargo build -p stache 2>&1 | tail -20`
 Expected: compiles.
 
 - [ ] **Step 3: Commit**
@@ -281,7 +301,7 @@ In `init_internal` (init.rs:191-285), add a span before each major step so the o
 
 - [ ] **Step 2: Build**
 
-Run: `cd /Users/marcosmoura/Projects/stache && cargo build -p native 2>&1 | tail -20`
+Run: `cd /Users/marcosmoura/Projects/stache && cargo build -p stache 2>&1 | tail -20`
 Expected: compiles.
 
 - [ ] **Step 3: Commit**
@@ -323,7 +343,7 @@ In the `visible` branch, after `GetWindowLayout`, log which window ids are layou
 
 - [ ] **Step 2: Build**
 
-Run: `cd /Users/marcosmoura/Projects/stache && cargo build -p native 2>&1 | tail -20`
+Run: `cd /Users/marcosmoura/Projects/stache && cargo build -p stache 2>&1 | tail -20`
 Expected: compiles. (If `StateQuery::GetWindow` does not exist, use the actual query variant — check `app/native/src/modules/tiling/actor/messages.rs` and adjust; the goal is only to log floating exclusion, not to change behavior.)
 
 - [ ] **Step 3: Commit**
@@ -367,6 +387,7 @@ Set a window floating, switch workspaces away and back, observe whether it becom
 
 - Create: `app/native/src/modules/services/lifecycle.rs`
 - Modify: `app/native/src/modules/services/mod.rs` (create if missing, or add `pub mod lifecycle;`)
+- Modify: `app/native/src/modules/mod.rs` (add `pub mod services;`; without it, `crate::modules::services` does not compile)
 
 - [ ] **Step 1: Create the trait file**
 
@@ -414,15 +435,19 @@ pub mod lifecycle;
 
 If it exists, add `pub mod lifecycle;`.
 
+Then add `pub mod services;` to `app/native/src/modules/mod.rs` (next to the
+existing `pub mod` declarations). Without this parent declaration, Rust will
+not compile `crate::modules::services::lifecycle` in Task 10.
+
 - [ ] **Step 3: Build**
 
-Run: `cd /Users/marcosmoura/Projects/stache && cargo build -p native 2>&1 | tail -20`
+Run: `cd /Users/marcosmoura/Projects/stache && cargo build -p stache 2>&1 | tail -20`
 Expected: compiles.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add app/native/src/modules/services/lifecycle.rs app/native/src/modules/services/mod.rs
+git add app/native/src/modules/services/lifecycle.rs app/native/src/modules/services/mod.rs app/native/src/modules/mod.rs
 git commit -m "feat(lifecycle): add LifecycleModule trait and ModuleStatus"
 ```
 
@@ -475,7 +500,7 @@ impl LifecycleModule for WallpaperManager {
 
 - [ ] **Step 2: Build**
 
-Run: `cd /Users/marcosmoura/Projects/stache && cargo build -p native 2>&1 | tail -20`
+Run: `cd /Users/marcosmoura/Projects/stache && cargo build -p stache 2>&1 | tail -20`
 Expected: compiles.
 
 - [ ] **Step 3: Commit**
@@ -562,7 +587,7 @@ impl LifecycleModule for CmdQ {
 
 - [ ] **Step 3: Build**
 
-Run: `cd /Users/marcosmoura/Projects/stache && cargo build -p native 2>&1 | tail -20`
+Run: `cd /Users/marcosmoura/Projects/stache && cargo build -p stache 2>&1 | tail -20`
 Expected: compiles. Fix any `CFMachPort`/`CGEventTapEnable` type mismatches against the existing `start_event_tap` usage.
 
 - [ ] **Step 4: Commit**
@@ -647,7 +672,7 @@ impl LifecycleModule for NoTunes {
 
 - [ ] **Step 3: Build**
 
-Run: `cd /Users/marcosmoura/Projects/stache && cargo build -p native 2>&1 | tail -20`
+Run: `cd /Users/marcosmoura/Projects/stache && cargo build -p stache 2>&1 | tail -20`
 Expected: compiles.
 
 - [ ] **Step 4: Commit**
@@ -762,7 +787,7 @@ impl LifecycleModule for ProxyAudio {
 
 - [ ] **Step 4: Build**
 
-Run: `cd /Users/marcosmoura/Projects/stache && cargo build -p native 2>&1 | tail -20`
+Run: `cd /Users/marcosmoura/Projects/stache && cargo build -p stache 2>&1 | tail -20`
 Expected: compiles.
 
 - [ ] **Step 5: Commit**
@@ -849,7 +874,7 @@ impl LifecycleModule for MenuAnywhere {
 
 - [ ] **Step 3: Build**
 
-Run: `cd /Users/marcosmoura/Projects/stache && cargo build -p native 2>&1 | tail -20`
+Run: `cd /Users/marcosmoura/Projects/stache && cargo build -p stache 2>&1 | tail -20`
 Expected: compiles.
 
 - [ ] **Step 4: Commit**
@@ -863,105 +888,326 @@ git commit -m "feat(menuAnywhere): retain tap handle + implement LifecycleModule
 
 **Files:**
 
-- Modify: `app/native/src/modules/tiling/init.rs`
+- Modify: `app/native/src/modules/tiling/init.rs` — serialized lifecycle state,
+  clearable runtime ownership, startup rollback, ordered teardown
+- Modify: `app/native/src/modules/tiling/actor/mod.rs` and `actor/handle.rs` —
+  actor completion signal and shutdown acknowledgement
+- Modify: `app/native/src/modules/tiling/events/processor.rs` — stop/gate,
+  clear pending batches/routes, and quiescence acknowledgement
+- Modify: `app/native/src/modules/tiling/effects/subscriber.rs` — subscriber
+  completion signal and shutdown acknowledgement
+- Modify: `app/native/src/modules/tiling/events/app_monitor.rs` — retain/remove
+  NSWorkspace observer and generation-gate callbacks
+- Modify: `app/native/src/modules/tiling/events/screen_monitor.rs` — unregister
+  CG display callback and invalidate delayed workers
+- Modify: `app/native/src/modules/tiling/events/ax_observer.rs` — deactivate then
+  uninstall adapter
+- Modify: `app/native/src/modules/tiling/events/observer.rs` — drain/release all
+  standalone AX observers and reset its init guard
+- Modify: `app/native/src/modules/tiling/events/mouse_monitor.rs` — make the
+  process-lifetime tap explicitly active/inactive and gate callbacks
+- Modify: `app/native/src/modules/tiling/events/drag_state.rs` — cancel stale drag
+- Modify: `app/native/src/modules/tiling/effects/animation/state.rs` — complete
+  transient animation reset
+- Modify: `app/native/src/modules/tiling/borders.rs` — pause/resume the retained
+  process-lifetime runner and clear stale commands
+- Modify: `app/native/src/modules/tiling/tabs.rs` — clear tab state on teardown
+- Modify: `app/native/src/modules/tiling/effects/window_cache.rs` — clear retained
+  AX objects on teardown
+- Modify: `app/native/src/modules/tiling/mod.rs` — lifecycle re-exports
+- Modify: `app/native/src/lib.rs` — invoke tiling startup through the existing
+  synchronous main-thread bridge rather than directly from the lazy async task
 
-- [ ] **Step 1: Add `reset()` that clears the init guard**
+- [ ] **Step 1: Write failing lifecycle and completion tests**
 
-After `shutdown()` (init.rs:175-184), add:
+Add deterministic tests around injected runtime resources, without invoking
+live AX/AppKit APIs:
+
+1. `init → pause → resume` creates actor/processor/subscriber generation 2;
+   generation-1 handles are closed and cannot accept messages.
+2. Teardown order is restore visibility ownership → main-thread adapter and
+   standalone-observer gates/unregister plus mouse gating → processor
+   quiescence → drag/animation/border pause → subscriber stop/ack → actor
+   stop/ack → cache/tab/transient clearing. No completion wait precedes queued
+   main-thread removal work.
+3. A delayed screen/AX/app callback tagged generation 1 is ignored after
+   generation 2 starts.
+4. Processor stop clears pending geometry batches and exact routing maps before
+   acknowledging quiescence.
+5. Actor and subscriber completion receivers both resolve before runtime slots
+   are dropped.
+6. Failure after every fatal initialization stage invokes the same rollback
+   path, leaves lifecycle `Stopped`, leaves `RuntimeSlot::Empty`, and permits a
+   subsequent successful start. Optional mouse/border failures instead enter
+   `Running` in a logged degraded mode.
+7. A subscriber/actor/processor completion timeout retains the complete runtime
+   in `RuntimeSlot::Quarantined`; start/resume is rejected, and a later
+   pause/shutdown retries only the unfinished idempotent teardown stages.
+8. Concurrent start/pause/retry requests serialize; only one transition owns
+   the runtime, and no request can discard a quarantined generation.
+9. Main-thread-required startup and teardown hooks are observed on the main
+   thread, while no lifecycle/runtime/visibility lock is held across dispatch.
+
+Run focused tests first and observe RED compilation for the missing runtime and
+completion APIs.
+
+- [ ] **Step 2: Replace single-shot globals with one clearable runtime**
+
+In `init.rs`, replace `HANDLE`, `PROCESSOR`, `SUBSCRIBER_HANDLE`, and
+`INITIALIZED` with:
 
 ```rust
-/// Clears the init guard and stops the actor/processor so the module can be
-/// re-initialized by `resume()`. Called only from the LifecycleModule impl.
-pub fn reset() {
-    shutdown();
-    let mut initialized = INITIALIZED.lock().unwrap();
-    *initialized = false;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
+
+use parking_lot::Mutex;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LifecycleState { Stopped, Starting, Running, Stopping }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InitStage {
+    Actor,
+    Processor,
+    Subscriber,
+    AppMonitor,
+    ScreenMonitor,
+    AxAdapter,
+    StandaloneObservers,
+    InitialState,
+    MouseMonitor,
+    Borders,
 }
-```
 
-> **Important:** `INITIALIZED` must be changed from `OnceLock<bool>` to `Mutex<bool>` (see Step 2) so `reset()` can clear it. `OnceLock::set` would fail on a second call.
+/// Repeatable completion state: unlike a consumed one-shot receiver, retries
+/// can observe that a resource has already stopped.
+#[derive(Clone)]
+pub(crate) struct CompletionLatch(Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>);
 
-- [ ] **Step 2: Change `INITIALIZED` to a clearable type**
-
-In `init.rs:63`, replace:
-
-```rust
-static INITIALIZED: OnceLock<bool> = OnceLock::new();
-```
-
-with:
-
-```rust
-static INITIALIZED: Mutex<bool> = Mutex::new(false);
-```
-
-Update all `INITIALIZED.get().is_some()` / `INITIALIZED.set(...)` usages in `init()` (init.rs:124, 134, 140, 156, 162) to `INITIALIZED.lock().unwrap()` reads/writes. For example, the guard at line 124 becomes:
-
-```rust
-if *INITIALIZED.lock().unwrap() {
-    tracing::warn!("tiling: already initialized");
-    return false;
+/// Owns every resource created so far during startup. Optional fields permit
+/// rollback/quarantine after failure at any fatal InitStage.
+struct PartialRuntime {
+    generation: u64,
+    actor: Option<StateActorHandle>,
+    actor_stopped: Option<CompletionLatch>,
+    processor: Option<Arc<EventProcessor>>,
+    subscriber: Option<EffectSubscriberHandle>,
+    subscriber_stopped: Option<CompletionLatch>,
+    app_monitor: Option<Arc<AppMonitorAdapter>>,
+    screen_monitor: Option<Arc<ScreenMonitorAdapter>>,
+    ax_adapter: Option<Arc<AXObserverAdapter>>,
+    teardown: TeardownProgress,
 }
+
+struct TilingRuntime {
+    generation: u64,
+    actor: StateActorHandle,
+    actor_stopped: CompletionLatch,
+    processor: Arc<EventProcessor>,
+    subscriber: EffectSubscriberHandle,
+    subscriber_stopped: CompletionLatch,
+    app_monitor: Arc<AppMonitorAdapter>,
+    screen_monitor: Arc<ScreenMonitorAdapter>,
+    ax_adapter: Arc<AXObserverAdapter>,
+    teardown: TeardownProgress,
+}
+
+#[derive(Default)]
+struct TeardownProgress {
+    visibility_restored: bool,
+    main_thread_sources_removed: bool,
+    processor_stopped: bool,
+    transient_services_paused: bool,
+    subscriber_stopped: bool,
+    actor_stopped: bool,
+    caches_cleared: bool,
+}
+
+enum RuntimeSlot {
+    Empty,
+    Running(TilingRuntime),
+    Quarantined(PartialRuntime),
+}
+
+static LIFECYCLE: Mutex<LifecycleState> = Mutex::new(LifecycleState::Stopped);
+static RUNTIME: Mutex<RuntimeSlot> = Mutex::new(RuntimeSlot::Empty);
+static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
+const RUNTIME_STOP_TIMEOUT: Duration = Duration::from_secs(2);
 ```
 
-and each `let _ = INITIALIZED.set(value);` becomes `*INITIALIZED.lock().unwrap() = value;`.
+Remove `std::sync::Mutex`/`OnceLock` from the old global-state imports; these
+slots deliberately use non-poisoning `parking_lot::Mutex`, so every `.lock()`
+expression in this task returns a guard directly.
 
-- [ ] **Step 3: Implement `LifecycleModule` for tiling**
+`get_handle`, `get_processor`, and `get_subscriber_handle` return cloned owned
+handles from `RUNTIME`; no API returns a `'static` reference into the mutex.
+Update every callsite. `is_initialized()` is exactly
+`*LIFECYCLE.lock() == LifecycleState::Running`.
 
-At the end of `init.rs`:
+Starting performs a compare/set under `LIFECYCLE`, builds all resources as
+locals for one generation, and publishes `RuntimeSlot::Running` only after every
+fatal stage succeeds. Define a small injected `RuntimeFactory`/hook table whose
+methods are keyed by `InitStage`; production methods create real resources and
+tests fail one named stage at a time. Fatal stages are actor, processor,
+subscriber, app-monitor observer registration, screen-monitor callback
+registration, AX adapter activation, standalone observer setup, and initial
+screen/state enumeration. Mouse drag monitoring and borders are optional:
+failure logs a degraded status but still permits `Running`.
+
+`PartialRuntime` owns each created resource until publication; its rollback
+calls the same idempotent teardown helpers in reverse-safe order. After every
+fatal stage succeeds, `TilingRuntime::try_from(PartialRuntime)` requires all
+mandatory fields and publishes `RuntimeSlot::Running`. A fatal startup error
+must either finish rollback and publish `RuntimeSlot::Empty`/`Stopped`, or
+retain that partially populated payload as
+`RuntimeSlot::Quarantined(PartialRuntime)`/`Stopping` if a completion barrier
+times out. A timed-out fully running runtime is converted losslessly into the
+same optional-resource `PartialRuntime` representation. Never report `Stopped`
+while a resource remains alive.
+
+`CompletionLatch` exposes `mark_complete()` and repeatable
+`wait_timeout(Duration) -> bool`; completion remains observable after a timeout
+or successful wait. `TeardownProgress` is stored with the runtime and advances
+only after each stage succeeds, making every retry explicit and idempotent.
+
+All AppKit/AX stages (`AppMonitor`, standalone observer setup/removal, AX
+activation/deactivation, and initial screen enumeration) run through the
+existing synchronous main-thread helper, executing inline when already on the
+main thread. `lib.rs` must bridge the current lazy async `tiling::init` call to
+that helper. Copy/take owned inputs before dispatch and hold no lifecycle,
+runtime, or visibility-registry lock while waiting for main-thread execution.
+
+- [ ] **Step 3: Add completion and callback-quiescence contracts**
+
+Change actor spawn and subscriber construction to return reusable
+`CompletionLatch` values. Their task bodies mark the latch complete as the final
+action after the event loop exits. Teardown sends subscriber shutdown first,
+waits with a bounded timeout, then sends actor shutdown and waits. Completed
+stages are recorded in `TilingRuntime`, so retry does not resend or repeat
+destructive work. On timeout, return the lifecycle error and reinsert the owned
+runtime as `RuntimeSlot::Quarantined`; do not publish a replacement runtime
+while an old task may still mutate state. A later pause/shutdown retries the
+remaining barriers from that slot.
+
+`EventProcessor::stop_and_wait()` atomically rejects new events, stops all
+timers, waits for each timer's completion acknowledgement, then clears pending
+geometry/creation batches and routing maps. `start()` resets those structures
+and activates only the new generation.
+
+App/screen/AX adapters carry `generation` plus an active flag. Their callbacks
+check both before forwarding. App monitor retains its observer token and
+removes it from NSWorkspace notification center. Screen monitor removes its CG
+display reconfiguration callback and invalidates delayed 200ms workers. AX
+adapter calls `deactivate()` before `uninstall_adapter()`. Standalone observer
+`shutdown()` drains/removes/releases every observer and resets its clearable
+init state.
+
+The delayed screen-monitor workers must never call AppKit or enumerate screens
+on their worker thread. After the debounce/generation check, synchronously
+dispatch the screen query/state handoff to the main thread and re-check the
+generation there. Teardown performs every main-thread unregister/deactivate
+operation before waiting on processor/subscriber/actor completion; no bounded
+wait may depend on main-thread work that is still queued behind the waiter.
+
+- [ ] **Step 4: Gate process-lifetime services and clear transient state**
+
+Do not attempt to recreate low-level services that currently have permanent
+run loops/OnceLocks. Make their lifetime explicit and their behavior reversible:
+
+- Mouse monitor keeps its tap/thread for process lifetime, but `set_active(false)`
+  disables event processing, clears the mouse-up callback, and calls
+  `drag_state::cancel_operation()`. Resume sets the new callback, then activates.
+- Border animation runner remains process lifetime. `borders::pause()` marks it
+  inactive, drops/ignores queued animation commands, sends a zero-width/hidden
+  border command, and clears the last-command cache. `resume()` activates it
+  and calls `refresh()` after fresh tiling state exists.
+- Cancel and await active window animations, then clear animation end time,
+  interrupted positions, active/waiting counters. Retain display-link/sync
+  singletons process-wide; they may not publish effects while lifecycle is not
+  `Running`.
+- Clear exact tab registry and AX window/application caches after actor exit.
+
+- [ ] **Step 5: Implement ordered `pause`/`resume` and trait**
+
+`pause_runtime()` serializes `Running → Stopping` while leaving the running
+runtime published long enough for the public restoration helper to access its
+current ownership store. It releases lifecycle/runtime mutexes, performs stage
+1, then takes the runtime from `RuntimeSlot::Running` for the remaining stages.
+For a retry it takes `RuntimeSlot::Quarantined` directly. It performs these
+idempotent stages:
+
+1. call `restore_stache_hidden_apps()` before actor teardown, using the current
+   generation's ownership store; this is idempotent with terminal cleanup;
+2. on the main thread, deactivate/gate and unregister AX, app, screen, and
+   standalone observers/callbacks; complete all main-thread work before waits;
+3. processor `stop_and_wait` and pending-map clear;
+4. cancel drag/animations and pause borders/mouse callbacks;
+5. subscriber shutdown and reusable completion-latch wait;
+6. actor shutdown and reusable completion-latch wait;
+7. drop all taken handles/Arcs;
+8. clear tabs, AX caches, and transient animation/border state;
+9. set `RuntimeSlot::Empty` and lifecycle `Stopped` only after every required
+   completion barrier passes.
+
+If any stage times out or fails, retain the entire runtime and its per-stage
+completion flags in `RuntimeSlot::Quarantined`, keep lifecycle `Stopping`, and
+return the error. `start`/`resume` reject this state. Repeated pause/shutdown is
+the only allowed transition and retries unfinished teardown; completed stages
+are no-ops. Add tests for timeout→quarantine→successful retry, repeated retry,
+and concurrent start/pause attempts while quarantined.
+
+`resume` calls the same fresh start path as `start`; it never resets a boolean
+while retaining old resources. `shutdown()` delegates to `pause_runtime()` and
+logs errors. Keep `APP_HANDLE` available across temporary pause/resume; clear it
+only during final application shutdown after runtime teardown.
+
+Implement `TilingLifecycle` (holding `AppHandle`) as `LifecycleModule`:
 
 ```rust
-use crate::modules::services::lifecycle::{LifecycleModule, ModuleStatus};
-
-impl LifecycleModule for Tiling {
-    fn name(&self) -> &'static str { "Tiling" }
-    fn id(&self) -> &'static str { "tiling" }
-
-    fn start(&self) -> Result<(), String> {
-        if !init(self.app_handle.clone()) {
-            return Err("tiling failed to start (check accessibility permission)".to_string());
-        }
-        Ok(())
-    }
-
-    fn pause(&self) -> Result<(), String> {
-        shutdown();
-        Ok(())
-    }
-
-    fn resume(&self) -> Result<(), String> {
-        reset();
-        if !init(self.app_handle.clone()) {
-            return Err("tiling failed to resume".to_string());
-        }
-        Ok(())
-    }
-
-    fn status(&self) -> ModuleStatus {
-        if !config::get_config().tiling.is_enabled() {
-            return ModuleStatus::ConfiguredOff;
-        }
-        if *INITIALIZED.lock().unwrap() {
-            ModuleStatus::Running
-        } else {
-            ModuleStatus::Paused
-        }
-    }
-}
+fn start(&self) -> Result<(), String> { start_runtime(self.app_handle.clone()) }
+fn pause(&self) -> Result<(), String> { pause_runtime() }
+fn resume(&self) -> Result<(), String> { start_runtime(self.app_handle.clone()) }
+fn status(&self) -> ModuleStatus { /* config gate, then LifecycleState */ }
 ```
 
-> Adapt `Tiling` struct / `app_handle` field / `config` access to the actual file. If `tiling` is module functions, wrap in a `TilingLifecycle` struct holding the `AppHandle`.
-
-- [ ] **Step 4: Build**
-
-Run: `cd /Users/marcosmoura/Projects/stache && cargo build -p native 2>&1 | tail -20`
-Expected: compiles.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Verify two full cycles**
 
 ```bash
-git add app/native/src/modules/tiling/init.rs
-git commit -m "feat(tiling): add reset() + implement LifecycleModule"
+cargo test -p stache --lib modules::tiling::init::tests
+cargo test -p stache --lib modules::tiling::events::processor::tests
+cargo test -p stache --lib modules::tiling::effects::subscriber::tests
+cargo test -p stache --lib modules::tiling::events
+cargo check -p stache
+cargo clippy -p stache --lib -- -D warnings
+cargo fmt --all -- --check
+```
+
+On macOS with Accessibility enabled, manually start, pause, and resume twice.
+Confirm one actor/subscriber/processor generation is active, stale callbacks do
+nothing, Stache-owned hidden applications are restored before each pause,
+windows are freshly enumerated, and borders/drag handling resume once.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add app/native/src/modules/tiling/init.rs \
+  app/native/src/lib.rs \
+  app/native/src/modules/tiling/mod.rs \
+  app/native/src/modules/tiling/actor/mod.rs \
+  app/native/src/modules/tiling/actor/handle.rs \
+  app/native/src/modules/tiling/events/processor.rs \
+  app/native/src/modules/tiling/events/app_monitor.rs \
+  app/native/src/modules/tiling/events/screen_monitor.rs \
+  app/native/src/modules/tiling/events/ax_observer.rs \
+  app/native/src/modules/tiling/events/observer.rs \
+  app/native/src/modules/tiling/events/mouse_monitor.rs \
+  app/native/src/modules/tiling/events/drag_state.rs \
+  app/native/src/modules/tiling/effects/subscriber.rs \
+  app/native/src/modules/tiling/effects/animation/state.rs \
+  app/native/src/modules/tiling/effects/window_cache.rs \
+  app/native/src/modules/tiling/borders.rs \
+  app/native/src/modules/tiling/tabs.rs
+git commit -m "feat(tiling): support complete pause and fresh resume"
 ```
 
 ### Task 16: Create the lifecycle registry + wire into `app.manage()`
@@ -1024,7 +1270,7 @@ app.manage(registry);
 
 - [ ] **Step 3: Build**
 
-Run: `cd /Users/marcosmoura/Projects/stache && cargo build -p native 2>&1 | tail -20`
+Run: `cd /Users/marcosmoura/Projects/stache && cargo build -p stache 2>&1 | tail -20`
 Expected: compiles.
 
 - [ ] **Step 4: Commit**
@@ -1125,7 +1371,7 @@ pub fn init(app: &App) {
 
 - [ ] **Step 2: Build**
 
-Run: `cd /Users/marcosmoura/Projects/stache && cargo build -p native 2>&1 | tail -20`
+Run: `cd /Users/marcosmoura/Projects/stache && cargo build -p stache 2>&1 | tail -20`
 Expected: compiles. Fix any `CheckMenuItem`/`Submenu`/`TrayIcon` API mismatches against Tauri 2.x (the `with_id` builder signature may differ slightly — check `tauri::menu::CheckMenuItemBuilder`).
 
 - [ ] **Step 3: Commit**
@@ -1219,6 +1465,16 @@ mod tests {
     }
 
     #[test]
+    fn window_target_distinguishes_reused_numeric_window_id() {
+        let a = AppIdentity { pid: 10, launch_date: LaunchDateBits(42) };
+        let b = AppIdentity { pid: 10, launch_date: LaunchDateBits(43) };
+        assert_ne!(
+            WindowTarget { identity: a, window_id: 99 },
+            WindowTarget { identity: b, window_id: 99 },
+        );
+    }
+
+    #[test]
     fn launch_date_bits_rejects_non_positive() {
         // 0.0.to_bits() must be rejectable (fail-closed).
         // This tests the validation predicate, not the ObjC call.
@@ -1247,22 +1503,32 @@ Expected: compilation fails — `AppIdentity`, `LaunchDateBits` do not exist.
 In `identity.rs`, add:
 
 ```rust
+use objc::{msg_send, sel, sel_impl};
+use serde::{Deserialize, Serialize};
+
 /// Stable application identity combining PID and launch date.
 ///
 /// Prevents PID-reuse races: after an app terminates the kernel may reuse
 /// its PID for a different process. Binding ownership to `(pid, launch_date)`
 /// ensures we never restore a wrong process that inherited the same PID.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct AppIdentity {
     pub pid: i32,
     pub launch_date: LaunchDateBits,
+}
+
+/// Exact target for every delayed, cached, or external window operation.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct WindowTarget {
+    pub identity: AppIdentity,
+    pub window_id: u32,
 }
 
 /// High-precision launch-date bits from
 /// `NSRunningApplication.launchDate.timeIntervalSinceReferenceDate`.
 ///
 /// Stored as `f64::to_bits` for `Send + Sync + Copy`.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct LaunchDateBits(u64);
 
 impl LaunchDateBits {
@@ -1276,6 +1542,12 @@ impl LaunchDateBits {
         } else {
             None
         }
+    }
+
+    /// Returns the stored launch-date bit pattern for structured diagnostics.
+    #[must_use]
+    pub const fn bits(self) -> u64 {
+        self.0
     }
 }
 
@@ -1330,60 +1602,7 @@ Expected: all pass. `AppIdentity::from_ns_running_app(std::ptr::null_mut())` ret
 `None` safely — the implementation checks `app.is_null()` before any `msg_send!`. The
 null-pointer test validates the fail-closed safety path without an ObjC runtime.
 
-- [ ] **Step 5: Add restore validation helpers to AppIdentity**
-
-Add to `impl AppIdentity`:
-
-```rust
-impl AppIdentity {
-    /// Fetches a fresh `NSRunningApplication` by PID, extracts identity from
-    /// the same object, requires identity equality, checks the app is hidden,
-    /// and calls `unhide` — all on the same one-shot local reference.
-    ///
-    /// Returns `true` if the app was successfully unhidden.
-    ///
-    /// Creates its own autorelease pool so it is safe to call from any thread
-    /// (actor task, main thread, ctrlc thread).
-    ///
-    /// # Safety
-    ///
-    /// Must be called on a thread with a valid ObjC runtime.
-    #[must_use]
-    pub unsafe fn restore_with_exact_validation(self) -> bool {
-        objc::rc::autoreleasepool(|| {
-            use objc::runtime::{BOOL, YES};
-            // SAFETY: caller ensures valid ObjC runtime. All msg_send calls
-            // use locally obtained objects that do not escape.
-            unsafe {
-                let app_class = objc::runtime::Class::get("NSRunningApplication");
-                let Some(app_class) = app_class else {
-                    return false;
-                };
-                let app: *mut objc::runtime::Object =
-                    msg_send![app_class, runningApplicationWithProcessIdentifier: self.pid];
-                if app.is_null() {
-                    return false;
-                }
-                // Validate identity from this exact object
-                let Some(actual) = Self::from_ns_running_app(app) else {
-                    return false;
-                };
-                if actual != self {
-                    return false; // PID-reuse or process mismatch
-                }
-                let is_hidden: BOOL = msg_send![app, isHidden];
-                if is_hidden != YES {
-                    return false; // already visible, not our problem
-                }
-                let result: BOOL = msg_send![app, unhide];
-                result == YES
-            }
-        })
-    }
-}
-```
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add app/native/src/modules/tiling/identity.rs app/native/src/modules/tiling/mod.rs
@@ -1396,13 +1615,39 @@ git commit -m "feat(tiling): add AppIdentity with capture/validation"
 
 **Files:**
 
-- Modify: `app/native/src/modules/tiling/state/types.rs:308` — add `pub identity: AppIdentity` to `Window`
-- Modify: `app/native/src/modules/tiling/actor/messages.rs:271` — add `pub identity: AppIdentity` to `WindowCreatedInfo`
+- Modify: `app/native/src/modules/tiling/state/types.rs:308` — add `pub identity: Option<AppIdentity>` to `Window`
+- Modify: `app/native/src/modules/tiling/actor/messages.rs:271` — add `pub identity: Option<AppIdentity>` to `WindowCreatedInfo`
 - Modify: `app/native/src/modules/tiling/actor/messages.rs:54-68` — add identity to `AppLaunched`, `AppTerminated`, `AppHidden`, `AppShown`
 - Modify: `app/native/src/modules/tiling/events/types.rs:139` — add `pub identity: AppIdentity` to `WindowEvent`
 - Modify: `app/native/src/modules/tiling/events/observer.rs` — `ObserverState` keyed by observer address; `ObserverRecord` stores identity; callback copies identity; add `remove_observer_for_identity` for exact termination
 - Modify: `app/native/src/modules/tiling/events/ax_observer.rs` — capture identity at observer registration; callback copies stored identity
 - Modify: `app/native/src/modules/tiling/events/app_monitor.rs` — capture identity from `NSWorkspaceApplicationKey` object, not fresh PID lookup
+- Modify: `app/native/src/modules/tiling/events/processor.rs` — exact event routing/batching and target-aware screen map
+- Modify: `app/native/src/modules/tiling/events/drag_state.rs` — retain exact targets throughout mouse-down/up drag state
+- Modify: `app/native/src/modules/tiling/tabs.rs` — key tab ownership/scans by exact `AppIdentity`, never PID
+- Modify: `app/native/src/modules/tiling/actor/handlers/window.rs` — upgrade transitional identity and handle reused window IDs
+- Modify: `app/native/src/modules/tiling/actor/handlers/app.rs` — exact application-cache invalidation after cache API migration
+- Modify: `app/native/src/modules/tiling/actor/handle.rs` — exact
+  `set_expected_frames(Vec<(WindowTarget, Rect)>)` and completion-compatible
+  handle construction
+- Modify: `app/native/src/modules/tiling/actor/mod.rs` — exact actor messages, target queries, and mismatch rejection
+- Modify: `app/native/src/modules/tiling/rules/mod.rs` — update complete `Window`
+  literals with transitional identity
+- Modify: `app/native/src/modules/tiling/state/tiling_state.rs` — update complete
+  `Window` literals with transitional identity
+- Modify: `app/native/src/modules/tiling/init.rs` — exact initial scan/focus/effect targets
+- Modify: `app/native/src/modules/tiling/effects/mod.rs` — replace every target-bearing numeric ID with `WindowTarget`; exact layout/focus descriptors
+- Modify: `app/native/src/modules/tiling/effects/subscriber.rs` — store/query exact targets before producing effects
+- Modify: `app/native/src/modules/tiling/effects/executor.rs` — batch and execute exact targets only
+- Modify: `app/native/src/modules/tiling/effects/window_cache.rs` — exact window/application cache keys and validation
+- Modify: `app/native/src/modules/tiling/effects/window_ops.rs` — exact-target window operations; no bare-ID fallback
+- Modify: `app/native/src/modules/tiling/effects/animation/mod.rs` — exact-target animation execution
+- Modify: `app/native/src/modules/tiling/effects/animation/state.rs` — exact-target interrupted-position keys
+- Modify: `app/native/src/modules/tiling/effects/animation/transition.rs` — `WindowTransition` owns `WindowTarget`
+- Modify: `app/native/src/modules/tiling/actor/handlers/preset.rs` — construct exact targets for delayed preset operations
+- Modify: `app/native/src/modules/tiling/actor/handlers/focus.rs` and `workspace.rs` — pass exact targets to immediate focus operations
+- Modify: `app/native/src/modules/tiling/actor/handlers/window_move.rs` — send exact targets in floating-state notifications
+- Modify: `app/native/src/modules/bar/components/tiling.rs` — resolve stored `Window.identity`, construct `WindowTarget`, and focus exactly
 - All call sites that construct these types
 
 - [ ] **Step 1: Write identity-propagation tests that fail**
@@ -1514,41 +1759,340 @@ AppShown { identity: AppIdentity, pid: i32 },
 Keep the `pid` field for backward compat with handler internals; the actor uses
 `identity` for ownership.
 
-- [ ] **Step 4: Capture identity in AX observer registration**
+**Every AX-derived ID-targeted window message also carries exact identity.**
+Update `StateMessage::{WindowDestroyed, WindowFocused, WindowUnfocused,
+WindowMoved, WindowResized, WindowMinimized, WindowTitleChanged,
+WindowFullscreenChanged}` to add `identity: AppIdentity`. Add identity to
+`GeometryUpdate`, and key geometry batches by `(AppIdentity, window_id)` so a
+late A update can never merge into B's update after window-ID reuse. The AX
+adapter passes `WindowEvent.identity` through every EventProcessor method.
+EventProcessor's destroy-detection cache changes from PID→window IDs to
+`AppIdentity`→window IDs; its AX fallback becomes
+`on_window_destroyed_for_identity(identity)` and never scans/reports by bare
+PID.
 
-The existing `observer.rs` (type `parking_lot::Mutex<Option<ObserverState>>`,
-`ObserverState` with `observers: HashMap<i32, ObserverRef>`, `ObserverRef`
-(`*mut c_void` wrapping `AXObserverRef`), `add_observer_for_pid` at line ~207,
-callback `observer_callback` at line ~329, `remove_observer_for_pid` at line
-~291) is PID-keyed. Keep PID as the primary key — the existing duplicate check
-(`state.observers.contains_key(&pid)`) and removal patterns stay unchanged.
-Identity-based removal adds a second index.
+Internal delayed messages must be exact too. Change
+`SetExpectedFrames { frames }` and `StateActorHandle::set_expected_frames` from
+`Vec<(u32, Rect)>` to `Vec<(WindowTarget, Rect)>`. The actor updates
+`expected_frame` only when the stored window identity equals the target
+identity. Add a regression where stale A expected frames arrive after same-ID
+B creation and assert B's frame/expected frame remain unchanged; a matching B
+target still updates it.
 
-**Add identity to ObserverState, change key to include identity.** Replace
-`ObserverRef` value with `ObserverRecord`, add a reverse index for
-identity-based removal:
+Propagate exact targets through user drag state and mouse-up completion:
+
+- `WindowSnapshot` stores `target: WindowTarget` instead of `window_id`.
+- `DragInfo` stores the initiating exact target/identity, not a bare PID.
+- `get_current_frames_for_snapshots` resolves each snapshot through exact
+  `window_ops::get_window_frame(target)` and returns target/frame pairs.
+- `SwapWindows` carries `target_a`/`target_b`; `UserResizeCompleted` carries a
+  `target`; actor handlers validate each stored identity immediately before
+  swapping, ratio updates, or layout refresh. `UserMoveCompleted` remains
+  workspace-scoped only when no target-specific mutation follows.
+- Mouse-up skips missing/mismatched identities and never falls back to a
+  numeric window ID.
+
+Add deterministic stale-drag tests: capture drag state for A, replace it with B
+at the same numeric ID, then finish move and resize. Neither `SwapWindows` nor
+`UserResizeCompleted` may mutate B. A matching B drag still completes normally.
+
+The EventProcessor routing map must use the same exact key. Replace
+`window_screen_map: DashMap<u32, u32>` with
+`DashMap<(AppIdentity, u32), u32>` and update every API/callsite atomically:
 
 ```rust
+pub fn set_window_screen(&self, identity: AppIdentity, window_id: u32, screen_id: u32);
+pub fn remove_window(&self, identity: AppIdentity, window_id: u32);
+fn get_window_screen(&self, identity: AppIdentity, window_id: u32) -> u32;
+```
+
+Creation/move/resize routing passes the event identity. Destruction removes
+only `(identity, window_id)`, never every route sharing the numeric window ID.
+Add a deterministic same-ID A→B test that registers both routes, queues A and
+B geometry, then processes delayed A destruction. Assert B's route and pending
+geometry remain while A's exact route/update are removed.
+
+At actor ingress, reject every ID-targeted event unless the stored window has
+`Some(message.identity)`. Apply the same check independently to every batched
+`GeometryUpdate`. A delayed destroy/move/resize/focus/title/minimize/fullscreen
+event from A therefore cannot remove or mutate replacement B. For the initial
+focus event in `init.rs`, capture the focused window's identity from
+`window_infos` before moving the vector into `BatchWindowsCreated`; send
+`WindowFocused` only with `Some(identity)`, otherwise fail closed and log.
+
+`WindowDestroyed` has one exact special case before the tracked-window check:
+tab windows are intentionally absent from `TilingState`, so call
+`tabs::is_tab_for_identity(window_id, identity)`. If true, call
+`tabs::unregister_tab_for_identity(window_id, identity)` and return without a
+layout mutation. If false, continue to the normal tracked-window exact-identity
+guard. Never call bare `is_tab(window_id)` or `unregister_tab(window_id)` from
+actor ingress: a stale A tab destruction must not remove same-ID tab B.
+
+Add tests that create same-ID A then B and send delayed A destroy, move,
+resize, and one batched geometry update. Assert B and its frame survive. Also
+test a matching B destroy still runs normal cleanup.
+
+**Upgrade existing-window identity safely** in
+`actor/handlers/window.rs::on_window_created_internal`. Before the current
+"already tracked, updating" branch, compare the existing and incoming optional
+identities:
+
+```rust
+let mut affected_workspaces = Vec::new();
+let existing_identity = state.get_window(info.window_id).and_then(|w| w.identity);
+match (existing_identity, info.identity) {
+    (Some(existing), Some(incoming)) if existing != incoming => {
+        // Window ID was reused by another application instance. Remove every
+        // stale state/workspace/focus/cache reference before creating the new
+        // instance; do not overwrite identity in place.
+        if let Some(workspace_id) = on_window_destroyed(state, info.window_id) {
+            affected_workspaces.push(workspace_id);
+        }
+        // Fall through to normal new-window creation below and add its
+        // workspace to affected_workspaces as well.
+    }
+    (_, incoming) if state.get_window(info.window_id).is_some() => {
+        state.update_window(info.window_id, |w| {
+            if w.identity.is_none() {
+                w.identity = incoming;
+            }
+            // Preserve an existing Some identity when incoming is None or equal.
+            w.title.clone_from(&info.title);
+            w.frame = info.frame;
+            w.is_minimized = info.is_minimized;
+            w.is_fullscreen = info.is_fullscreen;
+        });
+        return affected_workspaces;
+    }
+    _ => {}
+}
+```
+
+Add focused tests for both transitions:
+
+1. Existing `Window { identity: None }` plus `WindowCreatedInfo { identity:
+Some(A) }` upgrades to `Some(A)` without duplicating the window.
+2. Existing `Some(A)` plus incoming `Some(B)` at the same window ID removes
+   A's stale workspace/focus/cache references and creates a new B window;
+   identity A is never silently retained or overwritten in place. Change
+   `on_window_created_internal` to return a de-duplicated `Vec<Uuid>` of every
+   affected workspace rather than one `Option<Uuid>`; `on_window_created`
+   sends the existing layout notification for each returned workspace, while
+   the silent batch caller intentionally ignores the vector. Assert both A's
+   old workspace and B's assigned workspace are returned/notified when they
+   differ.
+
+After the existing normal new-window insertion assigns `workspace_id`, append
+that workspace and de-duplicate before returning:
+
+```rust
+affected_workspaces.push(workspace_id);
+affected_workspaces.sort_unstable();
+affected_workspaces.dedup();
+affected_workspaces
+```
+
+Every non-silent caller iterates this returned vector and emits the existing
+layout notification once per workspace. This makes the stale A workspace and
+replacement B workspace observable without adding a new notification type.
+
+**Propagate `WindowTarget` through every effect/cache/delayed-operation path in
+this same atomic task.** `Window.identity` is optional only at transitional
+ingress; no effect may be created for `None`. Add actor query variants that
+produce exact targets in one actor turn:
+
+```rust
+StateQuery::GetWindowLayoutTargets { workspace_id: Uuid }
+StateQuery::GetFocusTargets
+
+QueryResult::TargetLayout(Vec<(WindowTarget, Rect)>)
+QueryResult::TargetFocus {
+    focused_window: Option<WindowTarget>,
+    focused_workspace_id: Option<Uuid>,
+}
+```
+
+`GetWindowLayoutTargets` maps each computed `(window_id, frame)` to the stored
+`Window.identity`; entries with `None` or a missing window are omitted and
+logged at trace level. `GetFocusTargets` resolves the focused ID and identity
+from the same actor state snapshot; a missing identity yields `None`, never a
+bare-ID fallback. Existing non-effect queries remain unchanged for frontend and
+CLI consumers.
+
+In `effects/mod.rs`, make every OS-targeting value exact:
+
+```rust
+SetWindowFrame { target: WindowTarget, frame: Rect, animate: bool }
+SetWindowVisible { target: WindowTarget, visible: bool }
+FocusWindow { target: WindowTarget }
+RaiseWindow { target: WindowTarget }
+RefreshActiveBorder {
+    target: WindowTarget,
+    layout: LayoutType,
+    is_window_floating: bool,
+}
+HideBorders { targets: Vec<WindowTarget> }
+ShowBorders { targets: Vec<WindowTarget> }
+
+LayoutChange {
+    old_positions: Vec<(WindowTarget, Rect)>,
+    new_positions: Vec<(WindowTarget, Rect)>,
+    // existing workspace/user fields unchanged
+}
+FocusChange {
+    old_window: Option<WindowTarget>,
+    new_window: Option<WindowTarget>,
+    // existing workspace fields unchanged
+}
+```
+
+`LayoutChange::added_windows`/`removed_windows`, executor layout maps, subscriber
+`layout_positions`, and subscriber `floating_windows` use `WindowTarget` keys.
+The subscriber consumes only `TargetLayout`/`TargetFocus`; it must not combine a
+bare layout result with a separate identity lookup. All executor batch vectors
+carry `WindowTarget`. Before border, focus, raise, visibility, SkyLight, or AX
+work, the executor resolves/validates the exact target; on mismatch it logs and
+skips the effect.
+
+This is an atomic replacement, not an additive variant. Remove the existing
+`TilingEffect::UpdateBorder` definition, every `UpdateBorder` constructor, every
+executor match/count-only branch, every `effects_from_focus_change` use, and
+their old tests in the staged effects files. Replace them with
+`RefreshActiveBorder` and its exact-target tests in the same Task19B commit.
+After Task19B, a repository search for `UpdateBorder` and
+`effects_from_focus_change` must return no production matches.
+
+Move active-border application fully behind that executor boundary. The
+subscriber must no longer call `borders::on_focus_changed` directly. From one
+actor snapshot it obtains the focused `WindowTarget`, workspace `LayoutType`,
+and floating flag, then emits `RefreshActiveBorder` carrying all three. The
+executor resolves and validates that exact target immediately before invoking
+the existing `borders::on_focus_changed(layout, is_window_floating)` helper;
+the target is the authorization boundary even though the global helper itself
+accepts only layout/floating semantics. Do not collapse those semantics into
+`BorderState`. `HideBorders`/`ShowBorders` also carry exact targets and are
+counted/applied only after validation, preserving their current behavior.
+Border effect accounting counts only validated/applied targets, not merely
+received effects. Add an injected executor test where stale target A and
+current target B share a numeric window ID: A produces no global border call,
+while B calls the helper exactly once with its supplied layout/floating values.
+No `borders.rs` API change is required.
+
+Change `SubscriberNotification::FloatingChanged` and
+`notify_floating_changed` to carry `WindowTarget`. In
+`actor/handlers/window_move.rs`, after toggling floating state, re-read the
+matching stored window, require `Some(identity)`, construct
+`WindowTarget { identity, window_id }`, and notify. If the window or identity is
+missing, log and skip the notification; never send a numeric-only floating
+update.
+
+Refactor `WindowElementCache` to exact keys:
+
+```rust
+windows: DashMap<WindowTarget, CachedWindowElement>
+apps: DashMap<AppIdentity, CachedAppElement>
+```
+
+Every API accepts `WindowTarget` or `AppIdentity`: `resolve`,
+`resolve_and_cache`, `batch_resolve`, `invalidate_window`, `invalidate_app`,
+`find_invalid_windows`, `get_window_frame`, and `set_window_frame_fast`.
+Resolution obtains one local `NSRunningApplication` for `target.identity.pid`,
+captures `AppIdentity` from that same object, requires exact equality, then
+enumerates only that app's AX windows for `target.window_id`. A cache hit is
+valid only when both the AX window number and exact application identity still
+match. Remove the global "first matching numeric window ID" fallback and the
+PID-only application cache path.
+
+Change all ID-targeted `window_ops` APIs used by tiling to accept
+`WindowTarget` (`get_window_frame`, `set_window_frame`,
+`set_window_frame_fast`, `focus_window`, `raise_window`, and batch frame
+updates). Delayed main-thread closures capture the full target and revalidate
+identity immediately before acting. The preset, focus, workspace, and init
+callers construct a target only from a stored `Window` with `Some(identity)`;
+otherwise they fail closed. Numeric IDs may be passed to SkyLight/border code
+only after exact validation in that same synchronous operation.
+
+Audit and convert/remove every internal numeric-only helper too:
+
+- `resolve_window_element(WindowTarget)` resolves only within the exact app.
+- `set_window_frame_verified(WindowTarget, ...)` revalidates before writing.
+- `get_window_minimum_size(WindowTarget)` uses the exact resolved element.
+- Delete `get_window_pid(window_id)` and every global PID-discovery fallback;
+  the PID is `target.identity.pid` after exact revalidation.
+- Any private helper that can reach AX, cache, SkyLight, focus, raise, move, or
+  resize must accept `WindowTarget` or an already-validated local element whose
+  lifetime cannot escape the synchronous call.
+
+Update their existing tests to use exact targets. Add a source-level regression
+test or focused API audit asserting no tiling `window_ops` resolver accepts only
+`u32`; numeric IDs are allowed only in low-level SkyLight/border calls invoked
+after exact validation.
+
+`WindowTransition` stores `target: WindowTarget`; animation interrupted
+positions use `DashMap<WindowTarget, Rect>`. Animation creation/execution and
+`actor/handlers/preset.rs` never retain a bare numeric target.
+
+Add deterministic tests for:
+
+1. Same numeric ID under identities A/B creates distinct effects, subscriber
+   state, cache entries, transitions, and interrupted positions.
+2. A delayed A effect/cache invalidation cannot resolve, remove, move, focus,
+   raise, animate, or alter borders for B.
+3. Exact cache resolution uses one injected app value through identity and
+   window lookup; mismatched identity fails before action.
+4. Target-layout/focus actor queries omit transitional `None` identities.
+5. Existing matching targets preserve current layout/focus/border behavior.
+
+- [ ] **Step 4: Capture identity in AX observer registration**
+
+The current `observer.rs` (type `parking_lot::Mutex<Option<ObserverState>>`,
+currently storing `ObserverRef` values, with
+(`*mut c_void` wrapping `AXObserverRef`), `add_observer_for_pid` at line ~207,
+callback `observer_callback` at line ~329, and the old PID-oriented setup path
+around line ~291). Refactor it so the primary key is the `AXObserverRef`
+address (the observer pointer cast to `usize`), never PID. This prevents a
+delayed termination of A from removing B after PID reuse.
+
+**Add identity to ObserverState, keyed by observer address.** Replace
+`ObserverRef` values with `ObserverRecord`, and add an exact reverse index:
+
+```rust
+use crate::modules::tiling::identity::AppIdentity;
+use objc::{class, msg_send, sel, sel_impl};
+
 struct ObserverRecord {
     observer: ObserverRef,
     identity: AppIdentity,
 }
 
 struct ObserverState {
-    /// Primary index: PID → ObserverRecord.
-    observers: HashMap<i32, ObserverRecord>,
-    /// Reverse index for identity-based removal at termination.
-    identity_to_pid: HashMap<AppIdentity, i32>,
+    /// Primary index: AXObserverRef address → ObserverRecord.
+    observers: HashMap<usize, ObserverRecord>,
+    /// Exact reverse index: application identity → AXObserverRef address.
+    identity_to_observer: HashMap<AppIdentity, usize>,
 }
 ```
 
-In `add_observer_for_pid`, after the existing duplicate check and
-`AXObserverCreate` succeed, capture `AppIdentity` from the same
-`NSRunningApplication` object (PID already confirmed valid). Then
-insert both indices under the same lock acquisition:
+In `add_observer_for_pid`, replace the current function-wide `state_guard` with
+two short critical sections. First capture `AppIdentity` from the same
+`NSRunningApplication` object, lock only long enough to return when
+`identity_to_observer` already contains that exact identity, and drop the guard.
+Then call `AXObserverCreate`, `AXUIElementCreateApplication`, and register the
+notifications without holding `OBSERVER_STATE`. Immediately before publishing
+the record or adding its source to the run loop, resolve a fresh
+`NSRunningApplication` for the PID and capture `current_identity` from that
+same object. Require `current_identity == identity`. If the process exited or
+the PID was reused during observer setup, release the newly created observer
+and abort without publishing it. Only after that revalidation may setup
+reacquire the mutex, repeat the identity/address duplicate check, and insert
+both indices. Drop that guard before `CFRunLoopAddSource`. This guarantees
+callbacks cannot run before the address-keyed record exists, a losing duplicate
+is never added to the run loop, and an observer created for replacement process
+B can never be indexed under terminated process A's identity.
+There is no non-reentrant re-lock and no run-loop-retained duplicate source:
 
 ```rust
-// In add_observer_for_pid, after AXObserverCreate succeeds (observer is valid):
+// Capture identity, then perform the first short duplicate check.
 let identity = {
     let app = unsafe { msg_send![
         class!(NSRunningApplication),
@@ -1562,17 +2106,81 @@ let identity = {
         None => return Err(format!("no valid identity for pid {pid}")),
     }
 };
+{
+    let state_guard = OBSERVER_STATE.lock();
+    let state = state_guard.as_ref()
+        .ok_or_else(|| "Observer state not initialized".to_string())?;
+    if state.identity_to_observer.contains_key(&identity) {
+        return Ok(());
+    }
+}
+
+// Create the observer/application element and add AX notifications here.
+// Do not hold OBSERVER_STATE and do not add the run-loop source yet.
+let source = unsafe { AXObserverGetRunLoopSource(observer) };
+if source.is_null() {
+    unsafe { CFRelease(observer.cast()) };
+    return Err(format!("observer has no run-loop source: pid {pid}"));
+}
+
+// Re-resolve immediately before publication to close the PID-reuse window.
+let current_identity = {
+    let app = unsafe { msg_send![
+        class!(NSRunningApplication),
+        runningApplicationWithProcessIdentifier: pid
+    ]};
+    if app.is_null() {
+        unsafe { CFRelease(observer.cast()) };
+        return Err(format!("application exited during observer setup: pid {pid}"));
+    }
+    unsafe { AppIdentity::from_ns_running_app(app) }
+};
+if current_identity != Some(identity) {
+    unsafe { CFRelease(observer.cast()) };
+    return Err(format!("application identity changed during observer setup: pid {pid}"));
+}
+
 let record = ObserverRecord { observer: ObserverRef(observer), identity };
-// parking_lot::Mutex uses .lock() (no .unwrap())
 let mut state_guard = OBSERVER_STATE.lock();
-let state = state_guard.as_mut()
-    .ok_or_else(|| "Observer state not initialized".to_string())?;
-state.observers.insert(pid, record);
-state.identity_to_pid.insert(identity, pid);
+let Some(state) = state_guard.as_mut() else {
+    drop(state_guard);
+    unsafe { CFRelease(observer.cast()) };
+    return Err("Observer state not initialized".to_string());
+};
+let address = observer as usize;
+if state.observers.contains_key(&address)
+    || state.identity_to_observer.contains_key(&identity)
+{
+    drop(state_guard);
+    unsafe { CFRelease(observer.cast()) };
+    return Ok(());
+}
+state.observers.insert(address, record);
+state.identity_to_observer.insert(identity, address);
+drop(state_guard);
+
+// Setup and exact removal are both main-thread-only. There is no await/yield
+// between publication and this void-returning call, so removal cannot
+// interleave with installation on the same run loop.
+unsafe {
+    let run_loop = CFRunLoop::get_main();
+    let mode = core_foundation::runloop::kCFRunLoopDefaultMode;
+    CFRunLoopAddSource(
+        run_loop.as_concrete_TypeRef().cast(),
+        source,
+        mode.cast(),
+    );
+}
 ```
 
-**Callback derives identity from PID-based lookup** (refcon continues to carry
-the PID, compatible with `AXObserverCreate`):
+Assert main-thread execution at the beginning of both setup and removal. A
+null source is rejected before either index is published. Every failure before
+publication releases the new observer. Once published, the source is added
+immediately on the same main-thread turn; `CFRunLoopAddSource` returns `void`,
+so there is no fallible post-publication branch to roll back.
+
+**Callback derives identity from the observer address** (refcon continues to
+carry the PID for logging, but is not a lookup key):
 
 ```rust
 unsafe extern "C" fn observer_callback(
@@ -1585,7 +2193,7 @@ unsafe extern "C" fn observer_callback(
     let identity = {
         let state_guard = OBSERVER_STATE.lock();
         let Some(ref state) = *state_guard else { return; };
-        let Some(record) = state.observers.get(&pid) else { return; };
+        let Some(record) = state.observers.get(&(_observer as usize)) else { return; };
         record.identity  // Copy (AppIdentity is Copy)
     };
     // ... construct WindowEvent::new(event_type, pid, element as usize, identity)
@@ -1593,51 +2201,137 @@ unsafe extern "C" fn observer_callback(
 ```
 
 This avoids holding the lock for more than a short lookup; the identity value
-is copied. **Exact removal** by identity uses the reverse index:
+is copied. Add a pure map-removal seam that never calls Core Foundation, then
+let the production wrapper release the returned record:
 
 ```rust
+fn take_observer_record_for_identity(
+    state: &mut ObserverState,
+    identity: &AppIdentity,
+) -> Option<ObserverRecord> {
+    let address = state.identity_to_observer.remove(identity)?;
+    state.observers.remove(&address)
+}
+
 pub fn remove_observer_for_identity(identity: &AppIdentity) {
-    let mut state_guard = OBSERVER_STATE.lock();
-    let Some(state) = state_guard.as_mut() else { return; };
-    if let Some(&pid) = state.identity_to_pid.get(identity) {
-        state.identity_to_pid.remove(identity);
-        if let Some(record) = state.observers.remove(&pid) {
-            unsafe { CFRelease(record.observer.0.cast()) };
-            tracing::trace!(pid, "ax_observer: removed observer for identity");
+    let record = {
+        let mut state_guard = OBSERVER_STATE.lock();
+        state_guard
+            .as_mut()
+            .and_then(|state| take_observer_record_for_identity(state, identity))
+    };
+    let Some(record) = record else { return; };
+
+    let address = record.observer.0 as usize;
+    unsafe {
+        let source = AXObserverGetRunLoopSource(record.observer.0);
+        if !source.is_null() {
+            let run_loop = CFRunLoop::get_main();
+            let mode = core_foundation::runloop::kCFRunLoopDefaultMode;
+            CFRunLoopRemoveSource(
+                run_loop.as_concrete_TypeRef().cast(),
+                source,
+                mode.cast(),
+            );
         }
+        CFRelease(record.observer.0.cast());
     }
+    tracing::trace!(address, "ax_observer: removed observer for identity");
 }
 ```
 
-Removal by PID (existing `remove_observer_for_pid`) stays stable — the map
-is still PID-keyed — but must also clean up `identity_to_pid`:
+Declare/import `CFRunLoopRemoveSource` beside the existing Core Foundation FFI
+and use the already imported `CFRunLoop`, `TCFType`, and default mode. Removal
+must run on the main thread (the exact NSWorkspace termination ingress already
+does), must drop `OBSERVER_STATE` before touching the run loop, must remove the
+source from the main run loop/default mode, and only then `CFRelease` the
+observer. The pure `take_observer_record_for_identity` test seam never calls
+either run-loop or release APIs.
 
-```rust
-pub fn remove_observer_for_pid(pid: i32) {
-    let mut state_guard = OBSERVER_STATE.lock();
-    let Some(state) = state_guard.as_mut() else { return; };
-    if let Some(record) = state.observers.remove(&pid) {
-        state.identity_to_pid.remove(&record.identity);
-        unsafe { CFRelease(record.observer.0.cast()) };
-        tracing::trace!("Removed observer for pid {pid}");
-    }
-}
-```
+Delete or stop exporting `remove_observer_for_pid`; there must be no
+production removal path that scans by PID. Termination MUST call
+`remove_observer_for_identity` with the identity captured at main-thread
+ingress. Exact removal first removes the reverse index, then the exact
+address-keyed record, and never removes a record merely because its PID
+matches.
 
 For `ax_observer.rs::handle_window_created`, the `WindowEvent` is built by the
 callback and already carries the identity before reaching the handler.
 
-**Locking:** `OBSERVER_STATE` uses `parking_lot::Mutex` (already true, use
-`.lock()` never `.unwrap()`). The callback holds it for one `HashMap::get`
-(microseconds). There is no registry lock (`VisibilityRegistry` mutex)
-involved here — the registry is only locked by the actor task and the shutdown
-path.
+**Locking:** `OBSERVER_STATE` uses `parking_lot::Mutex` (use `.lock()`, never
+`.unwrap()`). Setup drops the guard before all OS setup and before any second
+lock. The callback holds it only for one address-keyed `HashMap::get`. There is
+no registry lock (`VisibilityRegistry` mutex) involved here.
 
 **Important thread note:** The AX callback runs on the main thread's CFRunLoop.
-The `OBSERVER_STATE` mutex is held for the duration of a single `HashMap::get`
-lookup (microseconds). This is safe: the callback is re-entrant only from
-other AX events on the same main-thread runloop, and no other thread writes to
-`OBSERVER_STATE` for this observer address while the callback runs.
+The `OBSERVER_STATE` mutex is held for the duration of a single address-keyed
+`HashMap::get` (microseconds). Setup never re-locks while holding the guard.
+The callback copies the stored identity and does not retain the lock while
+constructing or forwarding the event.
+
+Add an address-aware unit test with observer records A and B sharing a PID but
+having different `AppIdentity` launch dates. Use fabricated non-dereferenced
+observer addresses and call only `take_observer_record_for_identity` (never the
+production CFRelease wrapper). Remove A by its captured identity and assert B's
+address-keyed record and reverse-index entry remain. Also test that duplicate
+checks distinguish identity/address pairs and never use PID as the primary key.
+
+Update initialization to construct both empty maps:
+`ObserverState { observers: HashMap::new(), identity_to_observer: HashMap::new() }`.
+
+**Make the tab registry exact-instance aware in the same atomic task.** Tab
+windows are intentionally excluded from `TilingState`, so they cannot inherit
+identity later from tracked windows. In `tabs.rs`:
+
+- Replace `window_to_pid: HashMap<u32, i32>` with
+  `window_to_identity: HashMap<u32, AppIdentity>`.
+- Change `register_tab`, `tabs_for_*`, `clear_for_*`, and `replace_tabs_for_*`
+  to accept/use exact `AppIdentity`. Public APIs become
+  `register_tab(window_id, identity)`, `tabs_for_identity(identity)`,
+  `is_tab_for_identity(window_id, identity)`,
+  `unregister_tab_for_identity(window_id, identity)`,
+  `clear_tabs_for_identity(identity)`, and
+  `replace_tabs_for_identity(identity, window_ids)`. Remove PID-wide mutation
+  APIs from production use.
+- Change `scan_and_register_tabs_for_app` and `is_new_window_a_tab` to accept an
+  `AppIdentity`. Resolve the current `NSRunningApplication` from
+  `identity.pid`, require the captured identity to match before scanning, and
+  re-resolve/revalidate the identity immediately before publishing the scan via
+  `replace_tabs_for_identity`. If either check fails, publish nothing.
+- During new-window handling, call tab scanning/classification only when
+  `WindowCreatedInfo.identity` is `Some(identity)`; `None` is fail-closed and
+  cannot create PID-owned tab records.
+- Compare siblings through `window_to_identity`, never PID.
+
+Use a deterministic publish seam rather than testing live AX state:
+
+```rust
+fn publish_tabs_if_identity_matches(
+    registry: &mut TabRegistry,
+    expected: AppIdentity,
+    observed_after_scan: Option<AppIdentity>,
+    window_ids: impl IntoIterator<Item = u32>,
+) -> bool {
+    if observed_after_scan != Some(expected) {
+        return false;
+    }
+    registry.replace_tabs_for_identity(expected, window_ids);
+    true
+}
+```
+
+Production re-resolves `observed_after_scan` from the current local
+`NSRunningApplication` immediately before locking the registry and calls this
+helper. Unit tests inject matching/mismatching identities and assert mismatch
+returns false without changing either A or B records.
+
+Add `TabRegistry` tests with identities A and B sharing PID 42 but different
+launch dates. Register untracked tab IDs 101 for A and 202 for B, clear A by
+identity, and assert B remains. Also verify replacing A's scan cannot replace
+B's tabs and that a mismatched post-scan identity publishes no replacement.
+Add a same-window-ID replacement test: register tab ID 303 for A, replace it
+with owner B, then process exact unregister for A and assert B's record remains;
+exact unregister for B removes it.
 
 - [ ] **Step 5: Capture identity in NSWorkspace termination**
 
@@ -1697,8 +2391,12 @@ fn extract_app_info(
 
 Update `ExtractAppInfo` type alias if it exists. Update
 `AppMonitorAdapter::on_app_launched` and `on_app_terminated` signatures to
-accept `Option<AppIdentity>`. The adapter drops events with `None` identity
-before forwarding to `EventProcessor`:
+accept `Option<AppIdentity>`. Preserve the current
+`bundle_id.unwrap_or_default()` and `name.unwrap_or_default()` conversion in
+`on_app_launched` before passing owned `String`s to `EventProcessor` and
+`StateMessage`; do not change downstream signatures merely to preserve
+`Option<String>`. The adapter drops events with `None` identity before
+forwarding to `EventProcessor`:
 
 ```rust
 fn on_app_launched(&self, identity: Option<AppIdentity>, pid: i32, bundle_id: Option<String>, name: Option<String>) {
@@ -1706,6 +2404,8 @@ fn on_app_launched(&self, identity: Option<AppIdentity>, pid: i32, bundle_id: Op
         tracing::trace!(pid, "app_monitor: dropping launch event (no identity)");
         return;
     };
+    let bundle_id = bundle_id.unwrap_or_default();
+    let name = name.unwrap_or_default();
     self.processor.on_app_launched(identity, pid, bundle_id, name);
 }
 
@@ -1740,11 +2440,20 @@ compile-safe intermediate state — they are fixed in ONE atomic step:
    - `StateMessage::AppShown { identity, pid }` / `AppHidden { identity, pid }`
      / `AppTerminated { identity, pid }` / `AppLaunched { identity, pid, .. }` —
      add identity field to each variant; update EVERY match arm.
+   - Every AX-derived ID-targeted `StateMessage` variant listed in Step3 and
+     `GeometryUpdate` — add identity; update EventProcessor methods, batch-map
+     keys, actor matches, and tests atomically. Actor matches reject identity
+     mismatch before invoking any handler.
    - `ax_observer.rs::observer_callback` — capture identity from `ObserverRecord`
      and pass to `WindowEvent::new` (step 4 above).
    - `app_monitor.rs::on_app_launched`/`on_app_terminated` — accept
      `Option<AppIdentity>`, drop on `None` (step 5 above).
    - Initial window scan in `init.rs` — capture identity per window's PID.
+   - `tabs.rs` — update every tab registration/scan/classification call to exact
+     identity APIs and add post-scan identity revalidation before publication.
+   - `actor/handlers/window.rs` — upgrade `None` identity on an existing window
+     and remove/recreate state when the same window ID arrives with a different
+     exact identity.
 
    After all updates, run `cargo check` once to verify. No intermediate
    check between type addition and call-site fixes is possible for the
@@ -1763,6 +2472,13 @@ cargo check -p stache 2>&1 | tail -20
 # Fix all type errors iteratively, then:
 cargo test -p stache --lib modules::tiling::events::types::tests
 cargo test -p stache --lib modules::tiling::actor::messages::tests
+cargo test -p stache --lib modules::tiling::tabs::tests
+cargo test -p stache --lib modules::tiling::actor::handlers::window::tests
+cargo test -p stache --lib modules::tiling::effects::tests
+cargo test -p stache --lib modules::tiling::effects::subscriber::tests
+cargo test -p stache --lib modules::tiling::effects::executor::tests
+cargo test -p stache --lib modules::tiling::effects::window_cache::tests
+cargo test -p stache --lib modules::tiling::effects::animation
 cargo fmt --all -- --check
 cargo check -p stache
 ```
@@ -1776,8 +2492,30 @@ git add app/native/src/modules/tiling/state/types.rs \
   app/native/src/modules/tiling/events/observer.rs \
   app/native/src/modules/tiling/events/ax_observer.rs \
   app/native/src/modules/tiling/events/app_monitor.rs \
-  app/native/src/modules/tiling/init.rs
-git commit -m "feat(tiling): propagate AppIdentity through Window, events, StateMessage"
+  app/native/src/modules/tiling/events/processor.rs \
+  app/native/src/modules/tiling/events/drag_state.rs \
+  app/native/src/modules/tiling/tabs.rs \
+  app/native/src/modules/tiling/actor/handlers/window.rs \
+  app/native/src/modules/tiling/actor/handlers/app.rs \
+  app/native/src/modules/tiling/actor/handlers/focus.rs \
+  app/native/src/modules/tiling/actor/handlers/workspace.rs \
+  app/native/src/modules/tiling/actor/handlers/preset.rs \
+  app/native/src/modules/tiling/actor/handlers/window_move.rs \
+  app/native/src/modules/tiling/actor/handle.rs \
+  app/native/src/modules/tiling/actor/mod.rs \
+  app/native/src/modules/tiling/rules/mod.rs \
+  app/native/src/modules/tiling/state/tiling_state.rs \
+  app/native/src/modules/tiling/init.rs \
+  app/native/src/modules/tiling/effects/mod.rs \
+  app/native/src/modules/tiling/effects/subscriber.rs \
+  app/native/src/modules/tiling/effects/executor.rs \
+  app/native/src/modules/tiling/effects/window_cache.rs \
+  app/native/src/modules/tiling/effects/window_ops.rs \
+  app/native/src/modules/tiling/effects/animation/mod.rs \
+  app/native/src/modules/tiling/effects/animation/state.rs \
+  app/native/src/modules/tiling/effects/animation/transition.rs \
+  app/native/src/modules/bar/components/tiling.rs
+git commit -m "feat(tiling): propagate AppIdentity through windows, events, tabs"
 ```
 
 ---
@@ -1805,6 +2543,12 @@ Write these before implementation — they must fail to compile:
 // (visibility.rs cannot directly construct private LaunchDateBits field).
 fn bits(v: u64) -> LaunchDateBits {
     LaunchDateBits::from_time_interval_since_reference_date(v as f64).unwrap()
+}
+
+#[derive(Clone, Copy)]
+struct FakeApp {
+    identity: AppIdentity,
+    hidden: bool,
 }
 fn id10_1() -> AppIdentity { AppIdentity { pid: 10_i32, launch_date: bits(1) } }
 fn id20_2() -> AppIdentity { AppIdentity { pid: 20_i32, launch_date: bits(2) } }
@@ -2019,10 +2763,20 @@ impl StateActorHandle {
 }
 ```
 
+Update `handle.rs` imports to include `std::sync::Arc` and
+`crate::modules::tiling::visibility::VisibilityRegistry`; the old constructor
+can no longer remain `const` because it allocates an `Arc`.
+
 In `actor/mod.rs::StateActor::spawn()`, create the registry before the actor.
-`StateActor` gains a `registry: Arc<VisibilityRegistry>` field. The handle
-wraps the existing `pub(crate) const fn new(sender)` — we add a separate
-constructor that also stores the registry clone:
+`StateActor` gains a `registry: Arc<VisibilityRegistry>` field. Because adding
+the field makes the current one-field handle constructor incomplete, replace
+it with these two concrete constructors. Existing handle unit tests can keep
+calling `new(sender)`; production spawn uses `new_with_registry` so actor and
+handle share the same `Arc`. Preserve Task15's reusable completion contract:
+both spawn functions return `(StateActorHandle, CompletionLatch)`, and the
+actor marks that latch only after its loop exits. `RuntimeFactory` consumes this
+tuple unchanged; Task19C injects only the fresh registry and does not replace
+Task15's lifecycle wiring:
 
 ```rust
 // StateActor gains a registry field:
@@ -2032,11 +2786,31 @@ pub struct StateActor {
     registry: Arc<VisibilityRegistry>,  // NEW
 }
 
-pub fn spawn() -> StateActorHandle {
+impl StateActorHandle {
+    pub(crate) fn new(sender: mpsc::Sender<StateMessage>) -> Self {
+        Self::new_with_registry(sender, Arc::new(VisibilityRegistry::default()))
+    }
+
+    pub(crate) fn new_with_registry(
+        sender: mpsc::Sender<StateMessage>,
+        registry: Arc<VisibilityRegistry>,
+    ) -> Self {
+        Self { sender, registry }
+    }
+}
+
+pub fn spawn() -> (StateActorHandle, CompletionLatch) {
+    Self::spawn_with_registry(Arc::new(VisibilityRegistry::default()))
+}
+
+pub(crate) fn spawn_with_registry(
+    registry: Arc<VisibilityRegistry>,
+) -> (StateActorHandle, CompletionLatch) {
     tracing::debug!("tiling: spawning state actor");
     let (sender, receiver) = mpsc::channel(CHANNEL_BUFFER_SIZE);
-    let registry = Arc::new(VisibilityRegistry::default());
     let handle = StateActorHandle::new_with_registry(sender, Arc::clone(&registry));
+    let stopped = CompletionLatch::new();
+    let stopped_for_task = stopped.clone();
 
     let actor = Self {
         state: TilingState::new(),
@@ -2046,9 +2820,10 @@ pub fn spawn() -> StateActorHandle {
 
     tauri::async_runtime::spawn(async move {
         actor.run().await;
+        stopped_for_task.mark_complete();
     });
 
-    handle
+    (handle, stopped)
 }
 ```
 
@@ -2061,8 +2836,9 @@ workspace hide/unhide hot path.
 - [ ] **Step 4: Update re-exports**
 
 At this point, `restore_stache_hidden_apps` still uses the old `HiddenAppTracker`
-internally (it is replaced in Task 19F). Do NOT re-export `restore_from_with` yet
-(defined in Task 19F). Keep the existing re-exports:
+internally (it is replaced as part of the atomic Task 19D+19E cutover). Do NOT
+re-export `restore_from_with`; it remains an internal test seam introduced in
+Task 19D. Keep the existing public re-exports:
 
 ```rust
 pub use visibility::{RestoreSummary, restore_stache_hidden_apps};
@@ -2108,10 +2884,14 @@ git commit -m "feat(tiling): VisibilityRegistry with sealed BTreeSet<AppIdentity
 
 - Modify: `app/native/src/modules/tiling/actor/handlers/window.rs` — actor hide/unhide via registry; `VisibilityDelta` for focus-path callers
 - Modify: `app/native/src/modules/tiling/actor/handlers/workspace.rs` — `VisibilityDelta` collect/apply; workspace switch handler calls actor methods
-- Modify: `app/native/src/modules/tiling/actor/handlers/focus.rs` — route focus-change visibility through actor `VisibilityDelta`
 - Modify: `app/native/src/modules/tiling/state/tiling_state.rs` — add `windows_identity_iter`
-- Modify: `app/native/src/modules/tiling/effects/window_ops.rs` — add `hide_app_instance_with_outcome`/`unhide_app_instance_with_outcome`; existing `hide_app_with_outcome`/`unhide_app_with_outcome` (PID wrappers) kept as compat
+- Modify: `app/native/src/modules/tiling/effects/window_ops.rs` — add exact `hide_app_instance_with_outcome`/`unhide_app_instance_with_outcome`; bare-PID wrappers remain only until Task19G removes them after the atomic cutover
 - Modify: `app/native/src/modules/tiling/actor/mod.rs` — wire hide/unhide through actor registry
+- Modify: `app/native/src/modules/tiling/visibility.rs` — atomically cut shutdown restoration over to the same registry before committing the new hide path
+- Modify: `app/native/src/modules/tiling/mod.rs` — preserve public restore API while using registry ownership
+- Modify: `app/native/src/modules/tiling/init.rs` — make temporary pause drain
+  the current generation's registry and make each fresh resume install a new,
+  unsealed registry generation
 
 - [ ] **Step 1: Add identity-aware helpers to `window_ops.rs`**
 
@@ -2121,12 +2901,16 @@ the same object, then reuses the shared detailed ObjC core (the same
 hide/unhide implementation used by the existing PID-based helpers). The local
 ObjC call runs under an autorelease pool; no reference escapes.
 
-Existing `hide_app_with_outcome(pid)` / `unhide_app_with_outcome(pid)` remain
-as single-path compatibility wrappers that internally obtain `AppIdentity` from
-the PID — they are used by any non-actor code that still operates by PID.
+Keep the existing bare-PID helpers only as temporary compilation bridges while
+Tasks19D and 19E are uncommitted in the same working tree. No new production
+caller may use them. Task19G deletes them after the atomic exact-identity
+cutover proves there are no remaining callers.
 
 ```rust
 // In window_ops.rs — new identity-aware helpers.
+use crate::modules::tiling::identity::AppIdentity;
+use objc::runtime::{Class, Object, BOOL, YES};
+use objc::{msg_send, sel, sel_impl};
 
 #[must_use]
 pub fn hide_app_instance_with_outcome(identity: AppIdentity) -> HideAppOutcome {
@@ -2203,10 +2987,12 @@ exposing `inner`, `sealed`, or `owned` to the actor module:
 /// Runs inside the actor's message loop. Delegates to
 /// `VisibilityRegistry::hide_if_open` which holds the mutex across sealed
 /// check, OS call, and ownership mutation atomically.
-fn handle_hide_for_workspace(&mut self, identity: AppIdentity) -> HideAppOutcome {
-    let outcome = self.registry.hide_if_open(identity, |id| {
-        hide_app_instance_with_outcome(id)
-    });
+fn handle_hide_for_workspace_with(
+    &mut self,
+    identity: AppIdentity,
+    hide: impl FnOnce(AppIdentity) -> HideAppOutcome,
+) -> HideAppOutcome {
+    let outcome = self.registry.hide_if_open(identity, hide);
 
     // Registry lock already released — update window state on actor side
     if outcome == HideAppOutcome::HiddenByStache {
@@ -2217,10 +3003,16 @@ fn handle_hide_for_workspace(&mut self, identity: AppIdentity) -> HideAppOutcome
     outcome
 }
 
-fn handle_unhide_for_workspace(&mut self, identity: AppIdentity) -> UnhideAppOutcome {
-    let outcome = self.registry.unhide_if_open(identity, |id| {
-        unhide_app_instance_with_outcome(id)
-    });
+fn handle_hide_for_workspace(&mut self, identity: AppIdentity) -> HideAppOutcome {
+    self.handle_hide_for_workspace_with(identity, hide_app_instance_with_outcome)
+}
+
+fn handle_unhide_for_workspace_with(
+    &mut self,
+    identity: AppIdentity,
+    unhide: impl FnOnce(AppIdentity) -> UnhideAppOutcome,
+) -> UnhideAppOutcome {
+    let outcome = self.registry.unhide_if_open(identity, unhide);
 
     if matches!(outcome, UnhideAppOutcome::UnhiddenByStache | UnhideAppOutcome::AlreadyShown) {
         for wid in self.state.windows_identity_iter(&identity) {
@@ -2229,7 +3021,16 @@ fn handle_unhide_for_workspace(&mut self, identity: AppIdentity) -> UnhideAppOut
     }
     outcome
 }
+
+fn handle_unhide_for_workspace(&mut self, identity: AppIdentity) -> UnhideAppOutcome {
+    self.handle_unhide_for_workspace_with(identity, unhide_app_instance_with_outcome)
+}
 ```
+
+The private `_with` methods are deterministic actor-test seams; production
+wrappers pass the real exact-identity ObjC operations. Tests therefore exercise
+the same registry and actor-state mutation logic without requiring live macOS
+applications.
 
 Add `windows_identity_iter` to `TilingState` (no tuple destructuring — `Window`
 is not stored as `(id, Window)` tuple but as part of a flat structure or map):
@@ -2259,12 +3060,13 @@ In `actor/mod.rs`, the workspace switch message handler calls
 `hide_app_for_workspace(pid)`. The identity is obtained from the
 window's stored identity.
 
-Define a concrete `VisibilityDelta` type in `handlers/workspace.rs` that both
-the workspace switch handler and focus-path callers produce. This replaces the
-previous ad-hoc PID-based collection with an exact identity-based interface:
+Define a concrete `VisibilityDelta` beside the existing
+`sync_window_visibility_for_workspaces` function in `handlers/window.rs`. The
+free handlers return this value; only `StateActor` applies it. No handler calls
+an actor method directly:
 
 ```rust
-// In handlers/workspace.rs
+// In handlers/window.rs
 /// Identity-based visibility change set produced by workspace analysis.
 /// Every affected signature uses this type — no bare PID iteration.
 #[derive(Debug, Default)]
@@ -2274,11 +3076,66 @@ pub struct VisibilityDelta {
 }
 ```
 
-The `handlers/workspace.rs` module acquires `Showing` and `Hiding` identity
-collections from explicit workspace list differences (used by workspace switch)
-and from the existing focus-change path in `handlers/window.rs` and
-`handler/focus.rs`. The actor collects these deltas and passes them to the new
-actor method:
+Change the existing collector to return the delta instead of performing OS
+operations. Its current empty-input branch returns `VisibilityDelta::default()`:
+
+```rust
+pub fn sync_window_visibility_for_workspaces(
+    state: &TilingState,
+    becoming_visible: &[Uuid],
+    becoming_hidden: &[Uuid],
+) -> VisibilityDelta;
+```
+
+Change the three free handlers that currently trigger visibility to return a
+delta while preserving all their existing state mutations, notifications, and
+frontend events:
+
+```rust
+// handlers/workspace.rs — every early return uses VisibilityDelta::default().
+pub fn on_switch_workspace(state: &mut TilingState, name: &str) -> VisibilityDelta;
+pub fn on_send_workspace_to_screen(
+    state: &mut TilingState,
+    target_screen: &TargetScreen,
+) -> VisibilityDelta;
+pub fn on_cycle_workspace(
+    state: &mut TilingState,
+    direction: CycleDirection,
+) -> VisibilityDelta;
+
+// handlers/window.rs — every early return uses VisibilityDelta::default().
+pub fn on_window_focused(state: &mut TilingState, window_id: u32) -> VisibilityDelta;
+```
+
+Each function replaces its current direct sync call with
+`let delta = sync_window_visibility_for_workspaces(...)`, finishes its existing
+notifications/focus/event work, and returns `delta` at the end. The only current
+visibility-changing callsites are `workspace.rs` (workspace switch,
+send-to-screen, and cycle) and `window.rs` (window-focused);
+`handlers/focus.rs` does not call the sync function and is not changed. For
+workspace cycling, compute the delta after marking `current_workspace_id`
+hidden and `next_workspace_id` visible:
+
+```rust
+let delta = sync_window_visibility_for_workspaces(
+    state,
+    &[next_workspace_id],
+    &[current_workspace_id],
+);
+// Preserve existing focus, subscriber notifications, and frontend event work.
+delta
+```
+
+Every early return from `on_cycle_workspace` returns
+`VisibilityDelta::default()`.
+
+Preserve the existing semantic algorithm exactly: compute identities in
+becoming-hidden workspaces MINUS identities with any window in ANY currently
+visible workspace; put that difference in `hiding`, and compute `showing` from
+identities newly exposed by becoming-visible workspaces. Do not narrow the
+visible-workspace subtraction to one workspace, and do not hide first.
+
+Update the concrete actor-owned callsites in `actor/mod.rs`:
 
 ```rust
 // In actor/mod.rs — replaces the previous static
@@ -2291,22 +3148,190 @@ fn sync_visibility_for_workspaces(&mut self, delta: VisibilityDelta) {
         self.handle_hide_for_workspace(identity);
     }
 }
+
+fn on_switch_workspace(&mut self, name: &str) {
+    let delta = handlers::on_switch_workspace(&mut self.state, name);
+    self.sync_visibility_for_workspaces(delta);
+}
+
+fn on_send_workspace_to_screen(&mut self, target: &messages::TargetScreen) {
+    let delta = handlers::on_send_workspace_to_screen(&mut self.state, target);
+    self.sync_visibility_for_workspaces(delta);
+}
+
+fn on_cycle_workspace(&mut self, direction: CycleDirection) {
+    let delta = handlers::on_cycle_workspace(&mut self.state, direction);
+    self.sync_visibility_for_workspaces(delta);
+}
+
+// In StateMessage::WindowFocused dispatch:
+let delta = handlers::on_window_focused(&mut self.state, window_id);
+self.sync_visibility_for_workspaces(delta);
 ```
 
-The workspace-switch message handler (`handlers/workspace.rs`) computes the
-`VisibilityDelta` and calls `self.sync_visibility_for_workspaces(delta)`.
-Focus-change handlers (focus.rs, window.rs) that previously called a static
-`sync_window_visibility_for_workspaces` now call through the actor with a
-`VisibilityDelta` computed from the affected workspace set.
+Add an exact-identity cycle test with one app only on the old workspace and one
+only on the next workspace. Cycle once and assert the returned delta shows the
+next identity, hides the old identity, and the actor registry owns only the old
+hidden identity after applying it.
+
+`sync_window_visibility_for_workspaces` preserves the current algorithm using
+identity sets: `showing` is collected from becoming-visible workspaces;
+`hidden_candidates` is collected from becoming-hidden workspaces;
+`currently_visible` is collected from every window whose workspace appears in
+`state.get_visible_workspaces()` after the state transition; and `hiding` is
+`hidden_candidates.difference(&currently_visible)`. Sort both vectors for
+deterministic tests. `sync_visibility_for_workspaces` shows every identity first
+and hides every identity second.
+
+Migrate the separate initialization path in the same change. Current
+`StateActor::on_init_complete(&self)` calls PID-based
+`sync_window_visibility(&self)`, which writes the old tracker. Change both to
+`&mut self`; collect exact identities from windows (skip `None` fail-closed),
+subtract identities present in any visible workspace from non-visible
+candidates, sort, then call `handle_unhide_for_workspace` for visible identities
+before `handle_hide_for_workspace` for hidden-only identities:
+
+Add `use std::collections::{BTreeSet, HashSet};` and retain/import `Uuid` in
+`actor/mod.rs` for the following implementation.
+
+```rust
+fn on_init_complete(&mut self) {
+    self.sync_window_visibility();
+    // existing layout notification logic remains unchanged
+}
+
+fn sync_window_visibility(&mut self) {
+    let visible_ws_ids: HashSet<Uuid> = self.state
+        .get_visible_workspaces().iter().map(|ws| ws.id).collect();
+    let mut visible = BTreeSet::new();
+    let mut non_visible = BTreeSet::new();
+    for window in self.state.windows.iter() {
+        let Some(identity) = window.identity else { continue; };
+        if visible_ws_ids.contains(&window.workspace_id) {
+            visible.insert(identity);
+        } else {
+            non_visible.insert(identity);
+        }
+    }
+    for identity in visible.iter().copied() {
+        self.handle_unhide_for_workspace(identity);
+    }
+    for identity in non_visible.difference(&visible).copied() {
+        self.handle_hide_for_workspace(identity);
+    }
+}
+```
+
+Add an initialization test with one visible and one hidden-only exact identity;
+apply the calculated operations through the private `_with` actor methods using
+injected `AlreadyShown` and `HiddenByStache` outcomes. Assert the registry owns
+only the hidden-only identity. Likewise, apply the cycle delta through these
+injected seams rather than calling live NSRunningApplication APIs. Separately
+assert injected `Failed` outcomes do not change ownership. No PID-based
+visibility wrapper remains in `actor/mod.rs` after this task.
+
+Integrate this registry with Task15's runtime slot in `init.rs` during the same
+atomic cutover. `start_runtime`/actor spawn creates a fresh
+`Arc<VisibilityRegistry>` for every generation and publishes it through that
+generation's actor/handle; it must never reuse a registry that was sealed by a
+previous pause. `pause_runtime` first transitions the lifecycle to `Stopping`
+while leaving the running runtime in its slot, releases all locks, and calls the
+existing public `restore_stache_hidden_apps()` so the current handle can seal,
+drain, and restore ownership. Only after that idempotent call returns may it
+take the runtime for teardown/quarantine. A retry from `Quarantined` skips or
+repeats the now-empty restore safely. Terminal `app_shutdown` may call the same
+public helper again and receives an empty summary rather than unhiding twice.
 
 > **Note:** The old `forget_stache_hidden_app`, `forget_stache_hidden_app_terminated`,
 > `classify_stache_hidden_app`, `classify_stache_hidden_app_with_state`,
 > `ShownClassification`, and `PidState` symbols are NOT deleted here.
 > They are still used by the EventProcessor until Task 19E strips the
 > classifier imports, and the obsolete definitions are removed in Task 19G.
-> At this stage the registry coexists with the old code and both compile.
+> At this stage the obsolete lifecycle classifier coexists with the new code,
+> but workspace hide ownership and shutdown restoration both cut over
+> atomically to `VisibilityRegistry` in this task.
 
-- [ ] **Step 4: Build and run tests**
+- [ ] **Step 4: Atomically cut shutdown restoration over to the registry**
+
+Do this in the SAME atomic Task19D+Task19E working-tree batch that switches the
+workspace hide hot path. There must never be an intermediate commit where new
+hides enter `VisibilityRegistry` while shutdown drains only the old tracker.
+Add the exact-instance restoration helpers to `visibility.rs` now (Task19F adds
+exhaustive tests, not the first production cutover):
+
+```rust
+use crate::modules::tiling::identity::AppIdentity;
+use objc::runtime::{BOOL, YES};
+use objc::{msg_send, sel, sel_impl};
+
+#[must_use]
+fn restore_one_exact_with<T>(
+    owned: AppIdentity,
+    resolve: impl FnOnce(i32) -> Option<T>,
+    identity_of: impl FnOnce(&T) -> Option<AppIdentity>,
+    hidden_of: impl FnOnce(&T) -> Option<bool>,
+    unhide: impl FnOnce(&T) -> bool,
+) -> bool {
+    let Some(app) = resolve(owned.pid) else { return false; };
+    if identity_of(&app) != Some(owned) || hidden_of(&app) != Some(true) {
+        return false;
+    }
+    unhide(&app)
+}
+
+#[must_use]
+fn restore_one_exact(owned: AppIdentity) -> bool {
+    objc::rc::autoreleasepool(|| {
+        restore_one_exact_with(
+            owned,
+            |pid| unsafe {
+                let class = objc::runtime::Class::get("NSRunningApplication")?;
+                let app: *mut objc::runtime::Object =
+                    msg_send![class, runningApplicationWithProcessIdentifier: pid];
+                (!app.is_null()).then_some(app)
+            },
+            |app| unsafe { AppIdentity::from_ns_running_app(*app) },
+            |app| unsafe {
+                let hidden: BOOL = msg_send![*app, isHidden];
+                Some(hidden == YES)
+            },
+            |app| unsafe {
+                let result: BOOL = msg_send![*app, unhide];
+                result == YES
+            },
+        )
+    })
+}
+
+#[must_use]
+pub fn restore_from_with(
+    identities: Vec<AppIdentity>,
+    mut restore: impl FnMut(AppIdentity) -> bool,
+) -> RestoreSummary {
+    let attempted = identities.len();
+    let mut restored = 0;
+    for identity in identities {
+        if restore(identity) {
+            restored += 1;
+        }
+    }
+    RestoreSummary { attempted, restored }
+}
+
+#[must_use]
+pub fn restore_stache_hidden_apps() -> RestoreSummary {
+    crate::modules::tiling::init::get_handle()
+        .map(|handle| restore_from_with(handle.seal_and_drain_visibility(), restore_one_exact))
+        .unwrap_or(RestoreSummary { attempted: 0, restored: 0 })
+}
+```
+
+The raw `NSRunningApplication` pointer stays inside one autorelease pool and one
+synchronous call. Identity equality and current hidden state are checked on the
+same resolved object before unhide. `app_shutdown.rs` remains unchanged and
+continues calling the same public `restore_stache_hidden_apps()` API.
+
+- [ ] **Step 5: Build and run tests**
 
 ```bash
 cargo test -p stache --lib modules::tiling::actor::handlers::window::tests
@@ -2315,17 +3340,15 @@ cargo fmt --all -- --check
 cargo check -p stache
 ```
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Do not commit; continue directly through Task19E**
 
-```bash
-git add app/native/src/modules/tiling/actor/handlers/window.rs \
-  app/native/src/modules/tiling/actor/handlers/workspace.rs \
-  app/native/src/modules/tiling/actor/handlers/focus.rs \
-  app/native/src/modules/tiling/state/tiling_state.rs \
-  app/native/src/modules/tiling/actor/mod.rs \
-  app/native/src/modules/tiling/effects/window_ops.rs
-git commit -m "feat(tiling): actor-owned workspace hide/unhide via registry + VisibilityDelta"
-```
+Task19D's working tree is intentionally not a shippable checkpoint: the old
+lifecycle classifier still cannot remove ownership from `VisibilityRegistry`.
+Do not commit, quit/restart through this state, or hand it off independently.
+Proceed immediately to Task19E, then commit the Task19D+19E file set together
+after raw lifecycle forwarding/revalidation tests pass. This makes initial
+sync, workspace hot paths, lifecycle relinquishment, and shutdown restoration
+one atomic commit.
 
 ---
 
@@ -2390,7 +3413,7 @@ fn app_shown_visible_removes_owner_and_marks_windows() {
 }
 
 #[test]
-fn app_shown_hidden_retains_owner() {
+fn queued_app_shown_consumed_after_external_rehide_retains_owner() {
     let identity = test_identity(42, 100);
     let (mut actor, registry) = make_actor();
     registry.insert(identity);
@@ -2407,8 +3430,12 @@ fn app_shown_hidden_retains_owner() {
         ..Window::default()
     });
 
+    // Model the approved unavoidable-history case deterministically: Stache
+    // owns the hide, an external show notification is queued, and the user
+    // externally re-hides the app before the actor consumes that notification.
+    // The injected read-only OS query therefore observes hidden.
     actor.on_app_shown_revalidated(identity, |_| Some(true));
-    // OS says hidden — retain owner, no window change
+    // OS says hidden — retain owner, no window change and no active hide call.
     assert!(registry.contains(&identity));
     for w in actor.state.windows.iter().filter(|w| w.identity == Some(identity)) {
         assert!(w.is_hidden);
@@ -2428,42 +3455,120 @@ fn app_shown_mismatch_retains_owner() {
 }
 
 #[test]
-fn app_terminated_removes_exact_identity_only() {
+fn delayed_termination_removes_only_exact_instance_resources() {
     let identity_a = test_identity(42, 100);
     let identity_b = test_identity(42, 200); // same PID, different launch date
     let (mut actor, registry) = make_actor();
     registry.insert(identity_a);
     registry.insert(identity_b);
 
-    // Terminate A — only A removed. B (same PID, later launch) survives.
-    actor.on_app_terminated_exact(identity_a);
+    let workspace_a = Uuid::now_v7();
+    let workspace_b = Uuid::now_v7();
+    actor.state.upsert_workspace(Workspace {
+        id: workspace_a,
+        name: "A".into(),
+        window_ids: smallvec![1],
+        focused_window_index: Some(0),
+        ..Workspace::default()
+    });
+    actor.state.upsert_workspace(Workspace {
+        id: workspace_b,
+        name: "B".into(),
+        window_ids: smallvec![2],
+        focused_window_index: Some(0),
+        ..Workspace::default()
+    });
+
+    actor.state.upsert_window(Window {
+        id: 1,
+        pid: 42,
+        identity: Some(identity_a),
+        workspace_id: workspace_a,
+        app_id: "com.test.a".into(),
+        app_name: "A".into(),
+        ..Window::default()
+    });
+    actor.state.upsert_window(Window {
+        id: 2,
+        pid: 42,
+        identity: Some(identity_b),
+        workspace_id: workspace_b,
+        app_id: "com.test.b".into(),
+        app_name: "B".into(),
+        ..Window::default()
+    });
+    // Tab windows are deliberately NOT tracked in TilingState. Give each
+    // same-PID application instance an independent untracked tab ID.
+    tabs::clear_all_tabs();
+    tabs::register_tab(101, identity_a);
+    tabs::register_tab(202, identity_b);
+    actor.state.record_focus_history(workspace_a, 1);
+    actor.state.record_focus_history(workspace_b, 2);
+    let mut invalidated = Vec::new();
+    let mut cached_apps = HashSet::from([identity_a, identity_b]);
+
+    // Inject only the cache side effect. The production helper itself selects
+    // exact-instance window IDs and invokes both callbacks with those IDs.
+    actor.on_app_terminated_exact_with(
+        identity_a,
+        tabs::clear_tabs_for_identity,
+        |target| invalidated.push(target),
+        |identity| { cached_apps.remove(&identity); },
+    );
+
     assert!(!registry.contains(&identity_a));
     assert!(registry.contains(&identity_b));
+    assert!(actor.state.get_window(1).is_none());
+    assert_eq!(actor.state.get_window(2).and_then(|w| w.identity), Some(identity_b));
+    assert!(!tabs::is_tab_for_identity(101, identity_a), "terminated instance tab must be cleared");
+    assert!(tabs::is_tab_for_identity(202, identity_b), "replacement instance tab must survive");
+    assert!(actor.state.get_workspace(workspace_a)
+        .is_some_and(|ws| !ws.window_ids.contains(&1)));
+    assert!(actor.state.get_workspace(workspace_b)
+        .is_some_and(|ws| ws.window_ids.contains(&2)));
+    assert_eq!(actor.state.get_focus_history(workspace_a), None);
+    assert_eq!(actor.state.get_focus_history(workspace_b), Some(2));
+    assert_eq!(
+        invalidated,
+        vec![WindowTarget { identity: identity_a, window_id: 1 }],
+        "replacement cache target must not be invalidated",
+    );
+    assert!(!cached_apps.contains(&identity_a));
+    assert!(cached_apps.contains(&identity_b), "replacement app cache must survive");
+    tabs::clear_all_tabs();
 }
 
 #[test]
-fn delayed_termination_does_not_affect_same_pid_process() {
-    // Scenario: App A terminates but the Terminated event is delayed/lost.
-    // PID is reused by App B (same PID, different launch date).
-    // Events for B arrive with identity_B — must not match identity_A.
+fn termination_clears_exact_untracked_tabs_without_tracked_windows() {
     let identity_a = test_identity(42, 100);
     let identity_b = test_identity(42, 200);
     let (mut actor, registry) = make_actor();
-    registry.insert(identity_a); // Stache still "owns" A
+    registry.insert(identity_a);
+    registry.insert(identity_b);
 
-    // B appears while A's termination was missed
-    actor.on_app_hidden_revalidated(identity_b, Some(true));
-    // A's ownership is unchanged — identity_B does not match identity_A
-    assert!(registry.contains(&identity_a));
-    assert_eq!(registry.len(), 1);
+    // Neither tab ID exists in TilingState; both share a PID but differ by
+    // exact application identity.
+    tabs::clear_all_tabs();
+    tabs::register_tab(101, identity_a);
+    tabs::register_tab(202, identity_b);
+    let mut invalidated = Vec::new();
+    let mut cached_apps = HashSet::from([identity_a, identity_b]);
 
-    actor.on_app_shown_revalidated(identity_b, |_| Some(false));
-    // Still no effect on A
-    assert!(registry.contains(&identity_a));
+    actor.on_app_terminated_exact_with(
+        identity_a,
+        tabs::clear_tabs_for_identity,
+        |target| invalidated.push(target),
+        |identity| { cached_apps.remove(&identity); },
+    );
 
-    // Now A terminates (delayed event finally arrives)
-    actor.on_app_terminated_exact(identity_a);
     assert!(!registry.contains(&identity_a));
+    assert!(registry.contains(&identity_b));
+    assert!(!tabs::is_tab_for_identity(101, identity_a));
+    assert!(tabs::is_tab_for_identity(202, identity_b));
+    assert!(invalidated.is_empty(), "no tracked window cache IDs exist");
+    assert!(!cached_apps.contains(&identity_a));
+    assert!(cached_apps.contains(&identity_b), "replacement app cache must survive");
+    tabs::clear_all_tabs();
 }
 ```
 
@@ -2515,6 +3620,8 @@ the raw identity — it never performs OS queries itself.
 
 ```rust
 // In actor/mod.rs — on StateActor impl:
+use std::collections::HashSet;
+use uuid::Uuid;
 
 /// Handles AppShown with identity revalidation.
 /// The actor owns the registry; this method accesses it via `self.registry`.
@@ -2550,9 +3657,10 @@ fn on_app_hidden_revalidated(&mut self, identity: AppIdentity, os_hidden: Option
     // If os_hidden is false/None (mismatch or unknown), no state change.
 }
 
-/// Handles AppTerminated — removes exact identity from registry AND
-/// migrates full termination cleanup for all windows with that identity:
-/// observer, tab references, focus, workspace references.
+/// Handles AppTerminated — removes exact identity from registry AND performs
+/// full termination cleanup for every exact-instance window: tab references,
+/// cache entries, focus, workspace membership/layout references, and the
+/// window record.
 ///
 /// PID-reuse protection: the event carries the identity captured at
 /// termination-notification time (ingress capture). A new process B that
@@ -2565,11 +3673,39 @@ fn on_app_hidden_revalidated(&mut self, identity: AppIdentity, os_hidden: Option
 /// in the `remove_observer_for_identity` call there. This function only cleans
 /// up actor-side state (tabs, cache, windows, registry).
 fn on_app_terminated_exact(&mut self, identity: AppIdentity) {
-    // 1. Clear tab registry entries for this identity's windows
-    //    (exact PID match is sufficient here — tabs are PID-keyed)
-    crate::modules::tiling::tabs::clear_tabs_for_pid(identity.pid);
+    self.on_app_terminated_exact_with(
+        identity,
+        crate::modules::tiling::tabs::clear_tabs_for_identity,
+        |target| {
+            crate::modules::tiling::effects::get_window_cache()
+                .invalidate_window(target);
+        },
+        |identity| {
+            crate::modules::tiling::effects::get_window_cache()
+                .invalidate_app(identity);
+        },
+    );
+}
 
-    // 2. Collect windows to remove (exact identity match only)
+/// Test seam around side effects only. Exact window selection and cleanup
+/// ordering remain production logic, so tests can prove a delayed event for A
+/// never touches B's exact-instance tabs/cache IDs after PID reuse.
+fn on_app_terminated_exact_with(
+    &mut self,
+    identity: AppIdentity,
+    mut clear_tabs_for_identity: impl FnMut(AppIdentity),
+    mut invalidate_window: impl FnMut(WindowTarget),
+    mut invalidate_app: impl FnMut(AppIdentity),
+) {
+    // Tab windows are not represented in TilingState. Clear the exact
+    // identity's tab records even when this app has no tracked windows.
+    clear_tabs_for_identity(identity);
+
+    // Application elements are keyed by exact identity. Invalidate A even if
+    // it has no tracked windows; never invalidate another app sharing its PID.
+    invalidate_app(identity);
+
+    // 1. Collect windows to remove (exact identity match only).
     let window_ids: Vec<u32> = self.state.windows.iter()
         .filter(|w| w.identity.as_ref() == Some(&identity))
         .map(|w| w.id)
@@ -2581,49 +3717,64 @@ fn on_app_terminated_exact(&mut self, identity: AppIdentity) {
         return;
     }
 
-    // 3. Invalidate AX window cache for this PID (bulk removal)
-    crate::modules::tiling::effects::get_window_cache().invalidate_app(identity.pid);
+    // 2. For each exact-instance tracked window, invalidate its AX cache entry
+    // by exact target. Tabs were already cleared by exact identity above. Never
+    // call clear_tabs_for_pid or invalidate_app: PID may belong to replacement B.
+    for wid in &window_ids {
+        invalidate_window(WindowTarget { identity, window_id: *wid });
+    }
 
-    // 4. Remove each window from workspace window lists and update focus
+    // 3. Remove each window from workspace window lists, focus history, and
+    // update focus/layout. Exact-instance B references must remain.
     let mut affected_workspaces: HashSet<Uuid> = HashSet::new();
     for wid in &window_ids {
+        self.state.remove_window_from_focus_history(*wid);
         if let Some(ws_id) = self.state.get_window(*wid).map(|w| w.workspace_id) {
             affected_workspaces.insert(ws_id);
             self.state.update_workspace(ws_id, |ws| {
+                // Preserve the focused window by ID. Retaining an earlier
+                // entry shifts indices and must not silently focus a sibling.
+                let focused_window_id = ws.focused_window_index
+                    .and_then(|index| ws.window_ids.get(index).copied());
                 ws.window_ids.retain(|id| *id != *wid);
-                if let Some(idx) = ws.focused_window_index {
-                    if ws.window_ids.is_empty() {
-                        ws.focused_window_index = None;
-                    } else if idx >= ws.window_ids.len() {
-                        ws.focused_window_index = Some(ws.window_ids.len().saturating_sub(1));
-                    }
-                }
+                ws.focused_window_index = focused_window_id
+                    .and_then(|focused_id| {
+                        ws.window_ids.iter().position(|id| *id == focused_id)
+                    })
+                    .or_else(|| (!ws.window_ids.is_empty()).then_some(0));
             });
         }
     }
 
-    // 5. Clear focus if any removed window was focused
+    // 4. Clear focus if any removed window was focused
     let current_focus = eyeball::Observable::get(&self.state.focus);
     if current_focus.focused_window_id.is_some_and(|fid| window_ids.contains(&fid)) {
         self.state.clear_focus();
     }
 
-    // 6. Remove windows from state
+    // 5. Remove windows from state
     for wid in &window_ids {
         self.state.remove_window(*wid);
     }
 
-    // 7. Notify subscriber to recompute layouts for affected workspaces
+    // 6. Notify subscriber to recompute layouts for affected workspaces
     if let Some(handle) = crate::modules::tiling::init::get_subscriber_handle() {
         for ws_id in &affected_workspaces {
             handle.notify_layout_changed(*ws_id, false);
         }
     }
 
-    // 8. Remove from registry
+    // 7. Remove from registry
     self.registry.remove(&identity);
 }
 ```
+
+Add a focused-index regression test in the same actor test module. Create one
+workspace with `window_ids = [1, 2, 3]`, `focused_window_index = Some(1)`, A
+owning window 1, and B owning windows 2 and 3. Terminate A exactly. Assert the
+remaining IDs are `[2, 3]`, the focused index is `Some(0)`, and the focused ID
+is still window 2. Keep this separate from the same-PID A/B resource test so an
+index-shift regression has one unambiguous failure.
 
 Add a read-only helper to `window_ops.rs` that validates identity equality
 before returning isHidden — it never calls hide/unhide:
@@ -2685,11 +3836,22 @@ StateMessage::AppTerminated { identity, pid: _ } => {
 > actor removes only that exact identity. A new process that inherits the
 > same PID but has a different launch date is unaffected.
 
+Remove the old PID-only `actor/handlers/app.rs::on_app_terminated(state, pid)`
+cleanup path (and its PID-wide tab/cache calls) from production dispatch. The
+only termination cleanup path is `StateActor::on_app_terminated_exact(identity)`
+with exact-identity tab clearing plus exact tracked-window cache invalidation.
+Tab cleanup runs even when the terminated identity has no tracked windows.
+Keep or rewrite tests so A and B share a PID but differ in launch date, use
+untracked tab IDs for both identities, and assert B's tabs, cache, workspace
+membership, focus history, focus, and state remain after delayed A termination.
+
 - [ ] **Step 5: Build and run tests**
 
 ```bash
 cargo test -p stache --lib modules::tiling::events::processor::tests
 cargo test -p stache --lib modules::tiling::actor::handlers::app::tests
+cargo test -p stache --lib modules::tiling::actor::handlers::window::tests
+cargo test -p stache --lib modules::tiling::visibility::tests
 cargo fmt --all -- --check
 cargo check -p stache
 ```
@@ -2702,10 +3864,16 @@ replaced by the actor revalidation tests.
 
 ```bash
 git add app/native/src/modules/tiling/events/processor.rs \
+  app/native/src/modules/tiling/init.rs \
   app/native/src/modules/tiling/actor/handlers/app.rs \
+  app/native/src/modules/tiling/actor/handlers/window.rs \
+  app/native/src/modules/tiling/actor/handlers/workspace.rs \
   app/native/src/modules/tiling/actor/mod.rs \
-  app/native/src/modules/tiling/effects/window_ops.rs
-git commit -m "feat(tiling): raw lifecycle forwarding + actor identity revalidation"
+  app/native/src/modules/tiling/state/tiling_state.rs \
+  app/native/src/modules/tiling/effects/window_ops.rs \
+  app/native/src/modules/tiling/visibility.rs \
+  app/native/src/modules/tiling/mod.rs
+git commit -m "feat(tiling): atomically cut visibility ownership to actor registry"
 ```
 
 ---
@@ -2739,8 +3907,11 @@ Key invariants that must not be violated anywhere in Phase 6:
 
 **Files:**
 
-- Modify: `app/native/src/modules/tiling/visibility.rs` — update `restore_stache_hidden_apps`
-- Modify: `app/native/src/modules/tiling/mod.rs` — re-export updated restore
+- Test: `app/native/src/modules/tiling/visibility.rs` — add exhaustive tests for the restoration code already committed by Task19E
+- Test: `app/native/src/modules/tiling/init.rs` — pause restores before actor
+  teardown, repeated terminal cleanup is empty/idempotent, and resume publishes
+  a fresh unsealed registry generation
+- `app/native/src/modules/tiling/mod.rs` — unchanged; the existing public re-export remains valid
 - `app/native/src/app_shutdown.rs` — unchanged (still calls `tiling::restore_stache_hidden_apps()`)
 
 - [ ] **Step 1: Write restoration validation tests**
@@ -2759,27 +3930,40 @@ fn restore_proves_identity_equality_before_action() {
     let identity_a = AppIdentity { pid: 42, launch_date: bits(100) };
     let identity_a_reused = AppIdentity { pid: 42, launch_date: bits(200) };
 
-    let mut actions: Vec<AppIdentity> = Vec::new();
+    let mut actions = Vec::new();
 
-    // The restore function: for each identity, if the identity matches
-    // the CURRENT process at that PID (here simulated as identity_a_reused),
-    // perform the unhide action. If not, skip.
-    let summary = restore_from_with(vec![identity_a], |drained| {
-        // This is the same logic as restore_with_exact_validation:
-        // check identity equality BEFORE performing any side effect.
-        if drained == identity_a_reused {
-            actions.push(drained);
-            true // would call unhide
-        } else {
-            false // PID-reuse — skip without action
-        }
+    let restored = restore_one_exact_with(
+        identity_a,
+        |_| Some(FakeApp { identity: identity_a_reused, hidden: true }),
+        |app| Some(app.identity),
+        |app| Some(app.hidden),
+        |app| { actions.push(app.identity); true },
+    );
+
+    assert!(!restored);
+    assert_eq!(actions.len(), 0, "no action performed for mismatched identity");
+}
+
+#[test]
+fn restore_skips_same_pid_replacement_for_stale_owned_identity() {
+    let identity_a = AppIdentity { pid: 42, launch_date: bits(100) };
+    let identity_b = AppIdentity { pid: 42, launch_date: bits(200) };
+    let registry = VisibilityRegistry::default();
+    registry.insert(identity_a); // Simulates a missed A termination event.
+
+    let mut unhide_calls = 0;
+    let summary = restore_from_with(registry.seal_and_drain(), |owned| {
+        restore_one_exact_with(
+            owned,
+            |_| Some(FakeApp { identity: identity_b, hidden: true }),
+            |app| Some(app.identity),
+            |app| Some(app.hidden),
+            |_| { unhide_calls += 1; true },
+        )
     });
 
-    assert_eq!(summary.attempted, 1);
-    assert_eq!(summary.restored, 0);
-    assert_eq!(actions.len(), 0, "no action performed for mismatched identity");
-    // This proves: identity equality check occurs BEFORE any unhide call.
-    // A PID-reused replacement at the same PID is untouched.
+    assert_eq!(summary, RestoreSummary { attempted: 1, restored: 0 });
+    assert_eq!(unhide_calls, 0, "replacement process must remain untouched");
 }
 
 #[test]
@@ -2787,16 +3971,52 @@ fn restore_proves_correct_identity_is_unhidden() {
     let identity_a = AppIdentity { pid: 10, launch_date: bits(1) };
     let identity_b = AppIdentity { pid: 20, launch_date: bits(2) };
 
-    let mut actions: Vec<AppIdentity> = Vec::new();
-    let summary = restore_from_with(vec![identity_a, identity_b], |drained| {
-        // Both match the current process — both get restored.
-        actions.push(drained);
-        true
+    let mut actions = Vec::new();
+    let summary = restore_from_with(vec![identity_a, identity_b], |identity| {
+        restore_one_exact_with(
+            identity,
+            |_| Some(FakeApp { identity, hidden: true }),
+            |app| Some(app.identity),
+            |app| Some(app.hidden),
+            |app| { actions.push(app.identity); true },
+        )
     });
 
     assert_eq!(summary.attempted, 2);
     assert_eq!(summary.restored, 2);
     assert_eq!(actions, vec![identity_a, identity_b]);
+}
+
+#[test]
+fn restore_skips_not_hidden_without_unhide() {
+    let identity = AppIdentity { pid: 10, launch_date: bits(1) };
+    let mut actions = Vec::new();
+    assert!(!restore_one_exact_with(
+        identity,
+        |_| Some(FakeApp { identity, hidden: false }),
+        |app| Some(app.identity),
+        |app| Some(app.hidden),
+        |app| { actions.push(app.identity); true },
+    ));
+    assert!(actions.is_empty());
+}
+
+#[test]
+fn restore_attempts_later_identities_after_failure() {
+    let first = AppIdentity { pid: 10, launch_date: bits(1) };
+    let second = AppIdentity { pid: 20, launch_date: bits(2) };
+    let mut calls = Vec::new();
+    let summary = restore_from_with(vec![first, second], |identity| {
+        restore_one_exact_with(
+            identity,
+            |_| Some(FakeApp { identity, hidden: true }),
+            |app| Some(app.identity),
+            |app| Some(app.hidden),
+            |app| { calls.push(app.identity); app.identity == second },
+        )
+    });
+    assert_eq!(summary, RestoreSummary { attempted: 2, restored: 1 });
+    assert_eq!(calls, vec![first, second]);
 }
 
 #[test]
@@ -2812,14 +4032,15 @@ fn restore_works_through_registry_seal_and_drain() {
     registry.insert(AppIdentity { pid: 20, launch_date: bits(2) });
     let identities = registry.seal_and_drain();
 
-    // Use the same restore_from_with helper that restore_stache_hidden_apps uses.
-    // The only difference from production: production passes
-    // `|id| unsafe { id.restore_with_exact_validation() }` which does the
-    // identity-equality check against the real OS.
     let mut restored: Vec<AppIdentity> = Vec::new();
     let summary = restore_from_with(identities, |identity| {
-        restored.push(identity);
-        true
+        restore_one_exact_with(
+            identity,
+            |_| Some(FakeApp { identity, hidden: true }),
+            |app| Some(app.identity),
+            |app| Some(app.hidden),
+            |app| { restored.push(app.identity); true },
+        )
     });
 
     assert_eq!(summary.attempted, 2);
@@ -2828,9 +4049,24 @@ fn restore_works_through_registry_seal_and_drain() {
 }
 ```
 
-- [ ] **Step 2: Implement handle-based seal/drain restore**
+In `init.rs` tests, use injected restore/teardown hooks rather than live AppKit:
 
-The registry is obtained at shutdown through the already-existing static
+1. Start generation 1, seed its registry with identity A, pause, and assert the
+   restore hook sees A before any actor-shutdown hook executes.
+2. Invoke terminal cleanup after that pause and assert no second identity is
+   restored.
+3. Resume generation 2 and assert its registry is a distinct Arc, is unsealed,
+   accepts identity B, and does not contain A.
+4. Force a completion timeout, assert generation 1 remains quarantined with its
+   already-drained registry, then retry teardown and assert restoration remains
+   idempotent.
+
+- [ ] **Step 2: Verify the atomic Task19D seal/drain restore**
+
+Do not add duplicate definitions in this task. The functions in the following
+block were implemented in Task19D in the same commit as the hide hot-path
+cutover; this block is the exact final implementation to audit while adding the
+Task19F tests. The registry is obtained at shutdown through the already-existing static
 handle. No `let registry = ...` intermediate, no static ambiguity, no actor
 channel query — the handle exists because `tiling::shutdown` has not been
 called yet:
@@ -2847,25 +4083,92 @@ pub fn restore_stache_hidden_apps() -> RestoreSummary {
     crate::modules::tiling::init::get_handle()
         .map(|h| {
             let identities = h.seal_and_drain_visibility();
-            restore_from_with(identities, |id| {
-                // SAFETY: Restoration runs before tiling::shutdown, so the
-                // main thread is still alive for the OS query.
-                unsafe { id.restore_with_exact_validation() }
-            })
+            restore_from_with(identities, restore_one_exact)
         })
         .unwrap_or(RestoreSummary { attempted: 0, restored: 0 })
 }
 
-/// Core helper: applies a restore function to each identity and counts.
-/// Testable without actor handle or registry — pass any identity list and
-/// any restore predicate.
+/// Narrow decision seam. One resolved app value flows through identity lookup,
+/// hidden-state lookup, and unhide, so production can use one local
+/// NSRunningApplication pointer and tests execute the same ordering logic.
+#[must_use]
+fn restore_one_exact_with<T>(
+    owned: AppIdentity,
+    resolve: impl FnOnce(i32) -> Option<T>,
+    identity_of: impl FnOnce(&T) -> Option<AppIdentity>,
+    hidden_of: impl FnOnce(&T) -> Option<bool>,
+    unhide: impl FnOnce(&T) -> bool,
+) -> bool {
+    let Some(app) = resolve(owned.pid) else {
+        return false;
+    };
+    if identity_of(&app) != Some(owned) {
+        return false;
+    }
+    if hidden_of(&app) != Some(true) {
+        return false;
+    }
+    unhide(&app)
+}
+
+/// Production wrapper. The raw pointer exists only inside this autorelease
+/// pool and this synchronous call; it is never stored or sent across threads.
+#[must_use]
+fn restore_one_exact(owned: AppIdentity) -> bool {
+    use objc::runtime::{BOOL, YES};
+    use objc::{msg_send, sel, sel_impl};
+
+    objc::rc::autoreleasepool(|| {
+        restore_one_exact_with(
+            owned,
+            |pid| unsafe {
+                let class = objc::runtime::Class::get("NSRunningApplication")?;
+                let app: *mut objc::runtime::Object =
+                    msg_send![class, runningApplicationWithProcessIdentifier: pid];
+                (!app.is_null()).then_some(app)
+            },
+            |app| unsafe { AppIdentity::from_ns_running_app(*app) },
+            |app| unsafe {
+                let hidden: BOOL = msg_send![*app, isHidden];
+                Some(hidden == YES)
+            },
+            |app| unsafe {
+                let result: BOOL = msg_send![*app, unhide];
+                result == YES
+            },
+        )
+    })
+}
+
+This is the exact-instance validation boundary: `restore_one_exact_with`
+performs equality and hidden checks before calling `unhide`, while production
+uses the same resolved object for every step. PID reuse between separate
+lookups is therefore impossible.
+
+/// Public restoration helper retained for Task20 and tests. It uses an
+/// explicit loop so `FnMut(AppIdentity)` is called with an owned identity and
+/// no `&AppIdentity`/`FnMut` iterator mismatch can occur. Every identity is
+/// attempted even when an earlier restore fails.
 #[must_use]
 pub fn restore_from_with(
     identities: Vec<AppIdentity>,
     restore: impl FnMut(AppIdentity) -> bool,
 ) -> RestoreSummary {
     let attempted = identities.len();
-    let restored = identities.into_iter().filter(restore).count();
+    let mut restore = restore;
+    let mut restored = 0;
+    for identity in identities {
+        let did_restore = restore(identity);
+        tracing::debug!(
+            pid = identity.pid,
+            launch_date_bits = identity.launch_date.bits(),
+            restored = did_restore,
+            "shutdown restore result for Stache-owned application"
+        );
+        if did_restore {
+            restored += 1;
+        }
+    }
     RestoreSummary { attempted, restored }
 }
 ```
@@ -2886,8 +4189,9 @@ cargo test -p stache --lib app_shutdown::tests
 - [ ] **Step 4: Commit**
 
 ```bash
-git add app/native/src/modules/tiling/visibility.rs app/native/src/modules/tiling/mod.rs
-git commit -m "feat(tiling): shutdown restoration via registry seal/drain + identity validation"
+git add app/native/src/modules/tiling/visibility.rs
+git add app/native/src/modules/tiling/init.rs
+git commit -m "test(tiling): verify exact registry shutdown restoration"
 ```
 
 ---
@@ -2907,7 +4211,8 @@ Delete these definitions and all related tests:
 - `ShownClassification` enum
 - `PidState` struct
 - `PidState::is_zombie`
-- All generation/FIFO fields in `TrackerState` (but keep `sealed`/`owned` from 19C)
+- All generation/FIFO fields in `TrackerState`; `sealed`/`owned` exist only in
+  the replacement `RegistryState` from 19C
 - `TrackerState::next_generation`, `log_seq`
 - `HiddenAppTracker::hide_with` (the old one — replaced by actor-bound version)
 - `HiddenAppTracker::unhide_with_outcome`
@@ -2935,12 +4240,17 @@ Verify no `ShownClassification`, `classify_stache_hidden_app`, or
 `forget_stache_hidden_app_terminated` remain. The `on_app_shown_with` seam
 and its tests are removed.
 
-- [ ] **Step 3: Clean window_ops.rs if needed**
+- [ ] **Step 3: Remove bare-PID visibility APIs from window_ops.rs**
 
-`HideAppOutcome`, `UnhideAppOutcome`, `hide_app_with_outcome`, `unhide_app_with_outcome`,
-`hide_app`, `unhide_app`, `app_is_hidden` all survive — they are still used by the
-actor hide/unhide operations. The restore path now uses
-`AppIdentity::restore_with_exact_validation` instead of bare `unhide_app`.
+Retain `HideAppOutcome` and `UnhideAppOutcome`, plus only the exact-instance
+helpers introduced by Task19D (`app_instance_is_hidden`,
+`hide_app_instance_with_outcome`, and `unhide_app_instance_with_outcome`).
+Delete the bare-PID production APIs `hide_app_with_outcome`,
+`unhide_app_with_outcome`, `hide_app`, `unhide_app`, and `app_is_hidden`; after
+the atomic actor cutover they have no production caller and would reintroduce
+PID-reuse risk. Update or remove their old tests rather than keeping public
+compatibility shims. Restoration continues through
+`restore_stache_hidden_apps()` and the exact `restore_one_exact` seam.
 
 - [ ] **Step 4: Build with full project lint**
 
@@ -2959,13 +4269,15 @@ Run project-wide lint only after focused Cargo checks pass.
 
 > **Protected files:** No changes to `app/native/src/modules/audio/device.rs`
 > (unrelated audio code) or any file outside the Tasks 19A-19G change set.
-> Tasks 9-18 (Phases 4-5 lifecycle/tray changes) are unchanged by Phase 6.
+> Phase 6 intentionally integrates with Task15's pause/resume runtime in
+> `init.rs`; no other Tasks9-18 behavior is changed.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add app/native/src/modules/tiling/visibility.rs \
-  app/native/src/modules/tiling/events/processor.rs
+  app/native/src/modules/tiling/events/processor.rs \
+  app/native/src/modules/tiling/effects/window_ops.rs
 git commit -m "refactor(tiling): remove obsolete generation/FIFO/ShownClassification"
 ```
 
@@ -2979,7 +4291,8 @@ machine (`ShownClassification`, `PidState`, `classify_stache_hidden_app`,
 etc.) and the FIFO generation-based restore. These are superseded by Tasks 19A-19G.
 
 The detailed per-call `HideAppOutcome`/`UnhideAppOutcome` types from those
-commits survive — they are useful for the actor-owned hide/unhide operations.
+commits survive — they are useful for actor-owned exact-instance hide/unhide.
+Bare-PID wrappers do not survive.
 The overall `RestoreSummary` and `restore_stache_hidden_apps` public API
 surface is preserved with updated internals.
 
@@ -2996,8 +4309,9 @@ is owned, then confirming restoration targets the new instance correctly).
 `app/native/src/app_shutdown.rs` (commits `fb3fe1b`, `12d913e` and earlier).
 No further changes needed for this task.
 
-Task 19F changes only the internals of `tiling::restore_stache_hidden_apps()`
-(visibility.rs) behind the existing public API surface. The cleanup order
+Task 19D changes the internals of `tiling::restore_stache_hidden_apps()`
+(visibility.rs) atomically with the hide hot-path cutover; Task19F adds the
+exact restoration tests behind the existing public API surface. The cleanup order
 (restore → tiling shutdown → IPC shutdown) and idempotency are already
 enforced by `cleanup_once` — no `app_shutdown.rs` edits are required for
 Phase 6.
@@ -3024,21 +4338,25 @@ Also prepare the two conservative-behavior sequences:
    shutdown because Stache never re-acquired ownership). Verification: on shutdown,
    `attempted` does not include App A.
 
-2. **Rehide before AppShown consumed — ownership retained (no rehide in handler):**
-   Let Stache hide App B. Minimize App B's only window (the AppHidden event fires
-   while windows are still hidden). The actor sees OS hidden → retains ownership.
-   Then manually show App B (AppShown fires). Before the actor consumes the
-   AppShown message, another actor hide-for-workspace rehides B (workspace switch).
-   When the actor processes the AppShown, it queries OS (read-only), sees hidden
-   → retains ownership. The handler does NOT call hide — it queries isHidden and
-   acts on the result. Manual rehide-before-consume means ownership survives the
-   AppShown notification. Verification: shutdown restores App B (it is still in the
-   registry).
+2. **External show then external rehide before AppShown is consumed — ownership
+   retained:** This timing is not deterministically controllable in a manual
+   production run because Task21 adds no debug pause/barrier. Exercise it only
+   as best-effort observation: let Stache hide App B, externally/user-show B,
+   then immediately externally/user-rehide B without another Stache workspace
+   hide. If the actor consumes `AppShown` after the rehide, its read-only
+   `isHidden` query observes hidden, retains ownership under the approved
+   Keep-hidden policy, and shutdown restores B. The deterministic proof is the
+   Task19E unit test
+   `queued_app_shown_consumed_after_external_rehide_retains_owner`, which injects
+   hidden OS state and verifies ownership is retained without any active
+   hide/unhide call. Record manual results as observational, not guaranteed.
 
-3. **PID reuse:** Let Stache hide App C. Terminate App C. Launch a different app that
-   acquires the same PID. Shut Stache down — the old `AppIdentity` (with App C's
-   launch date) does not match the new process's identity. Verification: `attempted`
-   increments but `restored` does not include the PID-reused identity.
+3. **PID reuse, delivered termination:** Let Stache hide App C. Terminate App C
+   normally and allow its exact termination event to be processed. Launch a
+   different app that acquires the same PID. Shut Stache down. Verification:
+   App C's identity is absent from the drained registry, so `attempted` does
+   not include it and the replacement remains untouched. The separate missed
+   termination case is covered below with an injected stale identity.
 
 - [ ] **Step 2: Verify normal tray quit**
 
@@ -3055,7 +4373,10 @@ application through a workspace switch and trigger:
 2. A config file change handled by `config/watcher.rs`.
 3. CLI `stache reload`, which reaches `bar/ipc_listener.rs`.
 
-Confirm restoration occurs before the replacement process starts in all three cases.
+Confirm restoration occurs before the replacement process starts in all three
+cases. Use the per-identity debug event from `visibility.rs` (PID,
+`launch_date_bits`, and `restored`) to identify the exact application instance
+rather than relying only on aggregate counts.
 
 - [ ] **Step 4: Verify SIGTERM and SIGINT**
 
@@ -3066,8 +4387,8 @@ kill -TERM "$(pgrep -x stache)"
 kill -INT "$(pgrep -x stache)"
 ```
 
-Confirm the process exits after restoring only Stache-owned hides. Check logs for the
-`attempted` and `restored` counts.
+Confirm the process exits after restoring only Stache-owned hides. Check both
+the aggregate `attempted`/`restored` counts and each per-identity restore result.
 
 - [ ] **Step 5: PID-reuse validation (two scenarios)**
 
@@ -3075,21 +4396,28 @@ Two distinct PID-reuse scenarios must be validated:
 
 1. **Normal termination, same-PID replacement:** Terminate App A that Stache
    has hidden. After App A terminates, launch App B that inherits the same PID
-   (or wait for a system process to reuse it). Shut Stache down and confirm
-   `restored` does NOT include the PID-reused identity (the old identity's
-   launch date does not match B's). Unit test: `restore_from_with` with a
-   mocked restore function that returns `false` for the old identity.
+   (or wait for a system process to reuse it). After the delivered exact
+   termination removes A from the registry, shut Stache down and confirm A is
+   absent from `attempted`; B is never considered for restoration. Unit test:
+   `delayed_termination_removes_only_exact_instance_resources` proves exact A
+   resource removal while preserving B.
 
-2. **Missed/delayed termination, same-PID replacement:** App A terminates but
-   the event is lost. App B starts with the same PID. B's events carry
-   identity_B (same PID, different launch date). Confirm actor handlers do
-   NOT match identity_A in the registry. Unit test:
-   `delayed_termination_does_not_affect_same_pid_process` covers this.
+2. **Missed termination, same-PID replacement:** Seed stale owned identity A
+   in a local `VisibilityRegistry` without delivering termination, then have
+   the restoration seam resolve fake App B with the same PID and a different
+   launch date. Drain and restore. Assert `attempted == 1`, `restored == 0`,
+   and the unhide callback is never called. This deterministic
+   `restore_skips_same_pid_replacement_for_stale_owned_identity` unit test
+   proves the lost-event boundary; B's events and resources remain keyed by
+   identity B and are untouched.
 
-A manual variant for case 1: terminate a Stache-hidden app, note its PID,
-launch another app (or wait for the system to reuse the PID), then trigger
-Stache shutdown and verify logs show `attempted` but no `restored` for that
-PID. Case 2 is covered by the unit test.
+A manual variant for case 1: terminate a Stache-hidden app, allow the
+termination event to be processed, note its PID and launch-date bits, launch
+another app (or wait for reuse), then trigger Stache shutdown and verify no
+per-identity restore event is emitted for the old identity. Case 2 is covered
+deterministically by the stale-owned
+identity restoration test because intentionally dropping an NSWorkspace event
+is not a reliable manual procedure.
 
 - [ ] **Step 6: Confirm and document the SIGKILL boundary**
 

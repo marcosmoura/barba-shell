@@ -21,10 +21,22 @@ pub trait LifecycleModule: Send + Sync {
     /// Stable menu item id used to route `on_menu_event`.
     fn id(&self) -> &'static str;
     /// Start the module (called once at startup if configured on).
+    ///
+    /// # Errors
+    ///
+    /// Returns a human-readable error when the module cannot start.
     fn start(&self) -> Result<(), String>;
     /// Pause the module, releasing/disabling its OS resources.
+    ///
+    /// # Errors
+    ///
+    /// Returns a human-readable error when the module cannot pause.
     fn pause(&self) -> Result<(), String>;
     /// Resume the module, re-acquiring OS resources.
+    ///
+    /// # Errors
+    ///
+    /// Returns a human-readable error when the module cannot resume.
     fn resume(&self) -> Result<(), String>;
     /// Current lifecycle status.
     fn status(&self) -> ModuleStatus;

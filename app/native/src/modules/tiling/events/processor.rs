@@ -733,7 +733,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_processor_creation() {
-        let handle = StateActor::spawn();
+        let (handle, _stopped) = StateActor::spawn();
         let processor = EventProcessor::new(handle.clone());
 
         assert!(!processor.is_running());
@@ -745,7 +745,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_screen_registration() {
-        let handle = StateActor::spawn();
+        let (handle, _stopped) = StateActor::spawn();
         let processor = EventProcessor::new(handle.clone());
 
         // Register screens with different refresh rates
@@ -775,7 +775,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_window_screen_assignment() {
-        let handle = StateActor::spawn();
+        let (handle, _stopped) = StateActor::spawn();
         let processor = EventProcessor::new(handle.clone());
 
         processor.register_screen(1, 60.0);
@@ -799,7 +799,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_geometry_batching_per_screen() {
-        let handle = StateActor::spawn();
+        let (handle, _stopped) = StateActor::spawn();
         let processor = EventProcessor::new(handle.clone());
 
         processor.register_screen(1, 60.0);
@@ -818,7 +818,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_window_destroyed_clears_batch() {
-        let handle = StateActor::spawn();
+        let (handle, _stopped) = StateActor::spawn();
         let processor = EventProcessor::new(handle.clone());
 
         processor.register_screen(1, 60.0);
@@ -835,7 +835,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_screen_unregistration_flushes() {
-        let handle = StateActor::spawn();
+        let (handle, _stopped) = StateActor::spawn();
         let processor = EventProcessor::new(handle.clone());
 
         processor.register_screen(1, 60.0);
@@ -855,7 +855,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_screens_dispatches_immediately() {
-        let handle = StateActor::spawn();
+        let (handle, _stopped) = StateActor::spawn();
         let processor = EventProcessor::new(handle.clone());
 
         // No screens registered - should dispatch immediately
@@ -869,7 +869,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_processor_start_stop() {
-        let handle = StateActor::spawn();
+        let (handle, _stopped) = StateActor::spawn();
         let processor = EventProcessor::new(handle.clone());
 
         processor.register_screen(1, 60.0);
@@ -945,7 +945,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_flush_all() {
-        let handle = StateActor::spawn();
+        let (handle, _stopped) = StateActor::spawn();
         let processor = EventProcessor::new(handle.clone());
 
         processor.register_screen(1, 60.0);

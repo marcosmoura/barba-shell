@@ -32,6 +32,7 @@
 //! ```
 
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use tauri::Emitter;
 
@@ -61,6 +62,46 @@ static APP_HANDLE: Mutex<Option<tauri::AppHandle>> = Mutex::new(None);
 
 /// Whether the tiling system has been initialized.
 static INITIALIZED: OnceLock<bool> = OnceLock::new();
+
+// ============================================================================
+// Repeatable Completion
+// ============================================================================
+
+/// Repeatable completion state: unlike a consumed one-shot receiver, retries
+/// can observe that a resource has already stopped. All clones share the same
+/// flag; completion stays observable after a timeout or a successful wait.
+#[derive(Clone)]
+pub(crate) struct CompletionLatch(Arc<(parking_lot::Mutex<bool>, parking_lot::Condvar)>);
+
+impl CompletionLatch {
+    #[must_use]
+    pub(crate) fn new() -> Self {
+        Self(Arc::new((
+            parking_lot::Mutex::new(false),
+            parking_lot::Condvar::new(),
+        )))
+    }
+
+    /// Marks the resource as complete and wakes all waiters.
+    pub(crate) fn mark_complete(&self) {
+        let (lock, cvar) = &*self.0;
+        *lock.lock() = true;
+        cvar.notify_all();
+    }
+
+    /// Waits up to `timeout` for completion. Returns `true` when complete;
+    /// completion remains observable on later calls after a timeout.
+    #[must_use]
+    #[allow(dead_code)] // production waiter added by the 15D pause teardown
+    pub(crate) fn wait_timeout(&self, timeout: Duration) -> bool {
+        let (lock, cvar) = &*self.0;
+        let mut done = lock.lock();
+        if !*done {
+            cvar.wait_until(&mut done, Instant::now() + timeout);
+        }
+        *done
+    }
+}
 
 // ============================================================================
 // Public API
@@ -199,7 +240,7 @@ pub fn shutdown() {
 fn init_internal() -> Result<(), String> {
     // Spawn the state actor and get the handle
     // StateActor::spawn() creates the actor and returns the handle
-    let handle = StateActor::spawn();
+    let (handle, _stopped) = StateActor::spawn();
 
     // Store the handle globally
     HANDLE
@@ -240,7 +281,8 @@ fn init_internal() -> Result<(), String> {
     }
 
     // Create and spawn the effect subscriber using Tauri's async runtime
-    let (subscriber, subscriber_handle) = EffectSubscriber::new(handle.clone(), executor);
+    let (subscriber, subscriber_handle, _subscriber_stopped) =
+        EffectSubscriber::new(handle.clone(), executor);
 
     // Store the subscriber handle globally so handlers can notify the subscriber
     if SUBSCRIBER_HANDLE.set(subscriber_handle).is_err() {
@@ -1394,5 +1436,46 @@ mod tests {
         // Without storing, should return None
         // Note: this may be affected by other tests
         let _ = get_app_handle();
+    }
+
+    #[test]
+    fn completion_latch_unmarked_times_out() {
+        let latch = CompletionLatch::new();
+        assert!(!latch.wait_timeout(Duration::from_millis(20)));
+    }
+
+    #[test]
+    fn completion_latch_mark_complete_is_observable() {
+        let latch = CompletionLatch::new();
+        latch.mark_complete();
+        assert!(latch.wait_timeout(Duration::from_millis(20)));
+    }
+
+    #[test]
+    fn completion_latch_completion_persists_after_wait() {
+        let latch = CompletionLatch::new();
+        latch.mark_complete();
+        assert!(latch.wait_timeout(Duration::from_millis(20)));
+        assert!(latch.wait_timeout(Duration::from_millis(20)));
+    }
+
+    #[test]
+    fn completion_latch_mark_complete_wakes_waiters() {
+        let latch = CompletionLatch::new();
+        let latch_for_thread = latch.clone();
+        let thread = std::thread::spawn(move || {
+            latch_for_thread.wait_timeout(Duration::from_secs(1));
+        });
+        std::thread::sleep(Duration::from_millis(10));
+        latch.mark_complete();
+        thread.join().unwrap();
+    }
+
+    #[test]
+    fn completion_latch_repeatable_across_clones() {
+        let latch = CompletionLatch::new();
+        let clone = latch.clone();
+        latch.mark_complete();
+        assert!(clone.wait_timeout(Duration::from_millis(20)));
     }
 }

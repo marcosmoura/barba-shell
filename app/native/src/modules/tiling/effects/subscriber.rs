@@ -201,6 +201,9 @@ pub struct EffectSubscriber {
 
     /// Previous state for computing deltas.
     state: SubscriberState,
+
+    /// Marked complete when the event loop exits (after `Shutdown` or channel close).
+    stopped: crate::modules::tiling::init::CompletionLatch,
 }
 
 /// Handle for sending notifications to the subscriber.
@@ -283,25 +286,35 @@ impl EffectSubscriber {
     ///
     /// # Returns
     ///
-    /// A tuple of (subscriber, handle). The subscriber should be spawned
-    /// as a background task, and the handle used to send notifications.
+    /// A tuple of (subscriber, handle, completion latch). The subscriber should
+    /// be spawned as a background task; the handle used to send notifications;
+    /// the latch completes only after the subscriber's loop exits.
+    ///
+    /// `pub(crate)` because the triple exposes the crate-private
+    /// `crate::modules::tiling::init::CompletionLatch`.
     #[must_use]
-    pub fn new(
+    pub(crate) fn new(
         actor_handle: StateActorHandle,
         executor: EffectExecutor,
-    ) -> (Self, EffectSubscriberHandle) {
+    ) -> (
+        Self,
+        EffectSubscriberHandle,
+        crate::modules::tiling::init::CompletionLatch,
+    ) {
         let (notification_tx, notification_rx) = mpsc::channel(256);
+        let stopped = crate::modules::tiling::init::CompletionLatch::new();
 
         let subscriber = Self {
             actor_handle,
             executor,
             notification_rx,
             state: SubscriberState::new(),
+            stopped: stopped.clone(),
         };
 
         let handle = EffectSubscriberHandle { notification_tx };
 
-        (subscriber, handle)
+        (subscriber, handle, stopped)
     }
 
     /// Runs the subscriber event loop.
@@ -333,6 +346,7 @@ impl EffectSubscriber {
         }
 
         tracing::debug!("Effect subscriber stopped");
+        self.stopped.mark_complete();
     }
 
     /// Handles a single notification.

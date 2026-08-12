@@ -338,7 +338,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_adapter_creation() {
-        let handle = StateActor::spawn();
+        let (handle, _stopped) = StateActor::spawn();
         let processor = Arc::new(EventProcessor::new(handle.clone()));
         let adapter = ScreenMonitorAdapter::new(processor);
 
@@ -350,7 +350,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_processing_flag() {
-        let handle = StateActor::spawn();
+        let (handle, _stopped) = StateActor::spawn();
         let processor = Arc::new(EventProcessor::new(handle.clone()));
         let adapter = ScreenMonitorAdapter::new(processor);
 
@@ -365,7 +365,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_global_adapter_install() {
-        let handle = StateActor::spawn();
+        let (handle, _stopped) = StateActor::spawn();
         let processor = Arc::new(EventProcessor::new(handle.clone()));
         let adapter = Arc::new(ScreenMonitorAdapter::new(processor));
 

@@ -54,11 +54,17 @@ pub struct StateActor {
 impl StateActor {
     /// Spawn a new state actor and return a handle for communication.
     ///
-    /// The actor will run in the background and process messages.
+    /// The actor will run in the background and process messages. The returned
+    /// latch completes only after the actor's message loop has fully exited.
+    ///
+    /// `pub(crate)` because the tuple exposes the crate-private
+    /// `crate::modules::tiling::init::CompletionLatch`.
     #[must_use]
-    pub fn spawn() -> StateActorHandle {
+    pub(crate) fn spawn() -> (StateActorHandle, crate::modules::tiling::init::CompletionLatch) {
         tracing::debug!("tiling: spawning state actor");
         let (sender, receiver) = mpsc::channel(CHANNEL_BUFFER_SIZE);
+        let stopped = crate::modules::tiling::init::CompletionLatch::new();
+        let stopped_for_task = stopped.clone();
 
         let actor = Self {
             state: TilingState::new(),
@@ -69,9 +75,10 @@ impl StateActor {
         // This works during app setup when tokio runtime isn't directly available
         tauri::async_runtime::spawn(async move {
             actor.run().await;
+            stopped_for_task.mark_complete();
         });
 
-        StateActorHandle::new(sender)
+        (StateActorHandle::new(sender), stopped)
     }
 
     /// Run the actor's message loop.
@@ -695,7 +702,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_actor_spawn_and_shutdown() {
-        let handle = StateActor::spawn();
+        let (handle, _stopped) = StateActor::spawn();
         assert!(handle.is_alive());
 
         // Send shutdown
@@ -707,7 +714,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_actor_query_enabled() {
-        let handle = StateActor::spawn();
+        let (handle, _stopped) = StateActor::spawn();
 
         let result = handle.get_enabled().await.unwrap();
         assert_eq!(result.into_enabled(), Some(true));
@@ -723,7 +730,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_actor_query_empty_state() {
-        let handle = StateActor::spawn();
+        let (handle, _stopped) = StateActor::spawn();
 
         let result = handle.get_all_screens().await.unwrap();
         assert_eq!(result.into_screens().unwrap().len(), 0);
@@ -739,7 +746,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_actor_focus_state() {
-        let handle = StateActor::spawn();
+        let (handle, _stopped) = StateActor::spawn();
 
         let result = handle.get_focus_state().await.unwrap();
         let focus = result.into_focus().unwrap();

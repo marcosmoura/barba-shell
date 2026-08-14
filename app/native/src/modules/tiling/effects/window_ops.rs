@@ -26,6 +26,8 @@ use std::ptr;
 use core_foundation::base::TCFType;
 use core_foundation::boolean::CFBoolean;
 use core_foundation::string::CFString;
+use objc::runtime::{BOOL, Class, Object, YES};
+use objc::{msg_send, sel, sel_impl};
 
 use crate::modules::tiling::identity::{AppIdentity, WindowTarget};
 use crate::modules::tiling::state::Rect;
@@ -825,6 +827,106 @@ impl UnhideAppOutcome {
     pub const fn succeeded(self) -> bool {
         matches!(self, Self::UnhiddenByStache | Self::AlreadyShown)
     }
+}
+
+/// Hides an application instance, validated by its exact identity.
+///
+/// Re-resolves `NSRunningApplication` for the identity's PID, captures the
+/// actual identity from that same object, and refuses the hide on any
+/// mismatch (PID reuse). Runs in its own autorelease pool (called from the
+/// actor's task thread).
+#[must_use]
+pub fn hide_app_instance_with_outcome(identity: AppIdentity) -> HideAppOutcome {
+    objc::rc::autoreleasepool(|| unsafe {
+        let Some(app_class) = Class::get("NSRunningApplication") else {
+            return HideAppOutcome::Failed;
+        };
+        let app: *mut Object = msg_send![
+            app_class,
+            runningApplicationWithProcessIdentifier: identity.pid
+        ];
+        if app.is_null() {
+            return HideAppOutcome::Failed;
+        }
+        let actual = match AppIdentity::from_ns_running_app(app) {
+            Some(a) => a,
+            None => return HideAppOutcome::Failed,
+        };
+        if actual != identity {
+            // PID-reuse: a different process now owns this PID.
+            return HideAppOutcome::Failed;
+        }
+        let is_hidden: BOOL = msg_send![app, isHidden];
+        if is_hidden == YES {
+            return HideAppOutcome::AlreadyHidden;
+        }
+        let result: BOOL = msg_send![app, hide];
+        if result == YES {
+            HideAppOutcome::HiddenByStache
+        } else {
+            HideAppOutcome::Failed
+        }
+    })
+}
+
+/// Unhides an application instance, validated by its exact identity.
+///
+/// Same exact-instance validation as [`hide_app_instance_with_outcome`].
+#[must_use]
+pub fn unhide_app_instance_with_outcome(identity: AppIdentity) -> UnhideAppOutcome {
+    objc::rc::autoreleasepool(|| unsafe {
+        let Some(app_class) = Class::get("NSRunningApplication") else {
+            return UnhideAppOutcome::Failed;
+        };
+        let app: *mut Object = msg_send![
+            app_class,
+            runningApplicationWithProcessIdentifier: identity.pid
+        ];
+        if app.is_null() {
+            return UnhideAppOutcome::Failed;
+        }
+        let actual = match AppIdentity::from_ns_running_app(app) {
+            Some(a) => a,
+            None => return UnhideAppOutcome::Failed,
+        };
+        if actual != identity {
+            return UnhideAppOutcome::Failed;
+        }
+        let is_hidden: BOOL = msg_send![app, isHidden];
+        if is_hidden == YES {
+            let result: BOOL = msg_send![app, unhide];
+            if result == YES {
+                UnhideAppOutcome::UnhiddenByStache
+            } else {
+                UnhideAppOutcome::Failed
+            }
+        } else {
+            UnhideAppOutcome::AlreadyShown
+        }
+    })
+}
+
+/// OS hidden state for an exact identity, validated on the same local
+/// `NSRunningApplication`. Read-only — lifecycle handlers never hide/unhide.
+/// Creates its own autorelease pool (called from the actor's task thread).
+#[must_use]
+pub fn app_instance_is_hidden(identity: AppIdentity) -> Option<bool> {
+    objc::rc::autoreleasepool(|| unsafe {
+        let app_class = objc::runtime::Class::get("NSRunningApplication")?;
+        let app: *mut objc::runtime::Object = msg_send![
+            app_class,
+            runningApplicationWithProcessIdentifier: identity.pid
+        ];
+        if app.is_null() {
+            return None;
+        }
+        let actual = AppIdentity::from_ns_running_app(app)?;
+        if actual != identity {
+            return None; // PID-reuse or process mismatch
+        }
+        let is_hidden: BOOL = msg_send![app, isHidden];
+        Some(is_hidden == YES)
+    })
 }
 
 /// Returns the current OS-level hidden state for an application.

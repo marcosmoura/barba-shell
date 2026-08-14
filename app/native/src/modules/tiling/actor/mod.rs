@@ -19,6 +19,7 @@ pub mod handlers;
 mod messages;
 mod minimum_size;
 
+use std::collections::HashSet;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
@@ -28,8 +29,14 @@ pub use messages::{
     StateQuery, WindowCreatedInfo,
 };
 use tokio::sync::mpsc;
+use uuid::Uuid;
 
 use crate::config::get_config;
+use crate::modules::tiling::actor::handlers::window::VisibilityDelta;
+use crate::modules::tiling::effects::window_ops::{
+    HideAppOutcome, UnhideAppOutcome, app_instance_is_hidden, hide_app_instance_with_outcome,
+    unhide_app_instance_with_outcome,
+};
 use crate::modules::tiling::identity::{AppIdentity, WindowTarget};
 use crate::modules::tiling::init::get_subscriber_handle;
 use crate::modules::tiling::layout::{Gaps, MasterPosition, calculate_layout_full};
@@ -187,7 +194,8 @@ impl StateActor {
                     );
                     return;
                 }
-                handlers::on_window_focused(&mut self.state, window_id);
+                let delta = handlers::on_window_focused(&mut self.state, window_id);
+                self.sync_visibility_for_workspaces(delta);
             }
             StateMessage::WindowUnfocused { window_id, identity } => {
                 if !self.window_event_matches(window_id, identity) {
@@ -250,14 +258,16 @@ impl StateActor {
             StateMessage::AppLaunched { identity, pid, bundle_id, name } => {
                 handlers::on_app_launched(&mut self.state, identity, pid, &bundle_id, &name);
             }
-            StateMessage::AppTerminated { identity, pid } => {
-                handlers::on_app_terminated(&mut self.state, identity, pid);
+            StateMessage::AppTerminated { identity, pid: _ } => {
+                self.on_app_terminated_exact(identity);
             }
-            StateMessage::AppHidden { identity, pid } => {
-                handlers::on_app_hidden(&mut self.state, identity, pid);
+            StateMessage::AppHidden { identity, pid: _ } => {
+                let os_hidden = app_instance_is_hidden(identity);
+                self.on_app_hidden_revalidated(identity, os_hidden);
             }
-            StateMessage::AppShown { identity, pid } => {
-                handlers::on_app_shown(&mut self.state, identity, pid);
+            StateMessage::AppShown { identity, pid: _ } => {
+                let os_hidden = app_instance_is_hidden(identity);
+                self.on_app_shown_revalidated(identity, |_| os_hidden);
             }
             StateMessage::AppActivated { identity, pid } => {
                 handlers::on_app_activated(&mut self.state, identity, pid);
@@ -273,7 +283,10 @@ impl StateActor {
             }
 
             // User commands (stubs for Phase 4+)
-            StateMessage::SwitchWorkspace { name } => self.on_switch_workspace(&name),
+            StateMessage::SwitchWorkspace { name } => {
+                let delta = handlers::on_switch_workspace(&mut self.state, &name);
+                self.sync_visibility_for_workspaces(delta);
+            }
             StateMessage::CycleWorkspace { direction } => self.on_cycle_workspace(direction),
             StateMessage::SetLayout { workspace_id, layout } => {
                 self.on_set_layout(workspace_id, layout);
@@ -303,7 +316,8 @@ impl StateActor {
                 self.on_send_window_to_screen(&target_screen);
             }
             StateMessage::SendWorkspaceToScreen { target_screen } => {
-                self.on_send_workspace_to_screen(&target_screen);
+                let delta = handlers::on_send_workspace_to_screen(&mut self.state, &target_screen);
+                self.sync_visibility_for_workspaces(delta);
             }
             StateMessage::ResizeFocusedWindow { dimension, amount } => {
                 self.on_resize_focused_window(dimension, amount);
@@ -636,10 +650,6 @@ impl StateActor {
     // Command Handlers - Delegate to handlers module
     // ========================================================================
 
-    fn on_switch_workspace(&mut self, name: &str) {
-        handlers::on_switch_workspace(&mut self.state, name);
-    }
-
     fn on_cycle_workspace(&mut self, direction: CycleDirection) {
         handlers::on_cycle_workspace(&mut self.state, direction);
     }
@@ -697,10 +707,6 @@ impl StateActor {
 
     fn on_send_window_to_screen(&mut self, target_screen: &messages::TargetScreen) {
         handlers::on_send_window_to_screen(&mut self.state, target_screen);
-    }
-
-    fn on_send_workspace_to_screen(&mut self, target_screen: &messages::TargetScreen) {
-        handlers::on_send_workspace_to_screen(&mut self.state, target_screen);
     }
 
     fn on_resize_focused_window(&mut self, dimension: messages::ResizeDimension, amount: i32) {
@@ -762,7 +768,7 @@ impl StateActor {
     ///
     /// Triggers layout calculation for all visible workspaces and hides
     /// windows from non-visible workspaces.
-    fn on_init_complete(&self) {
+    fn on_init_complete(&mut self) {
         tracing::debug!("Initialization complete, applying initial layouts");
 
         // Sync window visibility based on workspace visibility
@@ -782,52 +788,190 @@ impl StateActor {
         tracing::debug!("Initial layout notifications sent");
     }
 
-    /// Syncs window visibility based on workspace visibility.
+    /// Syncs window visibility based on workspace visibility (identity-exact).
     ///
-    /// - Shows (unhides) apps that have windows in visible workspaces
+    /// - Unhides apps that have windows in visible workspaces
     /// - Hides apps that have windows ONLY in non-visible workspaces
-    fn sync_window_visibility(&self) {
-        use std::collections::HashSet;
+    fn sync_window_visibility(&mut self) {
+        use std::collections::{BTreeSet, HashSet};
 
-        use crate::modules::tiling::visibility::{
-            hide_app_for_workspace, unhide_app_for_workspace,
-        };
+        use uuid::Uuid;
 
-        // Collect visible workspace IDs
-        let visible_ws_ids: HashSet<uuid::Uuid> =
+        let visible_ws_ids: HashSet<Uuid> =
             self.state.get_visible_workspaces().iter().map(|ws| ws.id).collect();
-
-        // Collect PIDs for windows in visible vs non-visible workspaces
-        let mut pids_in_visible: HashSet<i32> = HashSet::new();
-        let mut pids_in_non_visible: HashSet<i32> = HashSet::new();
-
+        let mut visible = BTreeSet::new();
+        let mut non_visible = BTreeSet::new();
         for window in self.state.windows.iter() {
+            let Some(identity) = window.identity else {
+                continue;
+            };
             if visible_ws_ids.contains(&window.workspace_id) {
-                pids_in_visible.insert(window.pid);
+                visible.insert(identity);
             } else {
-                pids_in_non_visible.insert(window.pid);
+                non_visible.insert(identity);
             }
         }
-
-        // PIDs that should be hidden: only in non-visible workspaces
-        let pids_to_hide: Vec<i32> =
-            pids_in_non_visible.difference(&pids_in_visible).copied().collect();
-
-        // Unhide apps with windows in visible workspaces (in case they were hidden before)
-        for pid in &pids_in_visible {
-            let _ = unhide_app_for_workspace(*pid);
+        for identity in visible.iter().copied() {
+            self.handle_unhide_for_workspace(identity);
         }
-
-        // Hide apps with windows only in non-visible workspaces
-        for pid in &pids_to_hide {
-            let _ = hide_app_for_workspace(*pid);
+        for identity in non_visible.difference(&visible).copied() {
+            self.handle_hide_for_workspace(identity);
         }
 
         tracing::debug!(
             "Synced window visibility: {} apps shown, {} apps hidden",
-            pids_in_visible.len(),
-            pids_to_hide.len()
+            visible.len(),
+            non_visible.difference(&visible).count()
         );
+    }
+
+    /// Hides one identity through the registry (actor is the sole writer).
+    fn handle_hide_for_workspace_with(
+        &mut self,
+        identity: AppIdentity,
+        hide: impl FnOnce(AppIdentity) -> HideAppOutcome,
+    ) -> HideAppOutcome {
+        let outcome = self.registry.hide_if_open(identity, hide);
+        // Registry lock already released — update window state on actor side.
+        if outcome == HideAppOutcome::HiddenByStache {
+            for wid in self.state.windows_identity_iter(&identity) {
+                self.state.update_window(wid, |w| w.is_hidden = true);
+            }
+        }
+        outcome
+    }
+
+    fn handle_hide_for_workspace(&mut self, identity: AppIdentity) -> HideAppOutcome {
+        self.handle_hide_for_workspace_with(identity, hide_app_instance_with_outcome)
+    }
+
+    /// Unhides one identity through the registry (actor is the sole writer).
+    fn handle_unhide_for_workspace_with(
+        &mut self,
+        identity: AppIdentity,
+        unhide: impl FnOnce(AppIdentity) -> UnhideAppOutcome,
+    ) -> UnhideAppOutcome {
+        let outcome = self.registry.unhide_if_open(identity, unhide);
+        if matches!(
+            outcome,
+            UnhideAppOutcome::UnhiddenByStache | UnhideAppOutcome::AlreadyShown
+        ) {
+            for wid in self.state.windows_identity_iter(&identity) {
+                self.state.update_window(wid, |w| w.is_hidden = false);
+            }
+        }
+        outcome
+    }
+
+    fn handle_unhide_for_workspace(&mut self, identity: AppIdentity) -> UnhideAppOutcome {
+        self.handle_unhide_for_workspace_with(identity, unhide_app_instance_with_outcome)
+    }
+
+    /// Applies a visibility delta produced by a workspace transition.
+    fn sync_visibility_for_workspaces(&mut self, delta: VisibilityDelta) {
+        for identity in delta.showing {
+            self.handle_unhide_for_workspace(identity);
+        }
+        for identity in delta.hiding {
+            self.handle_hide_for_workspace(identity);
+        }
+    }
+
+    /// AppShown with identity revalidation. OS visible → relinquish ownership and
+    /// mark windows shown; OS hidden/unknown → retain (unavoidable-history policy).
+    pub(crate) fn on_app_shown_revalidated(
+        &mut self,
+        identity: AppIdentity,
+        query_os: impl FnOnce(AppIdentity) -> Option<bool>,
+    ) {
+        if query_os(identity) == Some(false) {
+            self.registry.relinquish_if_open(&identity);
+            for wid in self.state.windows_identity_iter(&identity) {
+                self.state.update_window(wid, |w| w.is_hidden = false);
+            }
+        }
+    }
+
+    /// AppHidden — OS confirms hidden. Mismatch/unknown → no state change.
+    fn on_app_hidden_revalidated(&mut self, identity: AppIdentity, os_hidden: Option<bool>) {
+        if os_hidden == Some(true) {
+            for wid in self.state.windows_identity_iter(&identity) {
+                self.state.update_window(wid, |w| w.is_hidden = true);
+            }
+        }
+    }
+
+    /// Exact termination cleanup. Observer removal already ran on the main thread
+    /// in `app_monitor` before this handler.
+    fn on_app_terminated_exact(&mut self, identity: AppIdentity) {
+        self.on_app_terminated_exact_with(
+            identity,
+            crate::modules::tiling::tabs::clear_tabs_for_identity,
+            |target| crate::modules::tiling::effects::get_window_cache().invalidate_window(target),
+            |identity| {
+                crate::modules::tiling::effects::get_window_cache()
+                    .invalidate_app_identity(identity);
+            },
+        );
+    }
+
+    pub(crate) fn on_app_terminated_exact_with(
+        &mut self,
+        identity: AppIdentity,
+        mut clear_tabs_for_identity: impl FnMut(AppIdentity),
+        mut invalidate_window: impl FnMut(WindowTarget),
+        mut invalidate_app: impl FnMut(AppIdentity),
+    ) {
+        clear_tabs_for_identity(identity);
+        invalidate_app(identity);
+
+        let window_ids: Vec<u32> = self
+            .state
+            .windows
+            .iter()
+            .filter(|w| w.identity.as_ref() == Some(&identity))
+            .map(|w| w.id)
+            .collect();
+
+        if window_ids.is_empty() {
+            self.registry.relinquish_if_open(&identity);
+            return;
+        }
+
+        let mut affected_workspaces: HashSet<Uuid> = HashSet::new();
+        for wid in &window_ids {
+            invalidate_window(WindowTarget { identity, window_id: *wid });
+            self.state.remove_window_from_focus_history(*wid);
+            if let Some(ws_id) = self.state.get_window(*wid).map(|w| w.workspace_id) {
+                affected_workspaces.insert(ws_id);
+                self.state.update_workspace(ws_id, |ws| {
+                    // Preserve the focused window by ID; index shifts must not
+                    // silently focus a sibling.
+                    let focused_window_id =
+                        ws.focused_window_index.and_then(|index| ws.window_ids.get(index).copied());
+                    ws.window_ids.retain(|id| id != wid);
+                    ws.focused_window_index = focused_window_id
+                        .and_then(|focused_id| {
+                            ws.window_ids.iter().position(|id| *id == focused_id)
+                        })
+                        .or_else(|| (!ws.window_ids.is_empty()).then_some(0));
+                });
+            }
+        }
+
+        let current_focus = eyeball::Observable::get(&self.state.focus);
+        if current_focus.focused_window_id.is_some_and(|fid| window_ids.contains(&fid)) {
+            self.state.clear_focus();
+        }
+        for wid in &window_ids {
+            self.state.remove_window(*wid);
+        }
+        if let Some(handle) = crate::modules::tiling::init::get_subscriber_handle() {
+            for ws_id in &affected_workspaces {
+                handle.notify_layout_changed(*ws_id, false);
+            }
+        }
+        self.registry.relinquish_if_open(&identity);
     }
 }
 
@@ -838,6 +982,118 @@ impl StateActor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::tiling::identity::{AppIdentity, LaunchDateBits};
+    use crate::modules::tiling::state::{Window, Workspace};
+
+    fn test_identity(pid: i32, v: u64) -> AppIdentity {
+        AppIdentity {
+            pid,
+            launch_date: LaunchDateBits::from_time_interval_since_reference_date(v as f64).unwrap(),
+        }
+    }
+
+    fn make_actor() -> (StateActor, Arc<VisibilityRegistry>) {
+        let registry = Arc::new(VisibilityRegistry::default());
+        let actor = StateActor {
+            state: TilingState::new(),
+            receiver: tokio::sync::mpsc::channel(16).1,
+            registry: Arc::clone(&registry),
+        };
+        (actor, registry)
+    }
+
+    #[test]
+    fn init_visibility_owns_only_hidden_only_identities() {
+        let (mut actor, registry) = make_actor();
+        let visible_id = Uuid::now_v7();
+        let hidden_id = Uuid::now_v7();
+        let a = test_identity(10, 1);
+        let b = test_identity(20, 2);
+        actor.state.upsert_workspace(Workspace {
+            id: visible_id,
+            name: "v".into(),
+            screen_id: 1,
+            is_visible: true,
+            is_focused: true,
+            ..Workspace::default()
+        });
+        actor.state.upsert_workspace(Workspace {
+            id: hidden_id,
+            name: "h".into(),
+            screen_id: 1,
+            is_visible: false,
+            ..Workspace::default()
+        });
+        actor.state.upsert_window(Window {
+            id: 1,
+            pid: 10,
+            identity: Some(a),
+            workspace_id: visible_id,
+            ..Window::default()
+        });
+        actor.state.upsert_window(Window {
+            id: 2,
+            pid: 20,
+            identity: Some(b),
+            workspace_id: hidden_id,
+            ..Window::default()
+        });
+
+        // Init flow with injected outcomes: visible app already shown, hidden
+        // app hidden by Stache.
+        actor.handle_unhide_for_workspace_with(a, |_| UnhideAppOutcome::AlreadyShown);
+        actor.handle_hide_for_workspace_with(b, |_| HideAppOutcome::HiddenByStache);
+
+        assert!(!registry.contains(&a), "visible identity must not be owned");
+        assert!(registry.contains(&b), "hidden-only identity must be owned");
+    }
+
+    #[test]
+    fn cycle_workspace_does_not_touch_registry() {
+        let (mut actor, registry) = make_actor();
+        let ws_id = Uuid::now_v7();
+        actor.state.upsert_workspace(Workspace {
+            id: ws_id,
+            name: "main".into(),
+            screen_id: 1,
+            is_visible: true,
+            is_focused: true,
+            ..Workspace::default()
+        });
+        actor.state.upsert_window(Window {
+            id: 1,
+            pid: 10,
+            identity: Some(test_identity(10, 1)),
+            workspace_id: ws_id,
+            ..Window::default()
+        });
+
+        actor.on_cycle_workspace(CycleDirection::Next);
+        assert!(
+            registry.is_empty(),
+            "workspace cycling must not mutate ownership"
+        );
+    }
+
+    #[test]
+    fn failed_hide_does_not_claim_ownership() {
+        let (mut actor, registry) = make_actor();
+        let identity = test_identity(10, 1);
+        actor.state.upsert_window(Window {
+            id: 1,
+            pid: 10,
+            identity: Some(identity),
+            workspace_id: Uuid::nil(),
+            ..Window::default()
+        });
+
+        let outcome = actor.handle_hide_for_workspace_with(identity, |_| HideAppOutcome::Failed);
+        assert_eq!(outcome, HideAppOutcome::Failed);
+        assert!(
+            !registry.contains(&identity),
+            "failed hide must not claim ownership"
+        );
+    }
 
     #[tokio::test]
     async fn test_actor_spawn_and_shutdown() {

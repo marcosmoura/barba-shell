@@ -23,7 +23,7 @@ pub mod window_move;
 pub mod workspace;
 
 // Re-export handler functions for convenience
-pub use app::{on_app_activated, on_app_hidden, on_app_launched, on_app_shown, on_app_terminated};
+pub use app::{on_app_activated, on_app_launched};
 pub use focus::{on_cycle_focus, on_focus_window, on_swap_window_in_direction};
 pub use layout::{on_cycle_layout, on_set_layout};
 pub use preset::on_apply_preset;

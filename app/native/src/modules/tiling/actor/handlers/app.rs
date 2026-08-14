@@ -2,18 +2,12 @@
 //!
 //! These handlers process application lifecycle events:
 //! - App launched → prepare for new windows from this app
-//! - App terminated → remove all windows from this app
-//! - App hidden → mark all windows from this app as hidden
-//! - App shown → mark all windows from this app as visible
 //! - App activated → potentially switch workspace
+//!
+//! `AppHidden`/`AppShown`/`AppTerminated` are handled by the actor's exact
+//! revalidation methods (see `StateActor`), not here.
 
-use std::collections::HashSet;
-
-use uuid::Uuid;
-
-use crate::modules::tiling::effects::get_window_cache;
 use crate::modules::tiling::identity::AppIdentity;
-use crate::modules::tiling::init::get_subscriber_handle;
 use crate::modules::tiling::state::TilingState;
 
 /// Handles an app launched event.
@@ -34,115 +28,6 @@ pub fn on_app_launched(
     let _ = (state, identity);
 }
 
-/// Handles an app terminated event.
-///
-/// Removes all windows belonging to this application from tracking.
-/// Returns the set of affected workspace IDs (for layout recomputation).
-pub fn on_app_terminated(
-    state: &mut TilingState,
-    identity: AppIdentity,
-    pid: i32,
-) -> HashSet<Uuid> {
-    tracing::debug!("Handling app terminated: pid={pid}, identity={identity:?}");
-
-    crate::modules::tiling::tabs::clear_tabs_for_identity(identity);
-
-    // Find all windows for this identity
-    let window_ids: Vec<u32> = state.windows_identity_iter(&identity);
-
-    if window_ids.is_empty() {
-        tracing::debug!("No windows to remove for {identity:?}");
-        return HashSet::new();
-    }
-
-    let count = window_ids.len();
-    tracing::debug!("Removing {count} windows for {identity:?}");
-
-    // Invalidate cache entries for this app (efficient bulk removal)
-    get_window_cache().invalidate_app_identity(identity);
-
-    // Track affected workspaces
-    let mut affected_workspaces: HashSet<Uuid> = HashSet::new();
-
-    // Remove each window
-    for window_id in &window_ids {
-        // Get workspace before removing
-        let workspace_id = state.get_window(*window_id).map(|w| w.workspace_id);
-
-        // Remove from state
-        state.remove_window(*window_id);
-
-        // Remove from workspace's window list
-        if let Some(ws_id) = workspace_id {
-            affected_workspaces.insert(ws_id);
-
-            state.update_workspace(ws_id, |ws| {
-                ws.window_ids.retain(|id| *id != *window_id);
-
-                // Update focused window index if needed
-                if let Some(idx) = ws.focused_window_index {
-                    if ws.window_ids.is_empty() {
-                        ws.focused_window_index = None;
-                    } else if idx >= ws.window_ids.len() {
-                        ws.focused_window_index = Some(ws.window_ids.len().saturating_sub(1));
-                    }
-                }
-            });
-        }
-    }
-
-    // Clear focus if any removed window was focused
-    let focus = eyeball::Observable::get(&state.focus);
-    if focus
-        .focused_window_id
-        .is_some_and(|focused_id| window_ids.contains(&focused_id))
-    {
-        state.clear_focus();
-    }
-
-    // Notify subscriber to recompute layouts for affected workspaces
-    if let Some(handle) = get_subscriber_handle() {
-        for ws_id in &affected_workspaces {
-            handle.notify_layout_changed(*ws_id, false);
-        }
-    }
-
-    affected_workspaces
-}
-
-/// Handles an app hidden event (Cmd+H).
-///
-/// Marks all windows belonging to this application as hidden.
-/// Hidden windows are excluded from layout calculations.
-pub fn on_app_hidden(state: &mut TilingState, identity: AppIdentity, pid: i32) {
-    tracing::debug!("Handling app hidden: pid={pid}");
-
-    // Find all windows for this identity and mark as hidden
-    let window_ids: Vec<u32> = state.windows_identity_iter(&identity);
-
-    for window_id in window_ids {
-        state.update_window(window_id, |w| {
-            w.is_hidden = true;
-        });
-    }
-}
-
-/// Handles an app shown event.
-///
-/// Marks all windows belonging to this application as visible.
-pub fn on_app_shown(state: &mut TilingState, identity: AppIdentity, pid: i32) {
-    tracing::debug!("Handling app shown: pid={pid}");
-
-    // Find all windows for this identity and mark as visible
-    let window_ids: Vec<u32> = state.windows_identity_iter(&identity);
-
-    for window_id in window_ids {
-        state.update_window(window_id, |w| {
-            w.is_hidden = false;
-        });
-    }
-}
-
 /// Handles an app activated event (brought to front).
 ///
 /// This is informational - focus changes happen via window focus events.
@@ -152,185 +37,204 @@ pub fn on_app_activated(state: &mut TilingState, identity: AppIdentity, pid: i32
     // Nothing specific to do - focus will be handled by window focus events
     let _ = (state, identity);
 }
-
 // ============================================================================
 // Tests
 // ============================================================================
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use smallvec::smallvec;
+    use uuid::Uuid;
 
     use super::*;
-    use crate::modules::tiling::state::{LayoutType, Rect, Window, WindowIdList, Workspace};
-    use crate::modules::tiling::tabs;
+    use crate::modules::tiling::actor::StateActor;
+    use crate::modules::tiling::identity::{AppIdentity, LaunchDateBits, WindowTarget};
+    use crate::modules::tiling::state::{TilingState, Window, Workspace};
+    use crate::modules::tiling::visibility::VisibilityRegistry;
 
-    fn make_state_with_workspace() -> (TilingState, Uuid) {
-        let mut state = TilingState::new();
-
-        let ws = Workspace {
-            id: Uuid::now_v7(),
-            name: "test".to_string(),
-            screen_id: 1,
-            layout: LayoutType::Dwindle,
-            is_visible: true,
-            is_focused: true,
-            window_ids: WindowIdList::new(),
-            focused_window_index: None,
-            split_ratios: Vec::new(),
-            master_ratio: None,
-            configured_screen: None,
-        };
-        let ws_id = ws.id;
-        state.upsert_workspace(ws);
-
-        (state, ws_id)
-    }
-
-    fn make_window(id: u32, pid: i32, workspace_id: Uuid) -> Window {
-        Window {
-            id,
-            pid,
-            identity: Some(identity_for(pid)),
-            app_id: format!("com.test.app{pid}"),
-            app_name: format!("App {pid}"),
-            title: format!("Window {id}"),
-            frame: Rect::new(0.0, 0.0, 800.0, 600.0),
-            minimum_size: None,
-            inferred_minimum_size: None,
-            expected_frame: None,
-            workspace_id,
-            is_minimized: false,
-            is_fullscreen: false,
-            is_hidden: false,
-            is_floating: false,
-            tab_group_id: None,
-            is_active_tab: true,
-            matched_rule: None,
-        }
-    }
-
-    fn identity_for(pid: i32) -> AppIdentity {
-        use crate::modules::tiling::identity::LaunchDateBits;
+    fn test_identity(pid: i32, v: u64) -> AppIdentity {
         AppIdentity {
             pid,
-            launch_date: LaunchDateBits::from_time_interval_since_reference_date(1.0).unwrap(),
+            launch_date: LaunchDateBits::from_time_interval_since_reference_date(v as f64).unwrap(),
+        }
+    }
+
+    fn make_actor() -> (StateActor, Arc<VisibilityRegistry>) {
+        let registry = Arc::new(VisibilityRegistry::default());
+        let actor = StateActor {
+            state: TilingState::new(),
+            receiver: tokio::sync::mpsc::channel(16).1,
+            registry: Arc::clone(&registry),
+        };
+        (actor, registry)
+    }
+
+    #[test]
+    fn app_shown_visible_removes_owner_and_marks_windows() {
+        let identity = test_identity(42, 100);
+        let (mut actor, registry) = make_actor();
+        registry.insert(identity);
+        actor.state.upsert_window(Window {
+            id: 1,
+            pid: 42,
+            identity: Some(identity),
+            is_hidden: true,
+            workspace_id: Uuid::nil(),
+            ..Window::default()
+        });
+        actor.on_app_shown_revalidated(identity, |_| Some(false));
+        assert!(!registry.contains(&identity));
+        for w in actor.state.windows.iter().filter(|w| w.identity == Some(identity)) {
+            assert!(!w.is_hidden);
         }
     }
 
     #[test]
-    fn test_app_terminated_removes_windows() {
-        let (mut state, ws_id) = make_state_with_workspace();
+    fn queued_app_shown_consumed_after_external_rehide_retains_owner() {
+        let identity = test_identity(42, 100);
+        let (mut actor, registry) = make_actor();
+        registry.insert(identity);
+        actor.state.upsert_window(Window {
+            id: 1,
+            pid: 42,
+            identity: Some(identity),
+            is_hidden: true,
+            workspace_id: Uuid::nil(),
+            ..Window::default()
+        });
+        // OS reports hidden — retain owner, no window change and no hide call.
+        actor.on_app_shown_revalidated(identity, |_| Some(true));
+        assert!(
+            registry.contains(&identity),
+            "keep ownership under unavoidable-history policy"
+        );
+        for w in actor.state.windows.iter().filter(|w| w.identity == Some(identity)) {
+            assert!(w.is_hidden);
+        }
+    }
 
-        // Add windows from same app (pid 1000)
-        let win1 = make_window(100, 1000, ws_id);
-        let win2 = make_window(200, 1000, ws_id);
-        let win3 = make_window(300, 2000, ws_id); // Different app
+    #[test]
+    fn app_shown_mismatch_retains_owner() {
+        let stored = test_identity(42, 100);
+        let different = test_identity(42, 200);
+        let (mut actor, registry) = make_actor();
+        registry.insert(stored);
+        actor.on_app_shown_revalidated(different, |_| Some(false));
+        assert!(registry.contains(&stored));
+    }
 
-        state.upsert_window(win1);
-        state.upsert_window(win2);
-        state.upsert_window(win3);
+    #[test]
+    fn delayed_termination_removes_only_exact_instance_resources() {
+        let a = test_identity(42, 100);
+        let b = test_identity(42, 200); // same PID, different launch date
+        let (mut actor, registry) = make_actor();
+        registry.insert(a);
+        registry.insert(b);
 
-        state.update_workspace(ws_id, |ws| {
-            ws.window_ids = smallvec![100, 200, 300];
+        let wa = Uuid::now_v7();
+        let wb = Uuid::now_v7();
+        actor.state.upsert_workspace(Workspace {
+            id: wa,
+            name: "A".into(),
+            window_ids: smallvec![1],
+            focused_window_index: Some(0),
+            ..Workspace::default()
+        });
+        actor.state.upsert_workspace(Workspace {
+            id: wb,
+            name: "B".into(),
+            window_ids: smallvec![2],
+            focused_window_index: Some(0),
+            ..Workspace::default()
+        });
+        actor.state.upsert_window(Window {
+            id: 1,
+            pid: 42,
+            identity: Some(a),
+            workspace_id: wa,
+            app_id: "com.test.a".into(),
+            app_name: "A".into(),
+            ..Window::default()
+        });
+        actor.state.upsert_window(Window {
+            id: 2,
+            pid: 42,
+            identity: Some(b),
+            workspace_id: wb,
+            app_id: "com.test.b".into(),
+            app_name: "B".into(),
+            ..Window::default()
         });
 
-        assert_eq!(state.windows.len(), 3);
+        crate::modules::tiling::tabs::clear_all_tabs();
+        crate::modules::tiling::tabs::register_tab(101, a);
+        crate::modules::tiling::tabs::register_tab(202, b);
+        actor.state.record_focus_history(wa, 1);
+        actor.state.record_focus_history(wb, 2);
+        let mut invalidated = Vec::new();
+        let mut cached_apps = std::collections::HashSet::from([a, b]);
 
-        // Terminate app 1000
-        let affected = on_app_terminated(&mut state, identity_for(1000), 1000);
+        actor.on_app_terminated_exact_with(
+            a,
+            crate::modules::tiling::tabs::clear_tabs_for_identity,
+            |target| invalidated.push(target),
+            |identity| {
+                cached_apps.remove(&identity);
+            },
+        );
 
-        // Only window from app 2000 should remain
-        assert_eq!(state.windows.len(), 1);
-        assert!(state.get_window(300).is_some());
-        assert!(state.get_window(100).is_none());
-        assert!(state.get_window(200).is_none());
-
-        // Workspace should only have window 300
-        let ws = state.get_workspace(ws_id).unwrap();
-        assert_eq!(ws.window_ids.as_slice(), &[300]);
-
-        // Should report the affected workspace
-        assert!(affected.contains(&ws_id));
+        assert!(!registry.contains(&a));
+        assert!(registry.contains(&b));
+        assert!(actor.state.get_window(1).is_none());
+        assert_eq!(actor.state.get_window(2).and_then(|w| w.identity), Some(b));
+        assert!(!crate::modules::tiling::tabs::is_tab_for_identity(101, a));
+        assert!(crate::modules::tiling::tabs::is_tab_for_identity(202, b));
+        assert!(actor.state.get_workspace(wa).is_some_and(|ws| !ws.window_ids.contains(&1)));
+        assert!(actor.state.get_workspace(wb).is_some_and(|ws| ws.window_ids.contains(&2)));
+        assert_eq!(actor.state.get_focus_history(wa), None);
+        assert_eq!(actor.state.get_focus_history(wb), Some(2));
+        assert_eq!(invalidated, vec![WindowTarget { identity: a, window_id: 1 }]);
+        assert!(!cached_apps.contains(&a));
+        assert!(cached_apps.contains(&b));
+        crate::modules::tiling::tabs::clear_all_tabs();
     }
 
     #[test]
-    fn test_app_hidden_marks_windows_hidden() {
-        let (mut state, ws_id) = make_state_with_workspace();
+    fn exact_termination_preserves_focused_index() {
+        let a = test_identity(42, 100);
+        let b = test_identity(42, 200);
+        let (mut actor, registry) = make_actor();
+        registry.insert(a);
 
-        let win1 = make_window(100, 1000, ws_id);
-        let win2 = make_window(200, 1000, ws_id);
-        state.upsert_window(win1);
-        state.upsert_window(win2);
+        let ws_id = Uuid::now_v7();
+        actor.state.upsert_workspace(Workspace {
+            id: ws_id,
+            name: "main".into(),
+            window_ids: smallvec![1, 2, 3],
+            focused_window_index: Some(1),
+            ..Workspace::default()
+        });
+        for (id, identity) in [(1, a), (2, b), (3, b)] {
+            actor.state.upsert_window(Window {
+                id,
+                pid: 42,
+                identity: Some(identity),
+                workspace_id: ws_id,
+                ..Window::default()
+            });
+        }
 
-        // Initially not hidden
-        assert!(!state.get_window(100).unwrap().is_hidden);
-        assert!(!state.get_window(200).unwrap().is_hidden);
+        actor.on_app_terminated_exact_with(a, |_| {}, |_| {}, |_| {});
 
-        // Hide app
-        on_app_hidden(&mut state, identity_for(1000), 1000);
-
-        // Should be hidden
-        assert!(state.get_window(100).unwrap().is_hidden);
-        assert!(state.get_window(200).unwrap().is_hidden);
-    }
-
-    #[test]
-    fn test_app_shown_marks_windows_visible() {
-        let (mut state, ws_id) = make_state_with_workspace();
-
-        let mut win1 = make_window(100, 1000, ws_id);
-        let mut win2 = make_window(200, 1000, ws_id);
-        win1.is_hidden = true;
-        win2.is_hidden = true;
-        state.upsert_window(win1);
-        state.upsert_window(win2);
-
-        // Initially hidden
-        assert!(state.get_window(100).unwrap().is_hidden);
-        assert!(state.get_window(200).unwrap().is_hidden);
-
-        // Show app
-        on_app_shown(&mut state, identity_for(1000), 1000);
-
-        // Should be visible
-        assert!(!state.get_window(100).unwrap().is_hidden);
-        assert!(!state.get_window(200).unwrap().is_hidden);
-    }
-
-    #[test]
-    fn test_app_terminated_clears_focus_if_needed() {
-        let (mut state, ws_id) = make_state_with_workspace();
-
-        let win1 = make_window(100, 1000, ws_id);
-        state.upsert_window(win1);
-
-        // Focus the window
-        state.set_focus(Some(100), Some(ws_id), Some(1));
-        assert!(eyeball::Observable::get(&state.focus).has_focus());
-
-        // Terminate app
-        let affected = on_app_terminated(&mut state, identity_for(1000), 1000);
-
-        // Focus should be cleared
-        assert!(!eyeball::Observable::get(&state.focus).has_focus());
-
-        // Should report the affected workspace
-        assert!(affected.contains(&ws_id));
-    }
-
-    #[test]
-    fn test_app_terminated_clears_tab_registry_even_without_tracked_windows() {
-        tabs::clear_all_tabs();
-        tabs::register_tab(100, identity_for(1000));
-        tabs::register_tab(200, identity_for(2000));
-
-        let mut state = TilingState::new();
-        let _ = on_app_terminated(&mut state, identity_for(1000), 1000);
-
-        assert!(!tabs::is_tab_for_identity(100, identity_for(1000)));
-        assert!(tabs::is_tab_for_identity(200, identity_for(2000)));
-
-        tabs::clear_all_tabs();
+        let ws = actor.state.get_workspace(ws_id).unwrap();
+        assert_eq!(ws.window_ids.as_slice(), &[2, 3]);
+        assert_eq!(ws.focused_window_index, Some(0));
+        assert_eq!(
+            ws.focused_window_index.and_then(|i| ws.window_ids.get(i)).copied(),
+            Some(2),
+            "focused window must stay window 2, not shift to a sibling"
+        );
     }
 }

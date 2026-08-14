@@ -557,9 +557,97 @@ fn restore_with(
     RestoreSummary { attempted, restored }
 }
 
-/// Best-effort restores every application hidden by Stache.
+use objc::runtime::{BOOL, YES};
+use objc::{msg_send, sel, sel_impl};
+
+/// Narrow decision seam. One resolved app value flows through identity lookup,
+/// hidden-state lookup, and unhide, so tests run the same ordering logic.
 #[must_use]
-pub fn restore_stache_hidden_apps() -> RestoreSummary { restore_with(tracker(), unhide_app) }
+fn restore_one_exact_with<T>(
+    owned: AppIdentity,
+    resolve: impl FnOnce(i32) -> Option<T>,
+    identity_of: impl FnOnce(&T) -> Option<AppIdentity>,
+    hidden_of: impl FnOnce(&T) -> Option<bool>,
+    unhide: impl FnOnce(&T) -> bool,
+) -> bool {
+    let Some(app) = resolve(owned.pid) else {
+        return false;
+    };
+    if identity_of(&app) != Some(owned) {
+        return false;
+    }
+    if hidden_of(&app) != Some(true) {
+        return false;
+    }
+    unhide(&app)
+}
+
+/// Production wrapper. The raw pointer exists only inside this autorelease
+/// pool and synchronous call; it is never stored or sent across threads.
+#[must_use]
+fn restore_one_exact(owned: AppIdentity) -> bool {
+    objc::rc::autoreleasepool(|| {
+        restore_one_exact_with(
+            owned,
+            |pid| unsafe {
+                let class = objc::runtime::Class::get("NSRunningApplication")?;
+                let app: *mut objc::runtime::Object = msg_send![
+                    class,
+                    runningApplicationWithProcessIdentifier: pid
+                ];
+                (!app.is_null()).then_some(app)
+            },
+            |app| unsafe { AppIdentity::from_ns_running_app(*app) },
+            |app| unsafe {
+                let hidden: BOOL = msg_send![*app, isHidden];
+                Some(hidden == YES)
+            },
+            |app| unsafe {
+                let result: BOOL = msg_send![*app, unhide];
+                result == YES
+            },
+        )
+    })
+}
+
+/// Explicit loop so `FnMut(AppIdentity)` is called with an owned identity.
+/// Every identity is attempted even when an earlier restore fails.
+#[must_use]
+pub fn restore_from_with(
+    identities: Vec<AppIdentity>,
+    restore: impl FnMut(AppIdentity) -> bool,
+) -> RestoreSummary {
+    let attempted = identities.len();
+    let mut restore = restore;
+    let mut restored = 0;
+    for identity in identities {
+        let did_restore = restore(identity);
+        tracing::debug!(
+            pid = identity.pid,
+            launch_date_bits = identity.launch_date.bits(),
+            restored = did_restore,
+            "shutdown restore result for Stache-owned application"
+        );
+        if did_restore {
+            restored += 1;
+        }
+    }
+    RestoreSummary { attempted, restored }
+}
+
+/// Seals, drains, then restores each owned identity with exact-instance
+/// validation. The handle must be alive (restoration runs before tiling
+/// shutdown closes the actor channel). No registry lock is held during
+/// restoration.
+#[must_use]
+pub fn restore_stache_hidden_apps() -> RestoreSummary {
+    crate::modules::tiling::init::get_handle()
+        .map(|handle| {
+            let identities = handle.seal_and_drain_visibility();
+            restore_from_with(identities, restore_one_exact)
+        })
+        .unwrap_or(RestoreSummary { attempted: 0, restored: 0 })
+}
 
 // ============================================================================
 // Tests

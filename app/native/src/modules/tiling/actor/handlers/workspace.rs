@@ -5,7 +5,7 @@
 
 use uuid::Uuid;
 
-use super::window::sync_window_visibility_for_workspaces;
+use super::window::{VisibilityDelta, sync_window_visibility_for_workspaces};
 use crate::modules::tiling::actor::messages::TargetScreen;
 use crate::modules::tiling::init::get_subscriber_handle;
 use crate::modules::tiling::state::TilingState;
@@ -18,12 +18,12 @@ use crate::modules::tiling::state::TilingState;
 ///
 /// If the workspace exists and is not already visible, it becomes the focused
 /// workspace on its assigned screen.
-pub fn on_switch_workspace(state: &mut TilingState, name: &str) {
+pub fn on_switch_workspace(state: &mut TilingState, name: &str) -> VisibilityDelta {
     tracing::debug!("Switching to workspace '{name}'");
 
     let Some(workspace) = state.get_workspace_by_name(name) else {
         tracing::warn!("Workspace '{name}' not found");
-        return;
+        return VisibilityDelta::default();
     };
 
     let workspace_id = workspace.id;
@@ -32,7 +32,7 @@ pub fn on_switch_workspace(state: &mut TilingState, name: &str) {
     // Check if already visible
     if workspace.is_visible && workspace.is_focused {
         tracing::trace!("Workspace '{name}' already visible and focused, skipping");
-        return;
+        return VisibilityDelta::default();
     }
 
     // Capture previous workspace for event emission and focus history
@@ -86,7 +86,7 @@ pub fn on_switch_workspace(state: &mut TilingState, name: &str) {
     tracing::debug!("Switched to workspace '{name}' (id={workspace_id})");
 
     // Sync window visibility (hide windows from old workspace, show windows from new)
-    sync_window_visibility_for_workspaces(
+    let delta = sync_window_visibility_for_workspaces(
         state,
         &workspaces_becoming_visible,
         &workspaces_becoming_hidden,
@@ -152,6 +152,8 @@ pub fn on_switch_workspace(state: &mut TilingState, name: &str) {
         &screen_name,
         previous_workspace_name.as_deref(),
     );
+
+    delta
 }
 
 // ============================================================================
@@ -339,17 +341,20 @@ pub fn on_balance_workspace(state: &mut TilingState, workspace_id: Uuid) {
 ///
 /// The workspace becomes visible on the target screen.
 /// If it was visible on the source screen, another workspace becomes visible there.
-pub fn on_send_workspace_to_screen(state: &mut TilingState, target_screen: &TargetScreen) {
+pub fn on_send_workspace_to_screen(
+    state: &mut TilingState,
+    target_screen: &TargetScreen,
+) -> VisibilityDelta {
     // Get focused workspace
     let focus = state.get_focus_state();
     let Some(workspace_id) = focus.focused_workspace_id else {
         tracing::debug!("send_workspace_to_screen: no focused workspace");
-        return;
+        return VisibilityDelta::default();
     };
 
     let Some(workspace) = state.get_workspace(workspace_id) else {
         tracing::debug!("send_workspace_to_screen: workspace not found");
-        return;
+        return VisibilityDelta::default();
     };
 
     let workspace_name = workspace.name;
@@ -363,13 +368,13 @@ pub fn on_send_workspace_to_screen(state: &mut TilingState, target_screen: &Targ
             "send_workspace_to_screen: screen '{}' not found",
             target_screen.as_str()
         );
-        return;
+        return VisibilityDelta::default();
     };
 
     // Don't move to same screen
     if source_screen_id == target_screen_id {
         tracing::debug!("send_workspace_to_screen: workspace already on target screen");
-        return;
+        return VisibilityDelta::default();
     }
 
     // Track workspaces becoming visible/hidden
@@ -429,7 +434,7 @@ pub fn on_send_workspace_to_screen(state: &mut TilingState, target_screen: &Targ
     );
 
     // Sync window visibility
-    sync_window_visibility_for_workspaces(
+    let delta = sync_window_visibility_for_workspaces(
         state,
         &workspaces_becoming_visible,
         &workspaces_becoming_hidden,
@@ -443,6 +448,8 @@ pub fn on_send_workspace_to_screen(state: &mut TilingState, target_screen: &Targ
         handle.notify_visibility_changed(workspace_id, true);
         handle.notify_layout_changed(workspace_id, true);
     }
+
+    delta
 }
 
 // ============================================================================

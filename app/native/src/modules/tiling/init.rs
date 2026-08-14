@@ -45,6 +45,7 @@ use super::effects::{EffectExecutor, EffectSubscriber};
 use super::events::{AXObserverAdapter, AppMonitorAdapter, EventProcessor, ScreenMonitorAdapter};
 use crate::config::get_config;
 use crate::modules::tiling::identity::{AppIdentity, WindowTarget};
+use crate::modules::tiling::visibility::VisibilityRegistry;
 use crate::{events, is_accessibility_granted};
 
 // ============================================================================
@@ -381,10 +382,19 @@ impl LifecycleModule for TilingLifecycle {
 /// main-thread helper.
 struct RuntimeFactory {
     fail_stage: Option<InitStage>,
+    /// Fresh per-generation visibility registry, shared with the actor and
+    /// its handle. Never reused across generations (a sealed registry stays
+    /// sealed).
+    registry: Arc<VisibilityRegistry>,
 }
 
 impl RuntimeFactory {
-    const fn new(fail_stage: Option<InitStage>) -> Self { Self { fail_stage } }
+    fn new(fail_stage: Option<InitStage>) -> Self {
+        Self {
+            fail_stage,
+            registry: Arc::new(VisibilityRegistry::default()),
+        }
+    }
 
     fn fail(&self, stage: InitStage) -> Result<(), String> {
         if self.fail_stage == Some(stage) {
@@ -395,7 +405,7 @@ impl RuntimeFactory {
 
     fn create_actor(&self) -> Result<(StateActorHandle, CompletionLatch), String> {
         self.fail(InitStage::Actor)?;
-        Ok(StateActor::spawn())
+        Ok(StateActor::spawn_with_registry(Arc::clone(&self.registry)))
     }
 
     fn create_processor(&self, actor: StateActorHandle) -> Result<Arc<EventProcessor>, String> {
@@ -617,6 +627,28 @@ pub fn start_runtime(app_handle: tauri::AppHandle) -> Result<(), String> {
     }
 }
 
+/// Restores Stache-hidden apps while the current generation's handle is
+/// still published. Called before the runtime is taken from the slot so
+/// `get_handle()` still resolves. Returns whether a restore was performed,
+/// so the caller can mark the stage done on the runtime it takes.
+fn restore_visibility_if_pending() -> bool {
+    let pending = match &*RUNTIME.lock() {
+        RuntimeSlot::Empty => false,
+        RuntimeSlot::Running(rt) => !rt.teardown.visibility_restored,
+        RuntimeSlot::Quarantined(partial) => !partial.teardown.visibility_restored,
+    };
+    if !pending {
+        return false;
+    }
+    let summary = super::visibility::restore_stache_hidden_apps();
+    tracing::info!(
+        "tiling: restored {} of {} hidden apps",
+        summary.restored,
+        summary.attempted
+    );
+    true
+}
+
 /// Tears down the running tiling runtime in strict, idempotent order.
 ///
 /// Stages:
@@ -658,6 +690,8 @@ pub fn pause_runtime() -> Result<(), String> {
         }
     };
 
+    let restored = restore_visibility_if_pending();
+
     let mut runtime = {
         let mut slot = RUNTIME.lock();
         let taken = std::mem::replace(&mut *slot, RuntimeSlot::Empty);
@@ -681,13 +715,7 @@ pub fn pause_runtime() -> Result<(), String> {
         }
     };
 
-    if !runtime.teardown.visibility_restored {
-        let summary = super::visibility::restore_stache_hidden_apps();
-        tracing::info!(
-            "tiling: restored {} of {} hidden apps",
-            summary.restored,
-            summary.attempted
-        );
+    if restored {
         runtime.teardown.visibility_restored = true;
     }
 

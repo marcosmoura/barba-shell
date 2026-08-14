@@ -263,10 +263,10 @@ pub fn on_window_destroyed(
 /// Updates the focus state to point to this window, its workspace, and screen.
 /// Also updates workspace visibility - when a window is focused, its workspace
 /// becomes visible (and any other workspace on the same screen becomes hidden).
-pub fn on_window_focused(state: &mut TilingState, window_id: u32) {
+pub fn on_window_focused(state: &mut TilingState, window_id: u32) -> VisibilityDelta {
     let Some(window) = state.get_window(window_id) else {
         tracing::trace!("Window {window_id} not tracked - ignoring focus event");
-        return;
+        return VisibilityDelta::default();
     };
 
     tracing::debug!(
@@ -340,12 +340,13 @@ pub fn on_window_focused(state: &mut TilingState, window_id: u32) {
     }
 
     // Sync window visibility if any workspace visibility changed
-    if !workspaces_becoming_visible.is_empty() || !workspaces_becoming_hidden.is_empty() {
+    let delta = if !workspaces_becoming_visible.is_empty() || !workspaces_becoming_hidden.is_empty()
+    {
         tracing::debug!(
             "Visibility changed - showing: {workspaces_becoming_visible:?}, hiding: {workspaces_becoming_hidden:?}"
         );
 
-        sync_window_visibility_for_workspaces(
+        let delta = sync_window_visibility_for_workspaces(
             state,
             &workspaces_becoming_visible,
             &workspaces_becoming_hidden,
@@ -357,12 +358,11 @@ pub fn on_window_focused(state: &mut TilingState, window_id: u32) {
                 handle.notify_layout_changed(*ws_id, false);
             }
         }
-    }
 
-    // Notify subscriber that focus changed
-    if let Some(handle) = get_subscriber_handle() {
-        handle.notify_focus_changed();
-    }
+        delta
+    } else {
+        VisibilityDelta::default()
+    };
 
     // Emit workspace changed event if the focused workspace changed
     let workspace_changed = previous_workspace_id != Some(window.workspace_id);
@@ -387,74 +387,68 @@ pub fn on_window_focused(state: &mut TilingState, window_id: u32) {
             );
         }
     }
+
+    // Notify subscriber that focus changed
+    if let Some(handle) = get_subscriber_handle() {
+        handle.notify_focus_changed();
+    }
+
+    delta
 }
 
-/// Syncs window visibility when workspaces change visibility.
-///
-/// - Shows (unhides) apps that have windows in newly visible workspaces
-/// - Hides apps that have windows ONLY in hidden workspaces (not in any visible workspace)
+/// Identity-based visibility change produced by workspace transitions.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct VisibilityDelta {
+    /// Identities that became visible (need unhide).
+    pub showing: Vec<AppIdentity>,
+    /// Identities that became hidden (need hide).
+    pub hiding: Vec<AppIdentity>,
+}
+
+/// Identity-based collector. `showing` = identities in becoming-visible
+/// workspaces; `hidden_candidates` = identities in becoming-hidden workspaces;
+/// `currently_visible` = identities in ANY visible workspace after the
+/// transition; `hiding` = candidates minus currently-visible. Sorted for
+/// deterministic tests.
 pub fn sync_window_visibility_for_workspaces(
     state: &TilingState,
     becoming_visible: &[Uuid],
     becoming_hidden: &[Uuid],
-) {
-    use std::collections::HashSet;
-
-    use crate::modules::tiling::visibility::{hide_app_for_workspace, unhide_app_for_workspace};
-
+) -> VisibilityDelta {
+    use std::collections::{BTreeSet, HashSet};
+    let mut delta = VisibilityDelta::default();
     if becoming_visible.is_empty() && becoming_hidden.is_empty() {
-        tracing::trace!("No visibility changes to sync");
-        return;
+        return delta;
     }
-
-    tracing::debug!(
-        "Syncing visibility - becoming_visible: {becoming_visible:?}, becoming_hidden: {becoming_hidden:?}"
-    );
-
-    // Collect all currently visible workspace IDs
     let visible_ws_ids: HashSet<Uuid> =
         state.get_visible_workspaces().iter().map(|ws| ws.id).collect();
-
-    // Collect PIDs from windows in becoming-visible workspaces (need to unhide)
-    let mut pids_to_show: HashSet<i32> = HashSet::new();
+    let mut showing = BTreeSet::new();
     for ws_id in becoming_visible {
-        for window in state.windows.iter().filter(|w| w.workspace_id == *ws_id) {
-            pids_to_show.insert(window.pid);
+        for w in state.windows.iter().filter(|w| w.workspace_id == *ws_id) {
+            if let Some(i) = w.identity {
+                showing.insert(i);
+            }
         }
     }
-
-    // Collect PIDs from windows in becoming-hidden workspaces
-    let mut pids_in_hidden: HashSet<i32> = HashSet::new();
+    let mut hidden_candidates = BTreeSet::new();
     for ws_id in becoming_hidden {
-        for window in state.windows.iter().filter(|w| w.workspace_id == *ws_id) {
-            pids_in_hidden.insert(window.pid);
+        for w in state.windows.iter().filter(|w| w.workspace_id == *ws_id) {
+            if let Some(i) = w.identity {
+                hidden_candidates.insert(i);
+            }
         }
     }
-
-    // Find PIDs that have windows in ANY visible workspace (shouldn't be hidden)
-    let mut pids_in_visible: HashSet<i32> = HashSet::new();
-    for window in state.windows.iter() {
-        if visible_ws_ids.contains(&window.workspace_id) {
-            pids_in_visible.insert(window.pid);
+    let mut currently_visible = BTreeSet::new();
+    for w in state.windows.iter() {
+        if visible_ws_ids.contains(&w.workspace_id)
+            && let Some(i) = w.identity
+        {
+            currently_visible.insert(i);
         }
     }
-
-    // PIDs to hide: in hidden workspaces but NOT in any visible workspace
-    let pids_to_hide: Vec<i32> = pids_in_hidden.difference(&pids_in_visible).copied().collect();
-
-    tracing::trace!("PIDs to show: {pids_to_show:?}, PIDs to hide: {pids_to_hide:?}");
-
-    // Show apps first (so they become visible before we hide others)
-    for pid in &pids_to_show {
-        let result = unhide_app_for_workspace(*pid);
-        tracing::trace!("unhide_app({pid}) = {result}");
-    }
-
-    // Hide apps that only have windows in non-visible workspaces
-    for pid in &pids_to_hide {
-        let result = hide_app_for_workspace(*pid);
-        tracing::trace!(pid, result = ?result, "workspace visibility hide result");
-    }
+    delta.showing = showing.into_iter().collect();
+    delta.hiding = hidden_candidates.difference(&currently_visible).copied().collect();
+    delta
 }
 
 /// Handles a window unfocused event.
@@ -1101,5 +1095,72 @@ mod tests {
         on_window_destroyed(&mut state, 100, test_identity());
 
         assert!(!eyeball::Observable::get(&state.focus).has_focus());
+    }
+
+    #[test]
+    fn sync_visibility_produces_identity_delta() {
+        use crate::modules::tiling::identity::{AppIdentity, LaunchDateBits};
+        let (mut state, visible_id, hidden_id) = make_visible_and_hidden_workspaces();
+        let a = AppIdentity {
+            pid: 10,
+            launch_date: LaunchDateBits::from_time_interval_since_reference_date(1.0).unwrap(),
+        };
+        let b = AppIdentity {
+            pid: 20,
+            launch_date: LaunchDateBits::from_time_interval_since_reference_date(2.0).unwrap(),
+        };
+        state.upsert_window(Window {
+            id: 1,
+            pid: 10,
+            identity: Some(a),
+            workspace_id: visible_id,
+            ..Window::default()
+        });
+        state.upsert_window(Window {
+            id: 2,
+            pid: 20,
+            identity: Some(b),
+            workspace_id: hidden_id,
+            ..Window::default()
+        });
+
+        let delta = sync_window_visibility_for_workspaces(&state, &[visible_id], &[hidden_id]);
+        assert_eq!(delta.showing, vec![a]);
+        assert_eq!(delta.hiding, vec![b]);
+    }
+
+    fn make_visible_and_hidden_workspaces() -> (TilingState, Uuid, Uuid) {
+        let mut state = TilingState::new();
+        let visible = Workspace {
+            id: Uuid::now_v7(),
+            name: "visible".to_string(),
+            screen_id: 1,
+            layout: LayoutType::Dwindle,
+            is_visible: true,
+            is_focused: true,
+            window_ids: WindowIdList::new(),
+            focused_window_index: None,
+            split_ratios: Vec::new(),
+            master_ratio: None,
+            configured_screen: None,
+        };
+        let hidden = Workspace {
+            id: Uuid::now_v7(),
+            name: "hidden".to_string(),
+            screen_id: 1,
+            layout: LayoutType::Dwindle,
+            is_visible: false,
+            is_focused: false,
+            window_ids: WindowIdList::new(),
+            focused_window_index: None,
+            split_ratios: Vec::new(),
+            master_ratio: None,
+            configured_screen: None,
+        };
+        let visible_id = visible.id;
+        let hidden_id = hidden.id;
+        state.upsert_workspace(visible);
+        state.upsert_workspace(hidden);
+        (state, visible_id, hidden_id)
     }
 }

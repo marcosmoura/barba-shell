@@ -27,6 +27,7 @@ use core_foundation::base::TCFType;
 use core_foundation::boolean::CFBoolean;
 use core_foundation::string::CFString;
 
+use crate::modules::tiling::identity::{AppIdentity, WindowTarget};
 use crate::modules::tiling::state::Rect;
 
 // ============================================================================
@@ -128,44 +129,63 @@ fn cf_role() -> *const c_void { cached_cfstring!(CF_ROLE, "AXRole") }
 /// The `AXUIElement` for the window, or `None` if not found.
 /// The caller takes ownership and must release the element when done.
 #[must_use]
-pub fn resolve_window_element(window_id: u32) -> Option<AXUIElementRef> {
-    // Get all running app PIDs
-    let pids = get_running_app_pids();
+pub fn resolve_window_element(target: WindowTarget) -> Option<AXUIElementRef> {
+    // Revalidate the exact identity before touching the app.
+    if resolve_current_identity(target.identity) != Some(target.identity) {
+        tracing::trace!("resolve_window_element: identity mismatch for {target:?}");
+        return None;
+    }
 
-    for pid in pids {
-        let app_element = unsafe { AXUIElementCreateApplication(pid) };
-        if app_element.is_null() {
-            continue;
-        }
+    let app_element = unsafe { AXUIElementCreateApplication(target.identity.pid) };
+    if app_element.is_null() {
+        return None;
+    }
 
-        // Get all windows for this app (these are retained)
-        let windows = unsafe { get_app_windows(app_element) };
-        unsafe { CFRelease(app_element.cast()) };
+    // Get all windows for this app (these are retained)
+    let windows = unsafe { get_app_windows(app_element) };
+    unsafe { CFRelease(app_element.cast()) };
 
-        for window in &windows {
-            // Check if this window has the target ID
-            if let Some(id) = unsafe { get_window_id(*window) }
-                && id == window_id
-            {
-                // Found it! Release all other windows in this batch
-                for other in &windows {
-                    if *other != *window {
-                        unsafe { CFRelease((*other).cast()) };
-                    }
+    for window in &windows {
+        // Check if this window has the target ID
+        if let Some(id) = unsafe { get_window_id(*window) }
+            && id == target.window_id
+        {
+            // Found it! Release all other windows in this batch
+            for other in &windows {
+                if *other != *window {
+                    unsafe { CFRelease((*other).cast()) };
                 }
-                // The matched window is already retained from get_app_windows
-                return Some(*window);
             }
-        }
-
-        // Release all windows since we didn't find our target
-        for window in &windows {
-            unsafe { CFRelease((*window).cast()) };
+            // The matched window is already retained from get_app_windows
+            return Some(*window);
         }
     }
 
-    tracing::debug!("resolve_window_element: window {window_id} not found");
+    // Release all windows since we didn't find our target
+    for window in &windows {
+        unsafe { CFRelease((*window).cast()) };
+    }
+
+    tracing::debug!("resolve_window_element: window {} not found", target.window_id);
     None
+}
+
+/// Re-resolves the exact identity for a PID from one local
+/// `NSRunningApplication` object.
+fn resolve_current_identity(identity: AppIdentity) -> Option<AppIdentity> {
+    use objc::runtime::Object;
+    use objc::{class, msg_send, sel, sel_impl};
+
+    objc::rc::autoreleasepool(|| unsafe {
+        let app: *mut Object = msg_send![
+            class!(NSRunningApplication),
+            runningApplicationWithProcessIdentifier: identity.pid
+        ];
+        if app.is_null() {
+            return None;
+        }
+        AppIdentity::from_ns_running_app(app)
+    })
 }
 
 /// Gets the window ID from an `AXUIElement`.
@@ -252,51 +272,6 @@ fn is_window_element(element: AXUIElementRef) -> bool {
     unsafe { CFRelease(value) };
 
     role == "AXWindow"
-}
-
-/// Gets PIDs of all running regular applications.
-fn get_running_app_pids() -> Vec<i32> {
-    use objc::runtime::{Class, Object};
-    use objc::{msg_send, sel, sel_impl};
-
-    unsafe {
-        let Some(workspace_class) = Class::get("NSWorkspace") else {
-            return Vec::new();
-        };
-
-        let workspace: *mut Object = msg_send![workspace_class, sharedWorkspace];
-        if workspace.is_null() {
-            return Vec::new();
-        }
-
-        let apps: *mut Object = msg_send![workspace, runningApplications];
-        if apps.is_null() {
-            return Vec::new();
-        }
-
-        let count: usize = msg_send![apps, count];
-        let mut pids = Vec::with_capacity(count);
-
-        for i in 0..count {
-            let app: *mut Object = msg_send![apps, objectAtIndex: i];
-            if app.is_null() {
-                continue;
-            }
-
-            // Only include regular apps (not background processes)
-            let activation_policy: i64 = msg_send![app, activationPolicy];
-            if activation_policy != 0 {
-                continue;
-            }
-
-            let pid: i32 = msg_send![app, processIdentifier];
-            if pid > 0 {
-                pids.push(pid);
-            }
-        }
-
-        pids
-    }
 }
 
 // ============================================================================
@@ -407,8 +382,8 @@ unsafe fn set_ax_size(element: AXUIElementRef, width: f64, height: f64) -> bool 
 ///
 /// The window frame, or `None` if the window cannot be found.
 #[must_use]
-pub fn get_window_frame(window_id: u32) -> Option<Rect> {
-    let element = resolve_window_element(window_id)?;
+pub fn get_window_frame(target: WindowTarget) -> Option<Rect> {
+    let element = resolve_window_element(target)?;
 
     let result = unsafe {
         let pos = get_ax_position(element)?;
@@ -436,12 +411,12 @@ pub fn get_window_frame(window_id: u32) -> Option<Rect> {
 ///
 /// `true` if the operation succeeded (optimistically, since execution is async).
 #[must_use]
-pub fn set_window_frame(window_id: u32, frame: &Rect) -> bool {
+pub fn set_window_frame(target: WindowTarget, frame: &Rect) -> bool {
     // Dispatch to main thread using the project's existing dispatch utility
     // This is async (fire-and-forget) but avoids potential deadlocks
     let frame_copy = *frame;
     crate::platform::thread::dispatch_on_main(move || {
-        set_window_frame_impl(window_id, &frame_copy);
+        set_window_frame_impl(target, &frame_copy);
     });
 
     // Return true optimistically - the actual operation runs async
@@ -449,9 +424,9 @@ pub fn set_window_frame(window_id: u32, frame: &Rect) -> bool {
 }
 
 /// Internal implementation of `set_window_frame` (runs on main thread).
-fn set_window_frame_impl(window_id: u32, frame: &Rect) {
-    let Some(element) = resolve_window_element(window_id) else {
-        tracing::debug!("set_window_frame: could not resolve window {window_id}");
+fn set_window_frame_impl(target: WindowTarget, frame: &Rect) {
+    let Some(element) = resolve_window_element(target) else {
+        tracing::debug!("set_window_frame: could not resolve window {}", target.window_id);
         return;
     };
 
@@ -466,7 +441,7 @@ fn set_window_frame_impl(window_id: u32, frame: &Rect) {
     unsafe { CFRelease(element.cast()) };
 
     if !(pos_ok && (size_ok_1 || size_ok_2)) {
-        tracing::debug!("set_window_frame: failed for window {window_id}");
+        tracing::debug!("set_window_frame: failed for window {}", target.window_id);
     }
 }
 
@@ -491,13 +466,13 @@ fn set_window_frame_impl(window_id: u32, frame: &Rect) {
 ///
 /// `true` if the operation succeeded.
 #[must_use]
-pub fn set_window_frame_fast(window_id: u32, frame: &Rect) -> bool {
+pub fn set_window_frame_fast(target: WindowTarget, frame: &Rect) -> bool {
     // Try SkyLight API for position first (much faster than AX)
     let skylight_pos_ok =
-        crate::modules::tiling::ffi::skylight::move_window_fast(window_id, frame.x, frame.y);
+        crate::modules::tiling::ffi::skylight::move_window_fast(target.window_id, frame.x, frame.y);
 
     // Resolve AX element once - needed for size, and maybe position fallback
-    let Some(element) = resolve_window_element(window_id) else {
+    let Some(element) = resolve_window_element(target) else {
         return skylight_pos_ok; // Can't do AX ops, return SkyLight result
     };
 
@@ -554,8 +529,8 @@ impl FrameSetResult {
 ///
 /// A `FrameSetResult` containing information about the operation.
 #[must_use]
-pub fn set_window_frame_verified(window_id: u32, target: &Rect) -> FrameSetResult {
-    let Some(ax_element) = get_ax_element_for_window(window_id) else {
+pub fn set_window_frame_verified(target: WindowTarget, frame: &Rect) -> FrameSetResult {
+    let Some(ax_element) = get_ax_element_for_window(target) else {
         return FrameSetResult {
             success: false,
             actual_frame: None,
@@ -570,13 +545,13 @@ pub fn set_window_frame_verified(window_id: u32, target: &Rect) -> FrameSetResul
 
     // Check if we're trying to go below minimum
     let (min_width_constraint, min_height_constraint) = if let Some((min_w, min_h)) = minimum_size {
-        (target.width < min_w - 1.0, target.height < min_h - 1.0)
+        (frame.width < min_w - 1.0, frame.height < min_h - 1.0)
     } else {
         (false, false)
     };
 
     // Set the frame
-    let success = ax_element.set_frame(target).is_ok();
+    let success = ax_element.set_frame(frame).is_ok();
 
     if !success {
         return FrameSetResult {
@@ -596,12 +571,12 @@ pub fn set_window_frame_verified(window_id: u32, target: &Rect) -> FrameSetResul
         actual_frame
             .as_ref()
             .map_or((min_width_constraint, min_height_constraint), |actual| {
-                let width_diff = (actual.width - target.width).abs();
-                let height_diff = (actual.height - target.height).abs();
+                let width_diff = (actual.width - frame.width).abs();
+                let height_diff = (actual.height - frame.height).abs();
 
                 // If actual is larger than target and we're not close, we hit a minimum
-                let hit_width = width_diff > 1.0 && actual.width > target.width;
-                let hit_height = height_diff > 1.0 && actual.height > target.height;
+                let hit_width = width_diff > 1.0 && actual.width > frame.width;
+                let hit_height = height_diff > 1.0 && actual.height > frame.height;
 
                 (
                     hit_width || min_width_constraint,
@@ -629,38 +604,58 @@ pub fn set_window_frame_verified(window_id: u32, target: &Rect) -> FrameSetResul
 /// `Some((min_width, min_height))` if the window reports minimum size,
 /// `None` if the attribute is not available.
 #[must_use]
-pub fn get_window_minimum_size(window_id: u32) -> Option<(f64, f64)> {
-    let ax_element = get_ax_element_for_window(window_id)?;
+pub fn get_window_minimum_size(target: WindowTarget) -> Option<(f64, f64)> {
+    let ax_element = get_ax_element_for_window(target)?;
     ax_element.minimum_size()
 }
 
-/// Gets an `AXElement` for a window ID.
+/// Gets an `AXElement` for an exact target.
 fn get_ax_element_for_window(
-    window_id: u32,
+    target: WindowTarget,
 ) -> Option<crate::modules::tiling::ffi::accessibility::AXElement> {
     use crate::modules::tiling::ffi::accessibility::AXElement;
 
-    let pid = get_window_pid(window_id)?;
-    let app = AXElement::application(pid)?;
+    // Revalidate the exact identity before touching the app.
+    if resolve_current_identity(target.identity) != Some(target.identity) {
+        return None;
+    }
+
+    let app = AXElement::application(target.identity.pid)?;
 
     // Find the window with matching ID
-    app.windows().into_iter().find(|w| w.window_id() == Some(window_id))
+    app.windows().into_iter().find(|w| w.window_id() == Some(target.window_id))
+}
+
+/// Focuses a window by its tracked identity — exact target only.
+///
+/// Resolves the stored `Window.identity` and builds the exact `WindowTarget`;
+/// returns `false` (and logs) when the window has no stored identity.
+#[must_use]
+pub fn focus_stored_window(
+    state: &crate::modules::tiling::state::TilingState,
+    window_id: u32,
+) -> bool {
+    let Some(identity) = state.get_window(window_id).and_then(|w| w.identity) else {
+        tracing::trace!("focus_stored_window: no identity for window {window_id}, skipping");
+        return false;
+    };
+    focus_window(WindowTarget { identity, window_id })
 }
 
 /// Focuses a window (gives it keyboard focus).
 ///
 /// # Arguments
 ///
-/// * `window_id` - The window ID to focus.
+/// * `target` - The exact target window to focus.
 ///
 /// # Returns
 ///
 /// `true` if the operation succeeded (optimistically, since execution is async).
 #[must_use]
-pub fn focus_window(window_id: u32) -> bool {
+pub fn focus_window(target: WindowTarget) -> bool {
     // Dispatch to main thread using the project's existing dispatch utility
     crate::platform::thread::dispatch_on_main(move || {
-        focus_window_impl(window_id);
+        focus_window_impl(target);
     });
 
     // Return true optimistically - the actual operation runs async
@@ -668,17 +663,12 @@ pub fn focus_window(window_id: u32) -> bool {
 }
 
 /// Internal implementation of `focus_window` (runs on main thread).
-fn focus_window_impl(window_id: u32) {
-    // First, get the PID for this window so we can activate the app
-    let pid = get_window_pid(window_id);
-
+fn focus_window_impl(target: WindowTarget) {
     // Activate the owning application first - this is critical for focus to work
-    if let Some(pid) = pid {
-        activate_app(pid);
-    }
+    activate_app(target.identity.pid);
 
-    let Some(element) = resolve_window_element(window_id) else {
-        tracing::debug!("focus_window: could not resolve window {window_id}");
+    let Some(element) = resolve_window_element(target) else {
+        tracing::debug!("focus_window: could not resolve window {}", target.window_id);
         return;
     };
 
@@ -704,46 +694,6 @@ fn focus_window_impl(window_id: u32) {
 
         CFRelease(element.cast());
     };
-}
-
-/// Gets the PID of the app that owns a window.
-fn get_window_pid(window_id: u32) -> Option<i32> {
-    if let Some(pid) = crate::modules::tiling::effects::get_window_cache().get_window_pid(window_id)
-    {
-        return Some(pid);
-    }
-
-    // Get all running app PIDs and check which one owns this window
-    let pids = get_running_app_pids();
-
-    for pid in pids {
-        let app_element = unsafe { AXUIElementCreateApplication(pid) };
-        if app_element.is_null() {
-            continue;
-        }
-
-        let windows = unsafe { get_app_windows(app_element) };
-        unsafe { CFRelease(app_element.cast()) };
-
-        for window in &windows {
-            if let Some(id) = unsafe { get_window_id(*window) }
-                && id == window_id
-            {
-                // Found the owner - release all windows and return the PID
-                for w in &windows {
-                    unsafe { CFRelease((*w).cast()) };
-                }
-                return Some(pid);
-            }
-        }
-
-        // Release windows since this app doesn't own our target
-        for window in &windows {
-            unsafe { CFRelease((*window).cast()) };
-        }
-    }
-
-    None
 }
 
 /// Activates an application by PID.
@@ -773,16 +723,16 @@ fn activate_app(pid: i32) -> bool {
 ///
 /// # Arguments
 ///
-/// * `window_id` - The window ID to raise.
+/// * `target` - The exact target window to raise.
 ///
 /// # Returns
 ///
 /// `true` if the operation succeeded (optimistically, since execution is async).
 #[must_use]
-pub fn raise_window(window_id: u32) -> bool {
+pub fn raise_window(target: WindowTarget) -> bool {
     // Dispatch to main thread using the project's existing dispatch utility
     crate::platform::thread::dispatch_on_main(move || {
-        raise_window_impl(window_id);
+        raise_window_impl(target);
     });
 
     // Return true optimistically - the actual operation runs async
@@ -790,9 +740,9 @@ pub fn raise_window(window_id: u32) -> bool {
 }
 
 /// Internal implementation of `raise_window` (runs on main thread).
-fn raise_window_impl(window_id: u32) {
-    let Some(element) = resolve_window_element(window_id) else {
-        tracing::debug!("raise_window: could not resolve window {window_id}");
+fn raise_window_impl(target: WindowTarget) {
+    let Some(element) = resolve_window_element(target) else {
+        tracing::debug!("raise_window: could not resolve window {}", target.window_id);
         return;
     };
 
@@ -810,24 +760,24 @@ fn raise_window_impl(window_id: u32) {
 ///
 /// # Arguments
 ///
-/// * `frames` - Vector of (`window_id`, frame) pairs.
+/// * `frames` - Vector of (exact target, frame) pairs.
 ///
 /// # Returns
 ///
 /// Number of frames queued (actual application is async).
 #[must_use]
-pub fn set_window_frames_batch(frames: &[(u32, Rect)]) -> usize {
+pub fn set_window_frames_batch(frames: &[(WindowTarget, Rect)]) -> usize {
     if frames.is_empty() {
         return 0;
     }
 
     let count = frames.len();
-    let frames_copy: Vec<(u32, Rect)> = frames.to_vec();
+    let frames_copy: Vec<(WindowTarget, Rect)> = frames.to_vec();
 
     // Single main thread dispatch for all frames
     crate::platform::thread::dispatch_on_main(move || {
-        for (window_id, frame) in frames_copy {
-            set_window_frame_impl(window_id, &frame);
+        for (target, frame) in frames_copy {
+            set_window_frame_impl(target, &frame);
         }
     });
 
@@ -1071,16 +1021,6 @@ mod tests {
     // Note: test_resolve_nonexistent_window is disabled because it requires
     // accessibility permissions and can crash if permissions are not granted.
     // The function is still tested indirectly through integration tests.
-
-    #[test]
-    fn test_get_running_app_pids() {
-        // This test just verifies the function doesn't panic.
-        // The actual PIDs returned depend on the system state.
-        let pids = get_running_app_pids();
-        // Should have at least one running app (the test runner)
-        // But this might fail in CI, so we just check it doesn't panic
-        let _ = pids;
-    }
 
     #[test]
     fn test_cached_cfstrings() {

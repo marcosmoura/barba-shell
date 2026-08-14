@@ -8,7 +8,7 @@
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
-use crate::modules::tiling::identity::AppIdentity;
+use crate::modules::tiling::identity::{AppIdentity, WindowTarget};
 use crate::modules::tiling::state::{FocusState, LayoutType, Rect, Screen, Window, Workspace};
 
 // ============================================================================
@@ -25,50 +25,80 @@ pub enum StateMessage {
     WindowCreated(WindowCreatedInfo),
 
     /// Window closed.
-    WindowDestroyed { window_id: u32 },
+    WindowDestroyed {
+        window_id: u32,
+        identity: AppIdentity,
+    },
 
     /// Window gained focus.
-    WindowFocused { window_id: u32 },
+    WindowFocused {
+        window_id: u32,
+        identity: AppIdentity,
+    },
 
     /// Window lost focus.
-    WindowUnfocused { window_id: u32 },
+    WindowUnfocused {
+        window_id: u32,
+        identity: AppIdentity,
+    },
 
     /// Window position changed.
-    WindowMoved { window_id: u32, frame: Rect },
+    WindowMoved {
+        window_id: u32,
+        identity: AppIdentity,
+        frame: Rect,
+    },
 
     /// Window size changed.
-    WindowResized { window_id: u32, frame: Rect },
+    WindowResized {
+        window_id: u32,
+        identity: AppIdentity,
+        frame: Rect,
+    },
 
     /// Window minimized/unminimized.
-    WindowMinimized { window_id: u32, minimized: bool },
+    WindowMinimized {
+        window_id: u32,
+        identity: AppIdentity,
+        minimized: bool,
+    },
 
     /// Window title changed.
-    WindowTitleChanged { window_id: u32, title: String },
+    WindowTitleChanged {
+        window_id: u32,
+        identity: AppIdentity,
+        title: String,
+    },
 
     /// Window fullscreen state changed.
-    WindowFullscreenChanged { window_id: u32, fullscreen: bool },
+    WindowFullscreenChanged {
+        window_id: u32,
+        identity: AppIdentity,
+        fullscreen: bool,
+    },
 
     // ════════════════════════════════════════════════════════════════════════
     // App Events (from NSWorkspace)
     // ════════════════════════════════════════════════════════════════════════
     /// Application launched.
     AppLaunched {
+        identity: AppIdentity,
         pid: i32,
         bundle_id: String,
         name: String,
     },
 
     /// Application terminated.
-    AppTerminated { pid: i32 },
+    AppTerminated { identity: AppIdentity, pid: i32 },
 
     /// Application hidden (Cmd+H).
-    AppHidden { pid: i32 },
+    AppHidden { identity: AppIdentity, pid: i32 },
 
     /// Application unhidden.
-    AppShown { pid: i32 },
+    AppShown { identity: AppIdentity, pid: i32 },
 
     /// Application activated (brought to front).
-    AppActivated { pid: i32 },
+    AppActivated { identity: AppIdentity, pid: i32 },
 
     // ════════════════════════════════════════════════════════════════════════
     // Screen Events (from CGDisplay notifications)
@@ -104,8 +134,11 @@ pub enum StateMessage {
     /// Move window to different workspace.
     MoveWindowToWorkspace { window_id: u32, workspace_id: Uuid },
 
-    /// Swap two windows.
-    SwapWindows { window_id_a: u32, window_id_b: u32 },
+    /// Swap two windows (exact targets).
+    SwapWindows {
+        target_a: WindowTarget,
+        target_b: WindowTarget,
+    },
 
     /// Focus next/previous window (cycle).
     CycleFocus { direction: CycleDirection },
@@ -173,7 +206,7 @@ pub enum StateMessage {
     /// This calculates and applies new split ratios based on the resize.
     UserResizeCompleted {
         workspace_id: Uuid,
-        window_id: u32,
+        target: WindowTarget,
         old_frame: Rect,
         new_frame: Rect,
     },
@@ -190,7 +223,7 @@ pub enum StateMessage {
 
     /// Update expected frames for windows (for minimum size detection).
     /// Called after layout is computed but before effects are applied.
-    SetExpectedFrames { frames: Vec<(u32, Rect)> },
+    SetExpectedFrames { frames: Vec<(WindowTarget, Rect)> },
 
     /// Shutdown the actor gracefully.
     Shutdown,
@@ -291,6 +324,7 @@ pub struct WindowCreatedInfo {
 #[derive(Debug, Clone)]
 pub struct GeometryUpdate {
     pub window_id: u32,
+    pub identity: AppIdentity,
     pub frame: Rect,
     pub update_type: GeometryUpdateType,
 }
@@ -483,6 +517,12 @@ pub enum StateQuery {
     GetWindowIdsForWorkspace {
         workspace_id: Uuid,
     },
+    /// Get exact layout targets for a workspace (identity-keyed).
+    GetWindowLayoutTargets {
+        workspace_id: Uuid,
+    },
+    /// Get exact focus targets (identity-keyed).
+    GetFocusTargets,
     /// Get layoutable window IDs for a workspace.
     GetLayoutableWindowIds {
         workspace_id: Uuid,
@@ -523,6 +563,13 @@ pub enum QueryResult {
     WindowIds(Vec<u32>),
     /// Boolean result for existence checks.
     Exists(bool),
+
+    // Exact-target results (identity-keyed)
+    TargetLayout(Vec<(WindowTarget, Rect)>),
+    TargetFocus {
+        focused_window: Option<WindowTarget>,
+        focused_workspace_id: Option<Uuid>,
+    },
 }
 
 impl QueryResult {

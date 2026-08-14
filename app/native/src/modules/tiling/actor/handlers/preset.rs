@@ -84,13 +84,25 @@ pub fn on_apply_preset(state: &mut TilingState, preset_name: &str) {
     if let Some(from_frame) = current_frame {
         use crate::modules::tiling::effects::{AnimationSystem, WindowTransition};
 
+        // Exact target required for animated/instant application.
+        let Some(identity) = state.get_window(window_id).and_then(|w| w.identity) else {
+            tracing::trace!("tiling: no identity for preset on window {window_id}, skipping");
+            return;
+        };
+        let target = crate::modules::tiling::identity::WindowTarget { identity, window_id };
+
         let animation = AnimationSystem::from_config();
-        let transition = WindowTransition::new(window_id, from_frame, target_frame);
+        let transition = WindowTransition::new(target, from_frame, target_frame);
         let _ = animation.animate(vec![transition]);
     } else {
         // Fallback: no current frame, just set directly
+        let Some(identity) = state.get_window(window_id).and_then(|w| w.identity) else {
+            tracing::trace!("tiling: no identity for preset on window {window_id}, skipping");
+            return;
+        };
+        let target = crate::modules::tiling::identity::WindowTarget { identity, window_id };
         let _ =
-            crate::modules::tiling::effects::window_ops::set_window_frame(window_id, &target_frame);
+            crate::modules::tiling::effects::window_ops::set_window_frame(target, &target_frame);
     }
 
     tracing::debug!(

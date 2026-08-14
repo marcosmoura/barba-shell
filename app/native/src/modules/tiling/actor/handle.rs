@@ -369,7 +369,10 @@ impl StateActorHandle {
     /// Returns [`ActorError::SendFailed`] if the channel is closed.
     pub fn set_expected_frames(
         &self,
-        frames: Vec<(u32, crate::modules::tiling::state::Rect)>,
+        frames: Vec<(
+            crate::modules::tiling::identity::WindowTarget,
+            crate::modules::tiling::state::Rect,
+        )>,
     ) -> Result<(), ActorError> {
         self.send(StateMessage::SetExpectedFrames { frames })
     }

@@ -342,33 +342,41 @@ pub async fn focus_tiling_window(app: AppHandle, window_id: u32) -> Result<(), S
     let handle = tiling::init::get_handle()
         .ok_or_else(|| StacheError::TilingError("Tiling not initialized".to_string()))?;
 
-    // Get workspace name for the event
+    // Get workspace name for the event and the stored identity for the exact target
     let window_result = handle
         .query(StateQuery::GetWindow { id: window_id })
         .await
         .map_err(|e| StacheError::TilingError(e.to_string()))?;
 
-    let workspace_name = if let QueryResult::Window(Some(w)) = window_result {
+    let (workspace_name, identity) = if let QueryResult::Window(Some(w)) = window_result {
         // Get workspace name
         let workspaces_result = handle
             .query(StateQuery::GetAllWorkspaces)
             .await
             .map_err(|e| StacheError::TilingError(e.to_string()))?;
 
-        match workspaces_result {
+        let name = match workspaces_result {
             QueryResult::Workspaces(ws) => ws
                 .iter()
                 .find(|ws| ws.id == w.workspace_id)
                 .map_or_else(|| "unknown".to_string(), |ws| ws.name.clone()),
             _ => "unknown".to_string(),
-        }
+        };
+        (name, w.identity)
     } else {
         return Err(StacheError::TilingError(format!("Window {window_id} not found")));
     };
 
-    // Focus the window via AX API (this will trigger an AXFocusedWindowChanged event
-    // which will update the state automatically via the observer)
-    if !window_ops::focus_window(window_id) {
+    // Focus the window via AX API (exact target from the stored identity;
+    // this will trigger an AXFocusedWindowChanged event which will update
+    // the state automatically via the observer)
+    let Some(identity) = identity else {
+        return Err(StacheError::TilingError(format!(
+            "Window {window_id} has no stored identity"
+        )));
+    };
+    let target = crate::modules::tiling::identity::WindowTarget { identity, window_id };
+    if !window_ops::focus_window(target) {
         return Err(StacheError::TilingError(format!(
             "Failed to focus window {window_id}"
         )));

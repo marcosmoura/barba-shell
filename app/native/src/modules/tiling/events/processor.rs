@@ -24,6 +24,7 @@ use parking_lot::Mutex;
 use crate::modules::tiling::actor::{
     GeometryUpdate, GeometryUpdateType, StateActorHandle, StateMessage, WindowCreatedInfo,
 };
+use crate::modules::tiling::identity::{AppIdentity, WindowTarget};
 use crate::modules::tiling::state::Rect;
 use crate::modules::tiling::visibility::{
     ShownClassification, classify_stache_hidden_app, forget_stache_hidden_app_terminated,
@@ -108,7 +109,7 @@ struct ScreenBatch {
     refresh_rate: f64,
 
     /// Pending geometry updates for windows on this screen.
-    updates: HashMap<u32, GeometryUpdate>,
+    updates: HashMap<(AppIdentity, u32), GeometryUpdate>,
 
     /// Whether the timer for this screen is running.
     timer_running: AtomicBool,
@@ -148,13 +149,13 @@ pub struct EventProcessor {
     /// Per-screen batch queues.
     screen_batches: Arc<Mutex<HashMap<u32, ScreenBatch>>>,
 
-    /// Window ID → Screen ID mapping for routing geometry events.
-    window_screen_map: Arc<DashMap<u32, u32>>,
+    /// (Identity, Window ID) → Screen ID mapping for routing geometry events.
+    window_screen_map: Arc<DashMap<(AppIdentity, u32), u32>>,
 
-    /// PID → Set of Window IDs mapping for destroy detection.
+    /// Identity → Set of Window IDs mapping for destroy detection.
     /// When we get a destroy event but can't get the window ID, we compare
     /// against current windows from macOS to find which one was destroyed.
-    pid_windows: Arc<Mutex<HashMap<i32, HashSet<u32>>>>,
+    pid_windows: Arc<Mutex<HashMap<AppIdentity, HashSet<u32>>>>,
 
     /// Default screen ID for windows with unknown screen assignment.
     default_screen_id: AtomicU32,
@@ -256,17 +257,19 @@ impl EventProcessor {
     /// Set the screen assignment for a window.
     ///
     /// Call this when a window is created or moves to a different screen.
-    pub fn set_window_screen(&self, window_id: u32, screen_id: u32) {
-        self.window_screen_map.insert(window_id, screen_id);
+    pub fn set_window_screen(&self, identity: AppIdentity, window_id: u32, screen_id: u32) {
+        self.window_screen_map.insert((identity, window_id), screen_id);
     }
 
     /// Remove the screen assignment for a window.
-    pub fn remove_window(&self, window_id: u32) { self.window_screen_map.remove(&window_id); }
+    pub fn remove_window(&self, identity: AppIdentity, window_id: u32) {
+        self.window_screen_map.remove(&(identity, window_id));
+    }
 
     /// Get the screen ID for a window.
-    fn get_window_screen(&self, window_id: u32) -> u32 {
+    fn get_window_screen(&self, identity: AppIdentity, window_id: u32) -> u32 {
         self.window_screen_map
-            .get(&window_id)
+            .get(&(identity, window_id))
             .map_or_else(|| self.default_screen_id.load(Ordering::SeqCst), |entry| *entry)
     }
 
@@ -439,8 +442,12 @@ impl EventProcessor {
         let window_id = info.window_id;
         tracing::trace!("Window created: {window_id:?}");
 
-        // Track this window for destroy detection
-        self.pid_windows.lock().entry(info.pid).or_default().insert(info.window_id);
+        // Track this window for destroy detection (identity-keyed).
+        let Some(identity) = info.identity else {
+            tracing::trace!("tiling: dropping window created event without identity");
+            return;
+        };
+        self.pid_windows.lock().entry(identity).or_default().insert(info.window_id);
 
         let _ = self.actor_handle.send(StateMessage::WindowCreated(info));
     }
@@ -448,100 +455,119 @@ impl EventProcessor {
     /// Dispatch a window destroyed event immediately.
     ///
     /// Also removes any pending geometry updates for this window.
-    pub fn on_window_destroyed(&self, window_id: u32) {
+    pub fn on_window_destroyed(&self, window_id: u32, identity: AppIdentity) {
         tracing::debug!("tiling: processor.on_window_destroyed called for window_id={window_id}");
 
         // Remove from window-screen mapping
-        let screen_id = self.window_screen_map.remove(&window_id).map(|(_, id)| id);
+        let screen_id = self.window_screen_map.remove(&(identity, window_id)).map(|(_, id)| id);
 
         // Remove from geometry batch
         if let Some(screen_id) = screen_id
             && let Some(batch) = self.screen_batches.lock().get_mut(&screen_id)
         {
-            batch.updates.remove(&window_id);
+            batch.updates.remove(&(identity, window_id));
         }
 
         // Remove from pid_windows tracking
         {
-            let mut pid_windows = self.pid_windows.lock();
-            for windows in pid_windows.values_mut() {
-                windows.remove(&window_id);
+            let mut m = self.pid_windows.lock();
+            if let Some(set) = m.get_mut(&identity) {
+                set.remove(&window_id);
             }
         }
 
         tracing::debug!(
             "tiling: sending WindowDestroyed message to actor for window_id={window_id}"
         );
-        let _ = self.actor_handle.send(StateMessage::WindowDestroyed { window_id });
+        let _ = self.actor_handle.send(StateMessage::WindowDestroyed { window_id, identity });
     }
 
-    /// Handle window destruction when we only know the PID.
+    /// Handle window destruction when we only know the identity.
     ///
     /// Uses the window element cache to efficiently check which tracked
     /// windows are no longer valid, avoiding expensive AX enumeration.
-    pub fn on_window_destroyed_for_pid(&self, pid: i32) {
-        tracing::debug!("tiling: on_window_destroyed_for_pid called for pid={pid}");
+    pub fn on_window_destroyed_for_identity(&self, identity: AppIdentity) {
+        tracing::debug!("tiling: on_window_destroyed_for_identity called for {identity:?}");
 
-        // Get tracked windows for this PID from our local cache
-        let tracked_window_ids: Vec<u32> = {
-            let pid_windows = self.pid_windows.lock();
-            pid_windows.get(&pid).map(|s| s.iter().copied().collect()).unwrap_or_default()
-        };
+        // Get tracked windows for this identity from our local cache
+        let tracked: Vec<u32> = self
+            .pid_windows
+            .lock()
+            .get(&identity)
+            .map(|s| s.iter().copied().collect())
+            .unwrap_or_default();
 
-        tracing::debug!("tiling: tracked windows for pid={pid}: {tracked_window_ids:?}");
+        tracing::debug!("tiling: tracked windows for {identity:?}: {tracked:?}");
 
-        if tracked_window_ids.is_empty() {
-            tracing::debug!("tiling: no tracked windows for pid={pid}, nothing to do");
+        if tracked.is_empty() {
+            tracing::debug!("tiling: no tracked windows for {identity:?}, nothing to do");
             return;
         }
 
         // Use window cache to efficiently find invalid windows
         // This uses O(1) validity checks on cached elements where possible
         let cache = crate::modules::tiling::effects::get_window_cache();
-        let invalid_windows = cache.find_invalid_windows(&tracked_window_ids);
+        let targets: Vec<_> =
+            tracked.iter().map(|&window_id| WindowTarget { identity, window_id }).collect();
+        let invalid = cache.find_invalid_windows(&targets);
 
         tracing::debug!(
-            "tiling: found {} invalid windows for pid={pid}",
-            invalid_windows.len()
+            "tiling: found {} invalid windows for {identity:?}",
+            invalid.len()
         );
 
         // Destroy invalid windows
-        for window_id in invalid_windows {
-            tracing::debug!("tiling: window {window_id} no longer valid for pid={pid}, destroying");
-            self.on_window_destroyed(window_id);
+        for window_id in invalid {
+            tracing::debug!(
+                "tiling: window {window_id} no longer valid for {identity:?}, destroying"
+            );
+            self.on_window_destroyed(window_id, identity);
         }
     }
 
     /// Dispatch a window focused event immediately.
-    pub fn on_window_focused(&self, window_id: u32) {
+    pub fn on_window_focused(&self, window_id: u32, identity: AppIdentity) {
         tracing::debug!("tiling: Window focused event received: {window_id}");
-        let _ = self.actor_handle.send(StateMessage::WindowFocused { window_id });
+        let _ = self.actor_handle.send(StateMessage::WindowFocused { window_id, identity });
     }
 
     /// Dispatch a window unfocused event immediately.
-    pub fn on_window_unfocused(&self, window_id: u32) {
+    pub fn on_window_unfocused(&self, window_id: u32, identity: AppIdentity) {
         tracing::trace!("Window unfocused: {window_id}");
-        let _ = self.actor_handle.send(StateMessage::WindowUnfocused { window_id });
+        let _ = self.actor_handle.send(StateMessage::WindowUnfocused { window_id, identity });
     }
 
     /// Dispatch a window minimized event immediately.
-    pub fn on_window_minimized(&self, window_id: u32, minimized: bool) {
+    pub fn on_window_minimized(&self, window_id: u32, identity: AppIdentity, minimized: bool) {
         tracing::trace!("Window minimized: {window_id} = {minimized}");
-        let _ = self.actor_handle.send(StateMessage::WindowMinimized { window_id, minimized });
+        let _ = self.actor_handle.send(StateMessage::WindowMinimized {
+            window_id,
+            identity,
+            minimized,
+        });
     }
 
     /// Dispatch a window title changed event immediately.
-    pub fn on_window_title_changed(&self, window_id: u32, title: String) {
+    pub fn on_window_title_changed(&self, window_id: u32, identity: AppIdentity, title: String) {
         tracing::trace!("Window title changed: {window_id} = '{title}'");
-        let _ = self.actor_handle.send(StateMessage::WindowTitleChanged { window_id, title });
+        let _ =
+            self.actor_handle
+                .send(StateMessage::WindowTitleChanged { window_id, identity, title });
     }
 
     /// Dispatch a window fullscreen changed event immediately.
-    pub fn on_window_fullscreen_changed(&self, window_id: u32, fullscreen: bool) {
+    pub fn on_window_fullscreen_changed(
+        &self,
+        window_id: u32,
+        identity: AppIdentity,
+        fullscreen: bool,
+    ) {
         tracing::trace!("Window fullscreen changed: {window_id} = {fullscreen}");
-        let _ = self
-            .actor_handle
-            .send(StateMessage::WindowFullscreenChanged { window_id, fullscreen });
+        let _ = self.actor_handle.send(StateMessage::WindowFullscreenChanged {
+            window_id,
+            identity,
+            fullscreen,
+        });
     }
 
     // ========================================================================
@@ -551,8 +577,8 @@ impl EventProcessor {
     /// Queue a window moved event for batched dispatch.
     ///
     /// The event is routed to the appropriate screen's batch queue.
-    pub fn on_window_moved(&self, window_id: u32, frame: Rect) {
-        let screen_id = self.get_window_screen(window_id);
+    pub fn on_window_moved(&self, window_id: u32, identity: AppIdentity, frame: Rect) {
+        let screen_id = self.get_window_screen(identity, window_id);
         let mut batches = self.screen_batches.lock();
 
         // Find the target screen, falling back to any available screen
@@ -566,7 +592,7 @@ impl EventProcessor {
             if let Some(batch) = batches.get_mut(&target) {
                 batch
                     .updates
-                    .entry(window_id)
+                    .entry((identity, window_id))
                     .and_modify(|e| {
                         e.frame = frame;
                         e.update_type = match e.update_type {
@@ -576,6 +602,7 @@ impl EventProcessor {
                     })
                     .or_insert(GeometryUpdate {
                         window_id,
+                        identity,
                         frame,
                         update_type: GeometryUpdateType::Move,
                     });
@@ -583,15 +610,16 @@ impl EventProcessor {
         } else {
             // No screens registered, dispatch immediately
             drop(batches);
-            let _ = self.actor_handle.send(StateMessage::WindowMoved { window_id, frame });
+            let _ =
+                self.actor_handle.send(StateMessage::WindowMoved { window_id, identity, frame });
         }
     }
 
     /// Queue a window resized event for batched dispatch.
     ///
     /// The event is routed to the appropriate screen's batch queue.
-    pub fn on_window_resized(&self, window_id: u32, frame: Rect) {
-        let screen_id = self.get_window_screen(window_id);
+    pub fn on_window_resized(&self, window_id: u32, identity: AppIdentity, frame: Rect) {
+        let screen_id = self.get_window_screen(identity, window_id);
         let mut batches = self.screen_batches.lock();
 
         // Find the target screen, falling back to any available screen
@@ -605,7 +633,7 @@ impl EventProcessor {
             if let Some(batch) = batches.get_mut(&target) {
                 batch
                     .updates
-                    .entry(window_id)
+                    .entry((identity, window_id))
                     .and_modify(|e| {
                         e.frame = frame;
                         e.update_type = match e.update_type {
@@ -615,13 +643,16 @@ impl EventProcessor {
                     })
                     .or_insert(GeometryUpdate {
                         window_id,
+                        identity,
                         frame,
                         update_type: GeometryUpdateType::Resize,
                     });
             }
         } else {
             drop(batches);
-            let _ = self.actor_handle.send(StateMessage::WindowResized { window_id, frame });
+            let _ =
+                self.actor_handle
+                    .send(StateMessage::WindowResized { window_id, identity, frame });
         }
     }
 
@@ -630,9 +661,17 @@ impl EventProcessor {
     // ========================================================================
 
     /// Dispatch an app launched event.
-    pub fn on_app_launched(&self, pid: i32, bundle_id: String, name: String) {
+    pub fn on_app_launched(
+        &self,
+        identity: AppIdentity,
+        pid: i32,
+        bundle_id: String,
+        name: String,
+    ) {
         tracing::trace!("App launched: pid={pid}, bundle={bundle_id}");
-        let _ = self.actor_handle.send(StateMessage::AppLaunched { pid, bundle_id, name });
+        let _ =
+            self.actor_handle
+                .send(StateMessage::AppLaunched { identity, pid, bundle_id, name });
     }
 
     /// Dispatch an app terminated event.
@@ -640,16 +679,16 @@ impl EventProcessor {
     /// Clears the PID entry in the ownership tracker _before_ sending the
     /// message to the actor.  This prevents a delayed actor handler from
     /// accidentally re-animating stale ownership for the same PID.
-    pub fn on_app_terminated(&self, pid: i32) {
+    pub fn on_app_terminated(&self, identity: AppIdentity, pid: i32) {
         tracing::trace!("App terminated: pid={pid}");
         forget_stache_hidden_app_terminated(pid);
-        let _ = self.actor_handle.send(StateMessage::AppTerminated { pid });
+        let _ = self.actor_handle.send(StateMessage::AppTerminated { identity, pid });
     }
 
     /// Dispatch an app hidden event.
-    pub fn on_app_hidden(&self, pid: i32) {
+    pub fn on_app_hidden(&self, identity: AppIdentity, pid: i32) {
         tracing::trace!("App hidden: pid={pid}");
-        let _ = self.actor_handle.send(StateMessage::AppHidden { pid });
+        let _ = self.actor_handle.send(StateMessage::AppHidden { identity, pid });
     }
 
     /// Dispatch an app shown event.
@@ -661,17 +700,17 @@ impl EventProcessor {
     /// windows as visible.
     ///
     /// Delegates to [`on_app_shown_with`] for testability.
-    pub fn on_app_shown(&self, pid: i32) {
+    pub fn on_app_shown(&self, identity: AppIdentity, pid: i32) {
         tracing::trace!("App shown: pid={pid}");
         on_app_shown_with(pid, classify_stache_hidden_app, |pid| {
-            let _ = self.actor_handle.send(StateMessage::AppShown { pid });
+            let _ = self.actor_handle.send(StateMessage::AppShown { identity, pid });
         });
     }
 
     /// Dispatch an app activated event.
-    pub fn on_app_activated(&self, pid: i32) {
+    pub fn on_app_activated(&self, identity: AppIdentity, pid: i32) {
         tracing::trace!("App activated: pid={pid}");
-        let _ = self.actor_handle.send(StateMessage::AppActivated { pid });
+        let _ = self.actor_handle.send(StateMessage::AppActivated { identity, pid });
     }
 
     // ========================================================================
@@ -731,21 +770,21 @@ impl EventProcessor {
     ///
     /// This should be called for windows that are tracked at startup via
     /// `BatchWindowsCreated`, since those bypass the normal `on_window_created` path.
-    pub fn track_window_for_destroy_detection(&self, window_id: u32, pid: i32) {
-        self.pid_windows.lock().entry(pid).or_default().insert(window_id);
+    pub fn track_window_for_destroy_detection(&self, window_id: u32, identity: AppIdentity) {
+        self.pid_windows.lock().entry(identity).or_default().insert(window_id);
     }
 
     /// Tracks multiple windows for destroy detection.
     ///
     /// This is the batch version of `track_window_for_destroy_detection`.
     #[allow(clippy::significant_drop_tightening)]
-    pub fn track_windows_for_destroy_detection(&self, windows: &[(u32, i32)]) {
+    pub fn track_windows_for_destroy_detection(&self, windows: &[(u32, AppIdentity)]) {
         let mut pid_windows = self.pid_windows.lock();
-        for (window_id, pid) in windows {
-            pid_windows.entry(*pid).or_default().insert(*window_id);
+        for (window_id, identity) in windows {
+            pid_windows.entry(*identity).or_default().insert(*window_id);
         }
         tracing::debug!(
-            "tiling: tracked {} windows for destroy detection ({} PIDs)",
+            "tiling: tracked {} windows for destroy detection ({} identities)",
             windows.len(),
             pid_windows.len()
         );
@@ -811,6 +850,14 @@ pub fn get_main_display_refresh_rate() -> f64 {
 mod tests {
     use super::*;
     use crate::modules::tiling::actor::StateActor;
+    use crate::modules::tiling::identity::{AppIdentity, LaunchDateBits};
+
+    fn test_identity() -> AppIdentity {
+        AppIdentity {
+            pid: 1000,
+            launch_date: LaunchDateBits::from_time_interval_since_reference_date(1.0).unwrap(),
+        }
+    }
 
     #[tokio::test]
     async fn test_processor_creation() {
@@ -863,12 +910,12 @@ mod tests {
         processor.register_screen(2, 144.0);
 
         // Assign windows to screens
-        processor.set_window_screen(100, 1);
-        processor.set_window_screen(200, 2);
+        processor.set_window_screen(test_identity(), 100, 1);
+        processor.set_window_screen(test_identity(), 200, 2);
 
         // Queue geometry events
-        processor.on_window_moved(100, Rect::new(0.0, 0.0, 100.0, 100.0));
-        processor.on_window_moved(200, Rect::new(0.0, 0.0, 100.0, 100.0));
+        processor.on_window_moved(100, test_identity(), Rect::new(0.0, 0.0, 100.0, 100.0));
+        processor.on_window_moved(200, test_identity(), Rect::new(0.0, 0.0, 100.0, 100.0));
 
         // Check per-screen pending counts
         assert_eq!(processor.pending_geometry_count_for_screen(1), 1);
@@ -884,12 +931,12 @@ mod tests {
         let processor = EventProcessor::new(handle.clone());
 
         processor.register_screen(1, 60.0);
-        processor.set_window_screen(100, 1);
+        processor.set_window_screen(test_identity(), 100, 1);
 
         // Queue multiple moves for the same window
-        processor.on_window_moved(100, Rect::new(0.0, 0.0, 100.0, 100.0));
-        processor.on_window_moved(100, Rect::new(10.0, 10.0, 100.0, 100.0));
-        processor.on_window_moved(100, Rect::new(20.0, 20.0, 100.0, 100.0));
+        processor.on_window_moved(100, test_identity(), Rect::new(0.0, 0.0, 100.0, 100.0));
+        processor.on_window_moved(100, test_identity(), Rect::new(10.0, 10.0, 100.0, 100.0));
+        processor.on_window_moved(100, test_identity(), Rect::new(20.0, 20.0, 100.0, 100.0));
 
         // Should only have 1 pending update (coalesced)
         assert_eq!(processor.pending_geometry_count(), 1);
@@ -903,12 +950,12 @@ mod tests {
         let processor = EventProcessor::new(handle.clone());
 
         processor.register_screen(1, 60.0);
-        processor.set_window_screen(100, 1);
+        processor.set_window_screen(test_identity(), 100, 1);
 
-        processor.on_window_moved(100, Rect::new(0.0, 0.0, 100.0, 100.0));
+        processor.on_window_moved(100, test_identity(), Rect::new(0.0, 0.0, 100.0, 100.0));
         assert_eq!(processor.pending_geometry_count(), 1);
 
-        processor.on_window_destroyed(100);
+        processor.on_window_destroyed(100, test_identity());
         assert_eq!(processor.pending_geometry_count(), 0);
 
         handle.shutdown().unwrap();
@@ -920,8 +967,8 @@ mod tests {
         let processor = EventProcessor::new(handle.clone());
 
         processor.register_screen(1, 60.0);
-        processor.set_window_screen(100, 1);
-        processor.on_window_moved(100, Rect::new(0.0, 0.0, 100.0, 100.0));
+        processor.set_window_screen(test_identity(), 100, 1);
+        processor.on_window_moved(100, test_identity(), Rect::new(0.0, 0.0, 100.0, 100.0));
 
         assert_eq!(processor.pending_geometry_count(), 1);
 
@@ -940,7 +987,7 @@ mod tests {
         let processor = EventProcessor::new(handle.clone());
 
         // No screens registered - should dispatch immediately
-        processor.on_window_moved(100, Rect::new(0.0, 0.0, 100.0, 100.0));
+        processor.on_window_moved(100, test_identity(), Rect::new(0.0, 0.0, 100.0, 100.0));
 
         // Should not be batched (no screens to batch to)
         assert_eq!(processor.pending_geometry_count(), 0);
@@ -1031,11 +1078,11 @@ mod tests {
 
         processor.register_screen(1, 60.0);
         processor.register_screen(2, 144.0);
-        processor.set_window_screen(100, 1);
-        processor.set_window_screen(200, 2);
+        processor.set_window_screen(test_identity(), 100, 1);
+        processor.set_window_screen(test_identity(), 200, 2);
 
-        processor.on_window_moved(100, Rect::new(0.0, 0.0, 100.0, 100.0));
-        processor.on_window_moved(200, Rect::new(0.0, 0.0, 100.0, 100.0));
+        processor.on_window_moved(100, test_identity(), Rect::new(0.0, 0.0, 100.0, 100.0));
+        processor.on_window_moved(200, test_identity(), Rect::new(0.0, 0.0, 100.0, 100.0));
 
         assert_eq!(processor.pending_geometry_count(), 2);
 
@@ -1052,8 +1099,8 @@ mod tests {
         let processor = EventProcessor::new(handle.clone());
 
         processor.register_screen(1, 60.0);
-        processor.set_window_screen(100, 1);
-        processor.on_window_moved(100, Rect::new(0.0, 0.0, 100.0, 100.0));
+        processor.set_window_screen(test_identity(), 100, 1);
+        processor.on_window_moved(100, test_identity(), Rect::new(0.0, 0.0, 100.0, 100.0));
         processor.start();
         assert!(processor.is_running());
         assert_eq!(processor.pending_geometry_count(), 1);
@@ -1074,8 +1121,8 @@ mod tests {
         let processor = EventProcessor::new(handle.clone());
 
         processor.register_screen(1, 60.0);
-        processor.set_window_screen(100, 1);
-        processor.on_window_moved(100, Rect::new(0.0, 0.0, 100.0, 100.0));
+        processor.set_window_screen(test_identity(), 100, 1);
+        processor.on_window_moved(100, test_identity(), Rect::new(0.0, 0.0, 100.0, 100.0));
 
         // Never started: no timer tasks exist, so nothing to wait on.
         let stopped = processor.stop_and_wait(Duration::from_millis(100));
@@ -1092,8 +1139,8 @@ mod tests {
         let processor = EventProcessor::new(handle.clone());
 
         processor.register_screen(1, 60.0);
-        processor.set_window_screen(100, 1);
-        processor.on_window_moved(100, Rect::new(0.0, 0.0, 100.0, 100.0));
+        processor.set_window_screen(test_identity(), 100, 1);
+        processor.on_window_moved(100, test_identity(), Rect::new(0.0, 0.0, 100.0, 100.0));
 
         let _ = processor.stop_and_wait(Duration::from_secs(1));
         assert_eq!(processor.pending_geometry_count(), 0);

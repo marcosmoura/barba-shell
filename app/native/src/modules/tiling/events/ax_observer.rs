@@ -42,6 +42,7 @@ use parking_lot::RwLock;
 use super::types::{WindowEvent, WindowEventType};
 use crate::modules::tiling::actor::WindowCreatedInfo;
 use crate::modules::tiling::events::EventProcessor;
+use crate::modules::tiling::identity::AppIdentity;
 use crate::modules::tiling::rules::is_pip_window;
 use crate::modules::tiling::state::Rect;
 
@@ -132,46 +133,45 @@ impl AXObserverAdapter {
 
         // The AX element reference is passed as a usize in the event
         let ax_element = event.element as AXUIElementRef;
-
         match event.event_type {
             WindowEventType::Created => {
-                self.handle_window_created(event.pid, ax_element);
+                self.handle_window_created(event.pid, event.identity, ax_element);
             }
             WindowEventType::Destroyed => {
-                self.handle_window_destroyed(event.pid, ax_element);
+                self.handle_window_destroyed(event.pid, event.identity, ax_element);
             }
             WindowEventType::Focused => {
-                self.handle_window_focused(event.pid, ax_element);
+                self.handle_window_focused(event.pid, event.identity, ax_element);
             }
             WindowEventType::Unfocused => {
-                self.handle_window_unfocused(event.pid, ax_element);
+                self.handle_window_unfocused(event.pid, event.identity, ax_element);
             }
             WindowEventType::Moved => {
-                self.handle_window_moved(event.pid, ax_element);
+                self.handle_window_moved(event.pid, event.identity, ax_element);
             }
             WindowEventType::Resized => {
-                self.handle_window_resized(event.pid, ax_element);
+                self.handle_window_resized(event.pid, event.identity, ax_element);
             }
             WindowEventType::Minimized => {
-                self.handle_window_minimized(event.pid, ax_element, true);
+                self.handle_window_minimized(event.pid, event.identity, ax_element, true);
             }
             WindowEventType::Unminimized => {
-                self.handle_window_minimized(event.pid, ax_element, false);
+                self.handle_window_minimized(event.pid, event.identity, ax_element, false);
             }
             WindowEventType::TitleChanged => {
-                self.handle_title_changed(event.pid, ax_element);
+                self.handle_title_changed(event.pid, event.identity, ax_element);
             }
             WindowEventType::AppActivated => {
-                self.handle_app_activated(event.pid);
+                self.handle_app_activated(event.pid, event.identity);
             }
             WindowEventType::AppDeactivated => {
                 // App deactivation is implicitly handled when another app activates
             }
             WindowEventType::AppHidden => {
-                self.processor.on_app_hidden(event.pid);
+                self.processor.on_app_hidden(event.identity, event.pid);
             }
             WindowEventType::AppShown => {
-                self.processor.on_app_shown(event.pid);
+                self.processor.on_app_shown(event.identity, event.pid);
             }
         }
     }
@@ -180,7 +180,7 @@ impl AXObserverAdapter {
     // Event Handlers
     // ========================================================================
 
-    fn handle_window_created(&self, pid: i32, ax_element: AXUIElementRef) {
+    fn handle_window_created(&self, pid: i32, identity: AppIdentity, ax_element: AXUIElementRef) {
         // Minimum size thresholds
         // Standard windows: 200x150 minimum
         // Dialogs: 400x300 minimum (real dialogs like preferences are larger;
@@ -251,7 +251,7 @@ impl AXObserverAdapter {
         let info = WindowCreatedInfo {
             window_id,
             pid,
-            identity: None,
+            identity: Some(identity),
             app_id,
             app_name,
             title,
@@ -266,7 +266,7 @@ impl AXObserverAdapter {
         self.processor.on_window_created(info);
     }
 
-    fn handle_window_destroyed(&self, pid: i32, ax_element: AXUIElementRef) {
+    fn handle_window_destroyed(&self, pid: i32, identity: AppIdentity, ax_element: AXUIElementRef) {
         tracing::debug!(
             "tiling: handle_window_destroyed called for pid={pid}, element={ax_element:?}"
         );
@@ -274,7 +274,7 @@ impl AXObserverAdapter {
         // First try to get window ID directly (might work if element is still valid)
         if let Some(window_id) = get_window_id(ax_element) {
             tracing::debug!("tiling: window destroyed - got window_id={window_id} from AX element");
-            self.processor.on_window_destroyed(window_id);
+            self.processor.on_window_destroyed(window_id, identity);
             return;
         }
 
@@ -298,44 +298,37 @@ impl AXObserverAdapter {
             return;
         }
 
-        // Either it IS a window, or we couldn't determine (element invalid) - fall back to PID detection
+        // Either it IS a window, or we couldn't determine (element invalid) - fall back to identity detection
         tracing::debug!(
-            "tiling: window destroyed - role={role:?}, falling back to PID-based detection for pid={pid}"
+            "tiling: window destroyed - role={role:?}, falling back to identity-based detection for pid={pid}"
         );
-        self.processor.on_window_destroyed_for_pid(pid);
+        self.processor.on_window_destroyed_for_identity(identity);
     }
 
-    fn handle_window_focused(&self, pid: i32, ax_element: AXUIElementRef) {
+    fn handle_window_focused(&self, pid: i32, identity: AppIdentity, ax_element: AXUIElementRef) {
         let Some(window_id) = get_window_id(ax_element) else {
             tracing::debug!("tiling: Window focused event: could not get window ID (pid={pid})");
             return;
         };
 
         tracing::debug!("tiling: AX focus event received - window_id={window_id}, pid={pid}");
-        self.processor.on_window_focused(window_id);
+        self.processor.on_window_focused(window_id, identity);
     }
 
-    fn handle_window_unfocused(&self, _pid: i32, ax_element: AXUIElementRef) {
+    fn handle_window_unfocused(
+        &self,
+        _pid: i32,
+        identity: AppIdentity,
+        ax_element: AXUIElementRef,
+    ) {
         let Some(window_id) = get_window_id(ax_element) else {
             return;
         };
 
-        self.processor.on_window_unfocused(window_id);
+        self.processor.on_window_unfocused(window_id, identity);
     }
 
-    fn handle_window_moved(&self, _pid: i32, ax_element: AXUIElementRef) {
-        let Some(window_id) = get_window_id(ax_element) else {
-            return;
-        };
-
-        let Some(frame) = get_window_frame(ax_element) else {
-            return;
-        };
-
-        self.processor.on_window_moved(window_id, frame);
-    }
-
-    fn handle_window_resized(&self, _pid: i32, ax_element: AXUIElementRef) {
+    fn handle_window_moved(&self, _pid: i32, identity: AppIdentity, ax_element: AXUIElementRef) {
         let Some(window_id) = get_window_id(ax_element) else {
             return;
         };
@@ -344,43 +337,61 @@ impl AXObserverAdapter {
             return;
         };
 
-        self.processor.on_window_resized(window_id, frame);
+        self.processor.on_window_moved(window_id, identity, frame);
     }
 
-    fn handle_window_minimized(&self, _pid: i32, ax_element: AXUIElementRef, minimized: bool) {
+    fn handle_window_resized(&self, _pid: i32, identity: AppIdentity, ax_element: AXUIElementRef) {
         let Some(window_id) = get_window_id(ax_element) else {
             return;
         };
 
-        self.processor.on_window_minimized(window_id, minimized);
+        let Some(frame) = get_window_frame(ax_element) else {
+            return;
+        };
+
+        self.processor.on_window_resized(window_id, identity, frame);
     }
 
-    fn handle_title_changed(&self, _pid: i32, ax_element: AXUIElementRef) {
+    fn handle_window_minimized(
+        &self,
+        _pid: i32,
+        identity: AppIdentity,
+        ax_element: AXUIElementRef,
+        minimized: bool,
+    ) {
+        let Some(window_id) = get_window_id(ax_element) else {
+            return;
+        };
+
+        self.processor.on_window_minimized(window_id, identity, minimized);
+    }
+
+    fn handle_title_changed(&self, _pid: i32, identity: AppIdentity, ax_element: AXUIElementRef) {
         let Some(window_id) = get_window_id(ax_element) else {
             return;
         };
 
         let title = get_window_title(ax_element).unwrap_or_default();
-        self.processor.on_window_title_changed(window_id, title);
+        self.processor.on_window_title_changed(window_id, identity, title);
     }
 
     /// Handles app activation by querying the focused window and emitting a focus event.
     ///
     /// macOS doesn't reliably fire `AXFocusedWindowChanged` when switching between apps,
     /// so we query the focused window when an app is activated.
-    fn handle_app_activated(&self, pid: i32) {
+    fn handle_app_activated(&self, pid: i32, identity: AppIdentity) {
         tracing::trace!("App activated: pid={pid}, querying focused window...");
 
         // Query the focused window of this app
         if let Some(window_id) = get_focused_window_for_app(pid) {
             tracing::debug!("App activated: found focused window {window_id}");
-            self.processor.on_window_focused(window_id);
+            self.processor.on_window_focused(window_id, identity);
         } else {
             tracing::trace!("App activated: no focused window found for pid={pid}");
         }
 
         // Also notify app activation (for other purposes)
-        self.processor.on_app_activated(pid);
+        self.processor.on_app_activated(identity, pid);
     }
 }
 

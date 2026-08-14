@@ -29,6 +29,7 @@ pub use messages::{
 use tokio::sync::mpsc;
 
 use crate::config::get_config;
+use crate::modules::tiling::identity::{AppIdentity, WindowTarget};
 use crate::modules::tiling::init::get_subscriber_handle;
 use crate::modules::tiling::layout::{Gaps, MasterPosition, calculate_layout_full};
 use crate::modules::tiling::state::{LayoutType, Rect, TilingState};
@@ -128,11 +129,19 @@ impl StateActor {
             StateMessage::WindowCreated(info) => {
                 handlers::on_window_created(&mut self.state, info);
             }
-            StateMessage::WindowDestroyed { window_id } => {
+            StateMessage::WindowDestroyed { window_id, identity } => {
+                if !self.window_event_matches(window_id, identity) {
+                    tracing::trace!(
+                        "tiling: dropping stale WindowDestroyed for window_id={window_id}"
+                    );
+                    return;
+                }
                 tracing::debug!(
                     "tiling: actor received WindowDestroyed message for window_id={window_id}"
                 );
-                if let Some(ws_id) = handlers::on_window_destroyed(&mut self.state, window_id) {
+                if let Some(ws_id) =
+                    handlers::on_window_destroyed(&mut self.state, window_id, identity)
+                {
                     tracing::debug!(
                         "tiling: window {window_id} was in workspace {ws_id}, notifying subscriber"
                     );
@@ -153,43 +162,87 @@ impl StateActor {
                     );
                 }
             }
-            StateMessage::WindowFocused { window_id } => {
+            StateMessage::WindowFocused { window_id, identity } => {
+                if !self.window_event_matches(window_id, identity) {
+                    tracing::trace!(
+                        "tiling: dropping stale WindowFocused for window_id={window_id}"
+                    );
+                    return;
+                }
                 handlers::on_window_focused(&mut self.state, window_id);
             }
-            StateMessage::WindowUnfocused { window_id } => {
+            StateMessage::WindowUnfocused { window_id, identity } => {
+                if !self.window_event_matches(window_id, identity) {
+                    tracing::trace!(
+                        "tiling: dropping stale WindowUnfocused for window_id={window_id}"
+                    );
+                    return;
+                }
                 handlers::on_window_unfocused(&mut self.state, window_id);
             }
-            StateMessage::WindowMoved { window_id, frame } => {
+            StateMessage::WindowMoved { window_id, identity, frame } => {
+                if !self.window_event_matches(window_id, identity) {
+                    tracing::trace!("tiling: dropping stale WindowMoved for window_id={window_id}");
+                    return;
+                }
                 handlers::on_window_moved(&mut self.state, window_id, frame);
             }
-            StateMessage::WindowResized { window_id, frame } => {
+            StateMessage::WindowResized { window_id, identity, frame } => {
+                if !self.window_event_matches(window_id, identity) {
+                    tracing::trace!(
+                        "tiling: dropping stale WindowResized for window_id={window_id}"
+                    );
+                    return;
+                }
                 handlers::on_window_resized(&mut self.state, window_id, frame);
             }
-            StateMessage::WindowMinimized { window_id, minimized } => {
+            StateMessage::WindowMinimized { window_id, identity, minimized } => {
+                if !self.window_event_matches(window_id, identity) {
+                    tracing::trace!(
+                        "tiling: dropping stale WindowMinimized for window_id={window_id}"
+                    );
+                    return;
+                }
                 handlers::on_window_minimized(&mut self.state, window_id, minimized);
             }
-            StateMessage::WindowTitleChanged { window_id, title } => {
+            StateMessage::WindowTitleChanged { window_id, identity, title } => {
+                if !self.window_event_matches(window_id, identity) {
+                    tracing::trace!(
+                        "tiling: dropping stale WindowTitleChanged for window_id={window_id}"
+                    );
+                    return;
+                }
                 handlers::on_window_title_changed(&mut self.state, window_id, &title);
             }
-            StateMessage::WindowFullscreenChanged { window_id, fullscreen } => {
+            StateMessage::WindowFullscreenChanged {
+                window_id,
+                identity,
+                fullscreen,
+            } => {
+                if !self.window_event_matches(window_id, identity) {
+                    tracing::trace!(
+                        "tiling: dropping stale WindowFullscreenChanged for window_id={window_id}"
+                    );
+                    return;
+                }
                 handlers::on_window_fullscreen_changed(&mut self.state, window_id, fullscreen);
             }
 
             // App events - delegated to handlers
-            StateMessage::AppLaunched { pid, bundle_id, name } => {
-                handlers::on_app_launched(&mut self.state, pid, &bundle_id, &name);
+            StateMessage::AppLaunched { identity, pid, bundle_id, name } => {
+                handlers::on_app_launched(&mut self.state, identity, pid, &bundle_id, &name);
             }
-            StateMessage::AppTerminated { pid } => {
-                handlers::on_app_terminated(&mut self.state, pid);
+            StateMessage::AppTerminated { identity, pid } => {
+                handlers::on_app_terminated(&mut self.state, identity, pid);
             }
-            StateMessage::AppHidden { pid } => {
-                handlers::on_app_hidden(&mut self.state, pid);
+            StateMessage::AppHidden { identity, pid } => {
+                handlers::on_app_hidden(&mut self.state, identity, pid);
             }
-            StateMessage::AppShown { pid } => {
-                handlers::on_app_shown(&mut self.state, pid);
+            StateMessage::AppShown { identity, pid } => {
+                handlers::on_app_shown(&mut self.state, identity, pid);
             }
-            StateMessage::AppActivated { pid } => {
-                handlers::on_app_activated(&mut self.state, pid);
+            StateMessage::AppActivated { identity, pid } => {
+                handlers::on_app_activated(&mut self.state, identity, pid);
             }
 
             // Screen events - delegated to handlers
@@ -211,8 +264,8 @@ impl StateActor {
             StateMessage::MoveWindowToWorkspace { window_id, workspace_id } => {
                 self.on_move_window_to_workspace(window_id, workspace_id);
             }
-            StateMessage::SwapWindows { window_id_a, window_id_b } => {
-                self.on_swap_windows(window_id_a, window_id_b);
+            StateMessage::SwapWindows { target_a, target_b } => {
+                self.on_swap_windows(target_a, target_b);
             }
             StateMessage::CycleFocus { direction } => self.on_cycle_focus(direction),
             StateMessage::FocusWindow { direction } => self.on_focus_window(direction),
@@ -250,19 +303,23 @@ impl StateActor {
                 }
             }
 
-            // Batched geometry - delegated to handlers
+            // Batched geometry - delegated to handlers (per-update identity check)
             StateMessage::BatchedGeometryUpdates(updates) => {
+                let updates: Vec<GeometryUpdate> = updates
+                    .into_iter()
+                    .filter(|u| self.window_event_matches(u.window_id, u.identity))
+                    .collect();
                 handlers::on_batched_geometry_updates(&mut self.state, &updates);
             }
 
             // User-initiated resize completed
             StateMessage::UserResizeCompleted {
                 workspace_id,
-                window_id,
+                target,
                 old_frame,
                 new_frame,
             } => {
-                self.on_user_resize_completed(workspace_id, window_id, old_frame, new_frame);
+                self.on_user_resize_completed(workspace_id, target, old_frame, new_frame);
             }
 
             // User-initiated move completed (no swap) - snap back to layout
@@ -297,12 +354,33 @@ impl StateActor {
     /// This also updates the window's actual `frame` field so that directional
     /// operations (like swap, focus) use the correct positions immediately,
     /// even while animations are in progress.
-    fn on_set_expected_frames(&mut self, frames: Vec<(u32, Rect)>) {
-        for (window_id, frame) in frames {
-            self.state.update_window(window_id, |w| {
+    fn on_set_expected_frames(&mut self, frames: Vec<(WindowTarget, Rect)>) {
+        for (target, frame) in frames {
+            // Only apply when the stored window identity equals the target identity.
+            let matches = self
+                .state
+                .get_window(target.window_id)
+                .is_some_and(|w| w.identity == Some(target.identity));
+            if !matches {
+                tracing::trace!(
+                    "tiling: dropping stale expected frame for window_id={}",
+                    target.window_id
+                );
+                continue;
+            }
+            self.state.update_window(target.window_id, |w| {
                 w.frame = frame;
                 w.expected_frame = Some(frame);
             });
+        }
+    }
+
+    /// Rejects AX-derived events for a window whose stored identity differs
+    /// from the event identity (stale or PID-reused window ID).
+    fn window_event_matches(&self, window_id: u32, identity: AppIdentity) -> bool {
+        match self.state.get_window(window_id) {
+            Some(w) => w.identity.is_none_or(|stored| stored == identity),
+            None => false,
         }
     }
 
@@ -363,6 +441,23 @@ impl StateActor {
                 QueryResult::Layout(self.compute_layout(workspace_id))
             }
 
+            StateQuery::GetWindowLayoutTargets { workspace_id } => {
+                QueryResult::TargetLayout(self.compute_layout_targets(workspace_id))
+            }
+
+            StateQuery::GetFocusTargets => {
+                let focus = eyeball::Observable::get(&self.state.focus);
+                let focused_window = focus.focused_window_id.and_then(|id| {
+                    self.state.get_window(id).and_then(|w| {
+                        w.identity.map(|identity| WindowTarget { identity, window_id: id })
+                    })
+                });
+                QueryResult::TargetFocus {
+                    focused_window,
+                    focused_workspace_id: focus.focused_workspace_id,
+                }
+            }
+
             // ════════════════════════════════════════════════════════════════════════
             // ID-Only Queries (zero-clone, for hot paths)
             // ════════════════════════════════════════════════════════════════════════
@@ -389,6 +484,20 @@ impl StateActor {
     // ========================================================================
     // Layout Computation
     // ========================================================================
+
+    /// Identity-keyed layout targets for the effect subscriber.
+    ///
+    /// Windows without a stored identity are omitted (fail-closed).
+    fn compute_layout_targets(&self, workspace_id: uuid::Uuid) -> Vec<(WindowTarget, Rect)> {
+        self.compute_layout(workspace_id)
+            .into_iter()
+            .filter_map(|(window_id, frame)| {
+                self.state.get_window(window_id).and_then(|w| {
+                    w.identity.map(|identity| (WindowTarget { identity, window_id }, frame))
+                })
+            })
+            .collect()
+    }
 
     /// Compute the layout for a workspace.
     ///
@@ -533,8 +642,15 @@ impl StateActor {
         handlers::on_move_window_to_workspace(&mut self.state, window_id, workspace_id);
     }
 
-    fn on_swap_windows(&mut self, window_id_a: u32, window_id_b: u32) {
-        handlers::on_swap_windows(&mut self.state, window_id_a, window_id_b);
+    fn on_swap_windows(&mut self, target_a: WindowTarget, target_b: WindowTarget) {
+        // Exact identity validation: never swap against a stale window ID.
+        let a_ok = self.window_event_matches(target_a.window_id, target_a.identity);
+        let b_ok = self.window_event_matches(target_b.window_id, target_b.identity);
+        if !(a_ok && b_ok) {
+            tracing::trace!("tiling: dropping stale SwapWindows (identity mismatch)");
+            return;
+        }
+        handlers::on_swap_windows(&mut self.state, target_a.window_id, target_b.window_id);
     }
 
     fn on_cycle_focus(&mut self, direction: CycleDirection) {
@@ -585,14 +701,19 @@ impl StateActor {
     fn on_user_resize_completed(
         &mut self,
         workspace_id: uuid::Uuid,
-        window_id: u32,
+        target: WindowTarget,
         old_frame: Rect,
         new_frame: Rect,
     ) {
+        // Exact identity validation before ratio recalculation.
+        if !self.window_event_matches(target.window_id, target.identity) {
+            tracing::trace!("tiling: dropping stale UserResizeCompleted (identity mismatch)");
+            return;
+        }
         handlers::on_user_resize_completed(
             &mut self.state,
             workspace_id,
-            window_id,
+            target.window_id,
             old_frame,
             new_frame,
         );

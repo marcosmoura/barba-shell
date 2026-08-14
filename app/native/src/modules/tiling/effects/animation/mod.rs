@@ -56,6 +56,7 @@ pub use transition::WindowTransition;
 use crate::config::{EasingType, get_config};
 use crate::modules::tiling::effects::window_cache::get_cache;
 use crate::modules::tiling::ffi::skylight::UpdateGuard;
+use crate::modules::tiling::identity::WindowTarget;
 use crate::modules::tiling::layout::LAYOUT_INLINE_CAP;
 use crate::modules::tiling::state::Rect;
 
@@ -241,7 +242,7 @@ impl AnimationSystem {
         let cache = get_cache();
         let mut count = 0;
         for t in transitions {
-            if cache.set_window_frame_fast(t.window_id, &t.to) {
+            if cache.set_window_frame_fast(t.target, &t.to) {
                 count += 1;
             }
         }
@@ -274,19 +275,19 @@ impl AnimationSystem {
         let start = Instant::now();
         let easing = self.config.easing;
 
-        // Collect window IDs for batch resolution
-        let window_ids: SmallVec<[u32; LAYOUT_INLINE_CAP]> =
-            transitions.iter().map(|t| t.window_id).collect();
+        // Collect exact targets for batch resolution
+        let targets: SmallVec<[WindowTarget; LAYOUT_INLINE_CAP]> =
+            transitions.iter().map(|t| t.target).collect();
 
         // Use cache for efficient batch resolution (avoids O(n*m) per window)
         let cache = get_cache();
-        let resolved = cache.batch_resolve(&window_ids);
+        let resolved = cache.batch_resolve(&targets);
 
         // Build animatable list with transition indices
         let animatable: Vec<_> = resolved
             .into_iter()
-            .filter_map(|(wid, ax)| {
-                let idx = transitions.iter().position(|t| t.window_id == wid)?;
+            .filter_map(|(target, ax)| {
+                let idx = transitions.iter().position(|t| t.target == target)?;
                 Some((idx, ax))
             })
             .collect();
@@ -308,7 +309,7 @@ impl AnimationSystem {
                 }
                 ca_transaction_commit();
 
-                clear_interrupted_positions(&window_ids);
+                clear_interrupted_positions(&targets);
                 cleanup_ax_elements(&animatable);
                 set_animation_active(false);
                 return animatable.len();
@@ -327,7 +328,7 @@ impl AnimationSystem {
             ca_transaction_commit();
 
             if progress >= 1.0 {
-                clear_interrupted_positions(&window_ids);
+                clear_interrupted_positions(&targets);
                 cleanup_ax_elements(&animatable);
                 set_animation_active(false);
                 return animatable.len();
@@ -352,19 +353,19 @@ impl AnimationSystem {
         let start = Instant::now();
         let mut last_frame_time = start;
 
-        // Collect window IDs for batch resolution
-        let window_ids: SmallVec<[u32; LAYOUT_INLINE_CAP]> =
-            transitions.iter().map(|t| t.window_id).collect();
+        // Collect exact targets for batch resolution
+        let targets: SmallVec<[WindowTarget; LAYOUT_INLINE_CAP]> =
+            transitions.iter().map(|t| t.target).collect();
 
         // Use cache for efficient batch resolution (avoids O(n*m) per window)
         let cache = get_cache();
-        let resolved = cache.batch_resolve(&window_ids);
+        let resolved = cache.batch_resolve(&targets);
 
         // Build animatable list with transition indices
         let animatable: Vec<_> = resolved
             .into_iter()
-            .filter_map(|(wid, ax)| {
-                let idx = transitions.iter().position(|t| t.window_id == wid)?;
+            .filter_map(|(target, ax)| {
+                let idx = transitions.iter().position(|t| t.target == target)?;
                 Some((idx, ax))
             })
             .collect();
@@ -388,7 +389,7 @@ impl AnimationSystem {
                 }
                 ca_transaction_commit();
 
-                clear_interrupted_positions(&window_ids);
+                clear_interrupted_positions(&targets);
                 cleanup_ax_elements(&animatable);
                 set_animation_active(false);
                 return animatable.len();
@@ -425,7 +426,7 @@ impl AnimationSystem {
                 }
                 ca_transaction_commit();
 
-                clear_interrupted_positions(&window_ids);
+                clear_interrupted_positions(&targets);
                 cleanup_ax_elements(&animatable);
                 set_animation_active(false);
                 return animatable.len();

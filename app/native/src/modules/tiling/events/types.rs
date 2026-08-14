@@ -3,6 +3,8 @@
 //! These types represent raw events from macOS before they are transformed
 //! into `StateMessage`s for the state actor.
 
+use crate::modules::tiling::identity::AppIdentity;
+
 // ============================================================================
 // Notification Constants
 // ============================================================================
@@ -141,6 +143,8 @@ pub struct WindowEvent {
     pub event_type: WindowEventType,
     /// The process ID of the application that owns the element.
     pub pid: i32,
+    /// Exact application identity. Never derived from a bare PID at callback time.
+    pub identity: AppIdentity,
     /// The accessibility element that triggered the event.
     /// This is an opaque pointer that should not be dereferenced directly.
     pub element: usize,
@@ -149,8 +153,18 @@ pub struct WindowEvent {
 impl WindowEvent {
     /// Creates a new window event.
     #[must_use]
-    pub const fn new(event_type: WindowEventType, pid: i32, element: usize) -> Self {
-        Self { event_type, pid, element }
+    pub const fn new(
+        event_type: WindowEventType,
+        pid: i32,
+        element: usize,
+        identity: AppIdentity,
+    ) -> Self {
+        Self {
+            event_type,
+            pid,
+            identity,
+            element,
+        }
     }
 }
 
@@ -161,6 +175,14 @@ impl WindowEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::tiling::identity::{AppIdentity, LaunchDateBits};
+
+    fn test_identity() -> AppIdentity {
+        AppIdentity {
+            pid: 1234,
+            launch_date: LaunchDateBits::from_time_interval_since_reference_date(1.0).unwrap(),
+        }
+    }
 
     #[test]
     fn test_window_event_type_notification_names() {
@@ -255,9 +277,18 @@ mod tests {
 
     #[test]
     fn test_window_event_new() {
-        let event = WindowEvent::new(WindowEventType::Created, 1234, 0x1234_5678);
+        let identity = test_identity();
+        let event = WindowEvent::new(WindowEventType::Created, 1234, 0x1234_5678, identity);
         assert_eq!(event.event_type, WindowEventType::Created);
         assert_eq!(event.pid, 1234);
         assert_eq!(event.element, 0x1234_5678);
+        assert_eq!(event.identity, identity);
+    }
+
+    #[test]
+    fn window_event_carries_identity() {
+        let ident = test_identity();
+        let event = WindowEvent::new(WindowEventType::Created, 42, 0x1234, ident);
+        assert_eq!(event.identity, ident);
     }
 }

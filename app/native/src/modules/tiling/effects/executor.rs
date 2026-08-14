@@ -22,7 +22,8 @@ use super::{
     AnimationSystem, BorderState, TilingEffect, WindowTransition, get_interrupted_position,
     window_cache, window_ops,
 };
-use crate::modules::tiling::state::Rect;
+use crate::modules::tiling::identity::WindowTarget;
+use crate::modules::tiling::state::{LayoutType, Rect};
 
 // ============================================================================
 // Effect Executor
@@ -93,38 +94,43 @@ impl EffectExecutor {
         }
 
         // Group effects by type
-        let mut frame_updates: Vec<(u32, Rect, bool)> = Vec::new();
-        let mut border_updates: Vec<(u32, BorderState)> = Vec::new();
+        let mut frame_updates: Vec<(WindowTarget, Rect, bool)> = Vec::new();
+        let mut border_updates: Vec<(WindowTarget, BorderState)> = Vec::new();
         let mut events: Vec<(String, serde_json::Value)> = Vec::new();
-        let mut focus_ops: Vec<u32> = Vec::new();
-        let mut raise_ops: Vec<u32> = Vec::new();
-        let mut visibility_ops: Vec<(u32, bool)> = Vec::new();
+        let mut focus_ops: Vec<WindowTarget> = Vec::new();
+        let mut raise_ops: Vec<WindowTarget> = Vec::new();
+        let mut visibility_ops: Vec<(WindowTarget, bool)> = Vec::new();
+        let mut active_borders: Vec<(WindowTarget, LayoutType, bool)> = Vec::new();
 
         for effect in effects {
             match effect {
-                TilingEffect::SetWindowFrame { window_id, frame, animate } => {
-                    frame_updates.push((window_id, frame, animate));
+                TilingEffect::SetWindowFrame { target, frame, animate } => {
+                    frame_updates.push((target, frame, animate));
                 }
-                TilingEffect::SetWindowVisible { window_id, visible } => {
-                    visibility_ops.push((window_id, visible));
+                TilingEffect::SetWindowVisible { target, visible } => {
+                    visibility_ops.push((target, visible));
                 }
-                TilingEffect::FocusWindow { window_id } => {
-                    focus_ops.push(window_id);
+                TilingEffect::FocusWindow { target } => {
+                    focus_ops.push(target);
                 }
-                TilingEffect::RaiseWindow { window_id } => {
-                    raise_ops.push(window_id);
+                TilingEffect::RaiseWindow { target } => {
+                    raise_ops.push(target);
                 }
-                TilingEffect::UpdateBorder { window_id, state } => {
-                    border_updates.push((window_id, state));
+                TilingEffect::RefreshActiveBorder {
+                    target,
+                    layout,
+                    is_window_floating,
+                } => {
+                    active_borders.push((target, layout, is_window_floating));
                 }
-                TilingEffect::HideBorders { window_ids } => {
-                    for id in window_ids {
-                        border_updates.push((id, BorderState::Hidden));
+                TilingEffect::HideBorders { targets } => {
+                    for target in targets {
+                        border_updates.push((target, BorderState::Hidden));
                     }
                 }
-                TilingEffect::ShowBorders { window_ids } => {
-                    for id in window_ids {
-                        border_updates.push((id, BorderState::Unfocused));
+                TilingEffect::ShowBorders { targets } => {
+                    for target in targets {
+                        border_updates.push((target, BorderState::Unfocused));
                     }
                 }
                 TilingEffect::EmitEvent { name, payload } => {
@@ -150,6 +156,7 @@ impl EffectExecutor {
         // Execute border updates (if enabled)
         if self.borders_enabled {
             success_count += self.execute_border_updates(&border_updates);
+            success_count += self.execute_active_borders(&active_borders);
         }
 
         // Emit events
@@ -162,7 +169,7 @@ impl EffectExecutor {
     ///
     /// Uses the window element cache for efficient batch resolution,
     /// avoiding repeated O(n*m) lookups during animation setup.
-    fn execute_frame_updates(&self, updates: &[(u32, Rect, bool)]) -> usize {
+    fn execute_frame_updates(&self, updates: &[(WindowTarget, Rect, bool)]) -> usize {
         if updates.is_empty() {
             return 0;
         }
@@ -176,11 +183,11 @@ impl EffectExecutor {
         // Execute immediate updates first using the cache
         if !immediate.is_empty() {
             let cache = window_cache::get_cache();
-            for (window_id, frame, _) in &immediate {
-                if cache.set_window_frame_fast(*window_id, frame) {
+            for (target, frame, _) in &immediate {
+                if cache.set_window_frame_fast(*target, frame) {
                     success_count += 1;
                 } else {
-                    tracing::warn!("Failed to set frame for window {window_id}");
+                    tracing::warn!("Failed to set frame for window {}", target.window_id);
                 }
             }
         }
@@ -195,11 +202,11 @@ impl EffectExecutor {
             // as the starting point for smoother continuation
             let transitions: Vec<WindowTransition> = animated
                 .iter()
-                .filter_map(|(window_id, target_frame, _)| {
+                .filter_map(|(target, target_frame, _)| {
                     // Check for interrupted position first, then fall back to cached frame
-                    let from_frame = get_interrupted_position(*window_id)
-                        .or_else(|| cache.get_window_frame_fast(*window_id))?;
-                    Some(WindowTransition::new(*window_id, from_frame, *target_frame))
+                    let from_frame = get_interrupted_position(*target)
+                        .or_else(|| cache.get_window_frame_fast(*target))?;
+                    Some(WindowTransition::new(*target, from_frame, *target_frame))
                 })
                 .collect();
 
@@ -213,14 +220,14 @@ impl EffectExecutor {
 
     /// Executes focus operations.
     #[allow(clippy::unused_self)] // Self kept for consistency and future extensibility
-    fn execute_focus_ops(&self, window_ids: &[u32]) -> usize {
+    fn execute_focus_ops(&self, targets: &[WindowTarget]) -> usize {
         let mut success_count = 0;
 
-        for window_id in window_ids {
-            if window_ops::focus_window(*window_id) {
+        for target in targets {
+            if window_ops::focus_window(*target) {
                 success_count += 1;
             } else {
-                tracing::warn!("Failed to focus window {window_id}");
+                tracing::warn!("Failed to focus window {}", target.window_id);
             }
         }
 
@@ -229,14 +236,14 @@ impl EffectExecutor {
 
     /// Executes raise operations.
     #[allow(clippy::unused_self)] // Self kept for consistency and future extensibility
-    fn execute_raise_ops(&self, window_ids: &[u32]) -> usize {
+    fn execute_raise_ops(&self, targets: &[WindowTarget]) -> usize {
         let mut success_count = 0;
 
-        for window_id in window_ids {
-            if window_ops::raise_window(*window_id) {
+        for target in targets {
+            if window_ops::raise_window(*target) {
                 success_count += 1;
             } else {
-                tracing::warn!("Failed to raise window {window_id}");
+                tracing::warn!("Failed to raise window {}", target.window_id);
             }
         }
 
@@ -245,7 +252,7 @@ impl EffectExecutor {
 
     /// Executes visibility operations.
     #[allow(clippy::unused_self)] // Self kept for consistency and future extensibility
-    const fn execute_visibility_ops(&self, _ops: &[(u32, bool)]) -> usize {
+    const fn execute_visibility_ops(&self, _ops: &[(WindowTarget, bool)]) -> usize {
         // TODO: Implement window visibility operations
         // This would involve setting window minimized state or similar
         0
@@ -255,12 +262,33 @@ impl EffectExecutor {
     ///
     /// Note: Borders are now handled directly in the subscriber via
     /// `borders::on_focus_changed()`. This just counts the effects.
-    const fn execute_border_updates(&self, updates: &[(u32, BorderState)]) -> usize {
+    const fn execute_border_updates(&self, updates: &[(WindowTarget, BorderState)]) -> usize {
         if updates.is_empty() || !self.borders_enabled {
             return 0;
         }
         // Borders are handled in subscriber, just count as successful
         updates.len()
+    }
+
+    /// Executes active-border refreshes: validates the exact target, then
+    /// invokes the border helper for the given layout state.
+    #[allow(clippy::unused_self)] // Self kept for consistency and future config access
+    fn execute_active_borders(&self, refreshes: &[(WindowTarget, LayoutType, bool)]) -> usize {
+        let mut success_count = 0;
+        let cache = window_cache::get_cache();
+
+        for (target, layout, is_window_floating) in refreshes {
+            // Validate the exact target before touching borders: if the window
+            // is invalid (destroyed or PID-reused), skip the refresh.
+            if !cache.find_invalid_windows(&[*target]).is_empty() {
+                tracing::trace!("tiling: skipping border refresh for stale target {:?}", target);
+                continue;
+            }
+            crate::modules::tiling::borders::on_focus_changed(*layout, *is_window_floating);
+            success_count += 1;
+        }
+
+        success_count
     }
 
     /// Emits events to the frontend.
@@ -316,16 +344,16 @@ pub fn effects_from_layout_change(change: &super::LayoutChange) -> Vec<TilingEff
     let mut effects = Vec::new();
 
     // Build old positions map for lookup
-    let old_positions: std::collections::HashMap<u32, &Rect> =
-        change.old_positions.iter().map(|(id, frame)| (*id, frame)).collect();
+    let old_positions: std::collections::HashMap<WindowTarget, &Rect> =
+        change.old_positions.iter().map(|(target, frame)| (*target, frame)).collect();
 
-    for (window_id, new_frame) in &change.new_positions {
+    for (target, new_frame) in &change.new_positions {
         // For user-triggered changes (like after a drag), always move windows
         // to their calculated positions because the actual window positions
         // might differ from our tracked positions.
         // For programmatic changes, only update if our tracking shows a change.
         let needs_update = change.user_triggered
-            || old_positions.get(window_id).is_none_or(|old_frame| *old_frame != new_frame);
+            || old_positions.get(target).is_none_or(|old_frame| *old_frame != new_frame);
 
         if needs_update {
             // Determine if we should animate:
@@ -333,59 +361,14 @@ pub fn effects_from_layout_change(change: &super::LayoutChange) -> Vec<TilingEff
             // - Don't animate new windows (not in old_positions) - they just appear
             // This means when a window is created/destroyed, existing windows
             // animate to their new positions while the new window appears instantly.
-            let animate = old_positions.contains_key(window_id);
+            let animate = old_positions.contains_key(target);
 
             effects.push(TilingEffect::SetWindowFrame {
-                window_id: *window_id,
+                target: *target,
                 frame: *new_frame,
                 animate,
             });
         }
-    }
-
-    effects
-}
-
-/// Computes effects from a focus change.
-///
-/// This generates border update effects for the old and new focused windows.
-///
-/// # Arguments
-///
-/// * `change` - The focus change to process.
-/// * `is_monocle` - Whether the focused workspace is in monocle layout.
-/// * `is_floating` - Whether the focused window is floating.
-///
-/// # Returns
-///
-/// Vector of effects to execute.
-#[must_use]
-pub fn effects_from_focus_change(
-    change: &super::FocusChange,
-    is_monocle: bool,
-    is_floating: bool,
-) -> Vec<TilingEffect> {
-    let mut effects = Vec::new();
-
-    // Update old focused window to unfocused
-    if let Some(old_id) = change.old_window_id {
-        effects.push(TilingEffect::UpdateBorder {
-            window_id: old_id,
-            state: BorderState::Unfocused,
-        });
-    }
-
-    // Update new focused window
-    if let Some(new_id) = change.new_window_id {
-        let state = if is_monocle {
-            BorderState::Monocle
-        } else if is_floating {
-            BorderState::Floating
-        } else {
-            BorderState::Focused
-        };
-
-        effects.push(TilingEffect::UpdateBorder { window_id: new_id, state });
     }
 
     effects
@@ -400,6 +383,17 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
+    use crate::modules::tiling::identity::{AppIdentity, LaunchDateBits};
+
+    fn t(window_id: u32) -> WindowTarget {
+        WindowTarget {
+            identity: AppIdentity {
+                pid: 42,
+                launch_date: LaunchDateBits::from_time_interval_since_reference_date(1.0).unwrap(),
+            },
+            window_id,
+        }
+    }
 
     #[test]
     fn test_executor_default() {
@@ -420,8 +414,8 @@ mod tests {
         let frame = Rect::new(0.0, 0.0, 100.0, 100.0);
         let change = super::super::LayoutChange::new(
             Uuid::now_v7(),
-            vec![(1, frame)],
-            vec![(1, frame)],
+            vec![(t(1), frame)],
+            vec![(t(1), frame)],
             false,
         );
 
@@ -435,8 +429,8 @@ mod tests {
         let new_frame = Rect::new(50.0, 50.0, 100.0, 100.0);
         let change = super::super::LayoutChange::new(
             Uuid::now_v7(),
-            vec![(1, old_frame)],
-            vec![(1, new_frame)],
+            vec![(t(1), old_frame)],
+            vec![(t(1), new_frame)],
             false,
         );
 
@@ -444,8 +438,8 @@ mod tests {
         assert_eq!(effects.len(), 1);
 
         match &effects[0] {
-            TilingEffect::SetWindowFrame { window_id, frame, animate } => {
-                assert_eq!(*window_id, 1);
+            TilingEffect::SetWindowFrame { target, frame, animate } => {
+                assert_eq!(target.window_id, 1);
                 assert_eq!(*frame, new_frame);
                 // Window is in old_positions, so it should animate even when not user-triggered
                 assert!(animate);
@@ -460,8 +454,8 @@ mod tests {
         let new_frame = Rect::new(50.0, 50.0, 100.0, 100.0);
         let change = super::super::LayoutChange::new(
             Uuid::now_v7(),
-            vec![(1, old_frame)],
-            vec![(1, new_frame)],
+            vec![(t(1), old_frame)],
+            vec![(t(1), new_frame)],
             true, // User triggered
         );
 
@@ -481,7 +475,7 @@ mod tests {
         let change = super::super::LayoutChange::new(
             Uuid::now_v7(),
             vec![],
-            vec![(1, Rect::new(0.0, 0.0, 100.0, 100.0))],
+            vec![(t(1), Rect::new(0.0, 0.0, 100.0, 100.0))],
             true, // Even if user triggered
         );
 
@@ -493,62 +487,6 @@ mod tests {
                 assert!(!animate); // New windows don't animate
             }
             _ => panic!("Expected SetWindowFrame effect"),
-        }
-    }
-
-    #[test]
-    fn test_effects_from_focus_change() {
-        let change = super::super::FocusChange::new(Some(1), Some(2), None, None);
-
-        let effects = effects_from_focus_change(&change, false, false);
-        assert_eq!(effects.len(), 2);
-
-        // Old window should be unfocused
-        match &effects[0] {
-            TilingEffect::UpdateBorder { window_id, state } => {
-                assert_eq!(*window_id, 1);
-                assert_eq!(*state, BorderState::Unfocused);
-            }
-            _ => panic!("Expected UpdateBorder effect"),
-        }
-
-        // New window should be focused
-        match &effects[1] {
-            TilingEffect::UpdateBorder { window_id, state } => {
-                assert_eq!(*window_id, 2);
-                assert_eq!(*state, BorderState::Focused);
-            }
-            _ => panic!("Expected UpdateBorder effect"),
-        }
-    }
-
-    #[test]
-    fn test_effects_from_focus_change_monocle() {
-        let change = super::super::FocusChange::new(None, Some(1), None, None);
-
-        let effects = effects_from_focus_change(&change, true, false);
-        assert_eq!(effects.len(), 1);
-
-        match &effects[0] {
-            TilingEffect::UpdateBorder { state, .. } => {
-                assert_eq!(*state, BorderState::Monocle);
-            }
-            _ => panic!("Expected UpdateBorder effect"),
-        }
-    }
-
-    #[test]
-    fn test_effects_from_focus_change_floating() {
-        let change = super::super::FocusChange::new(None, Some(1), None, None);
-
-        let effects = effects_from_focus_change(&change, false, true);
-        assert_eq!(effects.len(), 1);
-
-        match &effects[0] {
-            TilingEffect::UpdateBorder { state, .. } => {
-                assert_eq!(*state, BorderState::Floating);
-            }
-            _ => panic!("Expected UpdateBorder effect"),
         }
     }
 }

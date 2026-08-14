@@ -12,6 +12,7 @@ use std::collections::HashSet;
 use uuid::Uuid;
 
 use crate::modules::tiling::effects::get_window_cache;
+use crate::modules::tiling::identity::AppIdentity;
 use crate::modules::tiling::init::get_subscriber_handle;
 use crate::modules::tiling::state::TilingState;
 
@@ -19,36 +20,46 @@ use crate::modules::tiling::state::TilingState;
 ///
 /// This is called when a new application starts. Windows from this app
 /// will be tracked as they are created via window events.
-pub fn on_app_launched(state: &mut TilingState, pid: i32, bundle_id: &str, name: &str) {
+pub fn on_app_launched(
+    state: &mut TilingState,
+    identity: AppIdentity,
+    pid: i32,
+    bundle_id: &str,
+    name: &str,
+) {
     tracing::debug!("Handling app launched: pid={pid}, bundle={bundle_id}, name={name}");
 
     // Nothing to do immediately - windows will be tracked as they're created
     // via WindowCreated events. We just log for debugging.
-    let _ = state;
+    let _ = (state, identity);
 }
 
 /// Handles an app terminated event.
 ///
 /// Removes all windows belonging to this application from tracking.
 /// Returns the set of affected workspace IDs (for layout recomputation).
-pub fn on_app_terminated(state: &mut TilingState, pid: i32) -> HashSet<Uuid> {
-    tracing::debug!("Handling app terminated: pid={pid}");
+pub fn on_app_terminated(
+    state: &mut TilingState,
+    identity: AppIdentity,
+    pid: i32,
+) -> HashSet<Uuid> {
+    tracing::debug!("Handling app terminated: pid={pid}, identity={identity:?}");
 
-    crate::modules::tiling::tabs::clear_tabs_for_pid(pid);
+    crate::modules::tiling::tabs::clear_tabs_for_identity(identity);
 
-    // Find all windows for this PID
-    let window_ids: Vec<u32> = state.get_windows_for_pid(pid).iter().map(|w| w.id).collect();
+    // Find all windows for this identity
+    let window_ids: Vec<u32> = state.windows_identity_iter(&identity);
 
     if window_ids.is_empty() {
-        tracing::debug!("No windows to remove for pid {pid}");
+        tracing::debug!("No windows to remove for {identity:?}");
         return HashSet::new();
     }
 
     let count = window_ids.len();
-    tracing::debug!("Removing {count} windows for pid {pid}");
+    tracing::debug!("Removing {count} windows for {identity:?}");
 
     // Invalidate cache entries for this app (efficient bulk removal)
-    get_window_cache().invalidate_app(pid);
+    get_window_cache().invalidate_app_identity(identity);
 
     // Track affected workspaces
     let mut affected_workspaces: HashSet<Uuid> = HashSet::new();
@@ -103,11 +114,11 @@ pub fn on_app_terminated(state: &mut TilingState, pid: i32) -> HashSet<Uuid> {
 ///
 /// Marks all windows belonging to this application as hidden.
 /// Hidden windows are excluded from layout calculations.
-pub fn on_app_hidden(state: &mut TilingState, pid: i32) {
+pub fn on_app_hidden(state: &mut TilingState, identity: AppIdentity, pid: i32) {
     tracing::debug!("Handling app hidden: pid={pid}");
 
-    // Find all windows for this PID and mark as hidden
-    let window_ids: Vec<u32> = state.get_windows_for_pid(pid).iter().map(|w| w.id).collect();
+    // Find all windows for this identity and mark as hidden
+    let window_ids: Vec<u32> = state.windows_identity_iter(&identity);
 
     for window_id in window_ids {
         state.update_window(window_id, |w| {
@@ -119,11 +130,11 @@ pub fn on_app_hidden(state: &mut TilingState, pid: i32) {
 /// Handles an app shown event.
 ///
 /// Marks all windows belonging to this application as visible.
-pub fn on_app_shown(state: &mut TilingState, pid: i32) {
+pub fn on_app_shown(state: &mut TilingState, identity: AppIdentity, pid: i32) {
     tracing::debug!("Handling app shown: pid={pid}");
 
-    // Find all windows for this PID and mark as visible
-    let window_ids: Vec<u32> = state.get_windows_for_pid(pid).iter().map(|w| w.id).collect();
+    // Find all windows for this identity and mark as visible
+    let window_ids: Vec<u32> = state.windows_identity_iter(&identity);
 
     for window_id in window_ids {
         state.update_window(window_id, |w| {
@@ -135,11 +146,11 @@ pub fn on_app_shown(state: &mut TilingState, pid: i32) {
 /// Handles an app activated event (brought to front).
 ///
 /// This is informational - focus changes happen via window focus events.
-pub fn on_app_activated(state: &mut TilingState, pid: i32) {
+pub fn on_app_activated(state: &mut TilingState, identity: AppIdentity, pid: i32) {
     tracing::debug!("Handling app activated: pid={pid}");
 
     // Nothing specific to do - focus will be handled by window focus events
-    let _ = state;
+    let _ = (state, identity);
 }
 
 // ============================================================================
@@ -180,7 +191,7 @@ mod tests {
         Window {
             id,
             pid,
-            identity: None,
+            identity: Some(identity_for(pid)),
             app_id: format!("com.test.app{pid}"),
             app_name: format!("App {pid}"),
             title: format!("Window {id}"),
@@ -196,6 +207,14 @@ mod tests {
             tab_group_id: None,
             is_active_tab: true,
             matched_rule: None,
+        }
+    }
+
+    fn identity_for(pid: i32) -> AppIdentity {
+        use crate::modules::tiling::identity::LaunchDateBits;
+        AppIdentity {
+            pid,
+            launch_date: LaunchDateBits::from_time_interval_since_reference_date(1.0).unwrap(),
         }
     }
 
@@ -219,7 +238,7 @@ mod tests {
         assert_eq!(state.windows.len(), 3);
 
         // Terminate app 1000
-        let affected = on_app_terminated(&mut state, 1000);
+        let affected = on_app_terminated(&mut state, identity_for(1000), 1000);
 
         // Only window from app 2000 should remain
         assert_eq!(state.windows.len(), 1);
@@ -249,7 +268,7 @@ mod tests {
         assert!(!state.get_window(200).unwrap().is_hidden);
 
         // Hide app
-        on_app_hidden(&mut state, 1000);
+        on_app_hidden(&mut state, identity_for(1000), 1000);
 
         // Should be hidden
         assert!(state.get_window(100).unwrap().is_hidden);
@@ -272,7 +291,7 @@ mod tests {
         assert!(state.get_window(200).unwrap().is_hidden);
 
         // Show app
-        on_app_shown(&mut state, 1000);
+        on_app_shown(&mut state, identity_for(1000), 1000);
 
         // Should be visible
         assert!(!state.get_window(100).unwrap().is_hidden);
@@ -291,7 +310,7 @@ mod tests {
         assert!(eyeball::Observable::get(&state.focus).has_focus());
 
         // Terminate app
-        let affected = on_app_terminated(&mut state, 1000);
+        let affected = on_app_terminated(&mut state, identity_for(1000), 1000);
 
         // Focus should be cleared
         assert!(!eyeball::Observable::get(&state.focus).has_focus());
@@ -303,14 +322,14 @@ mod tests {
     #[test]
     fn test_app_terminated_clears_tab_registry_even_without_tracked_windows() {
         tabs::clear_all_tabs();
-        tabs::register_tab(100, 1000);
-        tabs::register_tab(200, 2000);
+        tabs::register_tab(100, identity_for(1000));
+        tabs::register_tab(200, identity_for(2000));
 
         let mut state = TilingState::new();
-        let _ = on_app_terminated(&mut state, 1000);
+        let _ = on_app_terminated(&mut state, identity_for(1000), 1000);
 
-        assert!(!tabs::is_tab(100));
-        assert!(tabs::is_tab(200));
+        assert!(!tabs::is_tab_for_identity(100, identity_for(1000)));
+        assert!(tabs::is_tab_for_identity(200, identity_for(2000)));
 
         tabs::clear_all_tabs();
     }

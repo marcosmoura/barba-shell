@@ -76,8 +76,8 @@ pub fn on_cycle_focus(state: &mut TilingState, direction: CycleDirection) {
         handle.notify_focus_changed();
     }
 
-    // Actually focus the window via AX API
-    let _ = crate::modules::tiling::effects::window_ops::focus_window(next_window_id);
+    // Actually focus the window via AX API (exact target from stored identity)
+    let _ = crate::modules::tiling::effects::window_ops::focus_stored_window(state, next_window_id);
 }
 
 // ============================================================================
@@ -160,8 +160,11 @@ pub fn on_focus_window(state: &mut TilingState, direction: FocusDirection) {
             handle.notify_focus_changed();
         }
 
-        // Actually focus the window via AX API
-        let _ = crate::modules::tiling::effects::window_ops::focus_window(target_window_id);
+        // Actually focus the window via AX API (exact target from stored identity)
+        let _ = crate::modules::tiling::effects::window_ops::focus_stored_window(
+            state,
+            target_window_id,
+        );
     } else {
         tracing::debug!("focus_window: no window found in direction {direction:?}");
     }

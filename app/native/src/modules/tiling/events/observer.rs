@@ -20,6 +20,7 @@ use core_foundation::string::CFString;
 use parking_lot::Mutex;
 
 use super::types::{WindowEvent, WindowEventType};
+use crate::modules::tiling::identity::AppIdentity;
 
 // ============================================================================
 // Thread-Safe Wrapper
@@ -117,6 +118,7 @@ unsafe extern "C" {
 unsafe extern "C" {
     fn CFRelease(cf: *const c_void);
     fn CFRunLoopAddSource(rl: *const c_void, source: *const c_void, mode: *const c_void);
+    fn CFRunLoopRemoveSource(rl: *const c_void, source: *const c_void, mode: *const c_void);
 }
 
 // ============================================================================
@@ -129,10 +131,18 @@ static INITIALIZED: AtomicBool = AtomicBool::new(false);
 /// Global observer state protected by a mutex.
 static OBSERVER_STATE: Mutex<Option<ObserverState>> = Mutex::new(None);
 
+/// One registered observer plus the exact identity it was created for.
+struct ObserverRecord {
+    observer: ObserverRef,
+    identity: AppIdentity,
+}
+
 /// State for the observer system.
 struct ObserverState {
-    /// Map of PID to observer reference.
-    observers: HashMap<i32, ObserverRef>,
+    /// Primary index: `AXObserverRef` address → `ObserverRecord`.
+    observers: HashMap<usize, ObserverRecord>,
+    /// Exact reverse index: application identity → `AXObserverRef` address.
+    identity_to_observer: HashMap<AppIdentity, usize>,
 }
 
 // ============================================================================
@@ -173,7 +183,10 @@ pub fn init() -> bool {
     // Initialize the observer state
     {
         let mut state = OBSERVER_STATE.lock();
-        *state = Some(ObserverState { observers: HashMap::new() });
+        *state = Some(ObserverState {
+            observers: HashMap::new(),
+            identity_to_observer: HashMap::new(),
+        });
     }
 
     // Get running apps using our window module
@@ -209,9 +222,12 @@ pub fn shutdown() {
 
     let mut state_guard = OBSERVER_STATE.lock();
     if let Some(mut state) = state_guard.take() {
-        for (pid, observer) in state.observers.drain() {
-            unsafe { CFRelease(observer.0.cast()) };
-            tracing::trace!("Released standalone observer for pid {pid}");
+        for (_address, record) in state.observers.drain() {
+            unsafe { CFRelease(record.observer.0.cast()) };
+            tracing::trace!(
+                identity = ?record.identity,
+                "Released standalone observer"
+            );
         }
     }
     drop(state_guard);
@@ -224,41 +240,56 @@ pub fn shutdown() {
 /// Call this when a new application is launched.
 ///
 /// # Errors
-/// Returns an error if the observer system is not initialized, or if creating
-/// the AX observer or application element fails.
+/// Returns an error if the observer system is not initialized, if creating
+/// the AX observer or application element fails, or if the application
+/// identity cannot be captured or changes during setup.
 #[allow(clippy::significant_drop_tightening)]
+#[allow(clippy::too_many_lines)] // one long identity-validated registration flow
 pub fn add_observer_for_pid(pid: i32) -> Result<(), String> {
+    use objc::runtime::Object;
+    use objc::{class, msg_send, sel, sel_impl};
+
     if !INITIALIZED.load(Ordering::SeqCst) {
         return Err("Observer system not initialized".to_string());
     }
 
-    let mut state_guard = OBSERVER_STATE.lock();
+    let identity = objc::rc::autoreleasepool(|| -> Option<AppIdentity> {
+        unsafe {
+            let app: *mut Object = msg_send![
+                class!(NSRunningApplication),
+                runningApplicationWithProcessIdentifier: pid
+            ];
+            if app.is_null() {
+                return None;
+            }
+            AppIdentity::from_ns_running_app(app)
+        }
+    });
+    let Some(identity) = identity else {
+        return Err(format!("no valid identity for pid {pid}"));
+    };
 
-    let state = state_guard.as_mut().ok_or("Observer state not initialized")?;
-
-    // Skip if already observing
-    if state.observers.contains_key(&pid) {
-        return Ok(());
+    {
+        let state_guard = OBSERVER_STATE.lock();
+        let state = state_guard.as_ref().ok_or("Observer state not initialized")?;
+        if state.identity_to_observer.contains_key(&identity) {
+            return Ok(());
+        }
     }
 
-    // Create the observer
     let mut observer: AXObserverRef = ptr::null_mut();
     let result =
         unsafe { AXObserverCreate(pid, observer_callback, std::ptr::addr_of_mut!(observer)) };
-
     if result != K_AX_ERROR_SUCCESS || observer.is_null() {
         return Err(format!("AXObserverCreate failed for pid {pid}: {result}"));
     }
-
-    // Create the application element
     let app_element = unsafe { AXUIElementCreateApplication(pid) };
     if app_element.is_null() {
         unsafe { CFRelease(observer.cast()) };
         return Err(format!("AXUIElementCreateApplication failed for pid {pid}"));
     }
 
-    // Add notifications
-    let notification_names = [
+    for name in [
         notifications::WINDOW_CREATED,
         notifications::WINDOW_MOVED,
         notifications::WINDOW_RESIZED,
@@ -271,11 +302,9 @@ pub fn add_observer_for_pid(pid: i32) -> Result<(), String> {
         notifications::APP_DEACTIVATED,
         notifications::APP_HIDDEN,
         notifications::APP_SHOWN,
-    ];
-
-    for name in notification_names {
+    ] {
         let cf_name = CFString::new(name);
-        let result = unsafe {
+        let r = unsafe {
             AXObserverAddNotification(
                 observer,
                 app_element,
@@ -283,42 +312,100 @@ pub fn add_observer_for_pid(pid: i32) -> Result<(), String> {
                 pid as *mut c_void,
             )
         };
-        if result != K_AX_ERROR_SUCCESS {
-            tracing::trace!("Failed to add notification {name} for pid {pid}: {result}");
+        if r != K_AX_ERROR_SUCCESS {
+            tracing::trace!("Failed to add notification {name} for pid {pid}: {r}");
         }
     }
-
-    // Release the app element (observer keeps its own reference)
     unsafe { CFRelease(app_element.cast()) };
 
-    // Add observer to run loop
     let source = unsafe { AXObserverGetRunLoopSource(observer) };
-    if !source.is_null() {
-        let run_loop = CFRunLoop::get_main();
-        // Get the default mode constant
-        let mode = unsafe { core_foundation::runloop::kCFRunLoopDefaultMode };
-        unsafe {
-            CFRunLoopAddSource(run_loop.as_concrete_TypeRef().cast(), source, mode.cast());
-        }
+    if source.is_null() {
+        unsafe { CFRelease(observer.cast()) };
+        return Err(format!("observer has no run-loop source: pid {pid}"));
     }
 
-    // Store the observer
-    state.observers.insert(pid, ObserverRef(observer));
-    tracing::trace!("Added observer for pid {pid}");
+    // Re-resolve immediately before publication to close the PID-reuse window.
+    let current_identity = objc::rc::autoreleasepool(|| -> Option<AppIdentity> {
+        unsafe {
+            let app: *mut Object = msg_send![
+                class!(NSRunningApplication),
+                runningApplicationWithProcessIdentifier: pid
+            ];
+            if app.is_null() {
+                return None;
+            }
+            AppIdentity::from_ns_running_app(app)
+        }
+    });
+    if current_identity != Some(identity) {
+        unsafe { CFRelease(observer.cast()) };
+        return Err(format!(
+            "application identity changed during observer setup: pid {pid}"
+        ));
+    }
 
+    let record = ObserverRecord {
+        observer: ObserverRef(observer),
+        identity,
+    };
+    let mut state_guard = OBSERVER_STATE.lock();
+    let Some(state) = state_guard.as_mut() else {
+        drop(state_guard);
+        unsafe { CFRelease(observer.cast()) };
+        return Err("Observer state not initialized".to_string());
+    };
+    let address = observer as usize;
+    if state.observers.contains_key(&address) || state.identity_to_observer.contains_key(&identity)
+    {
+        drop(state_guard);
+        unsafe { CFRelease(observer.cast()) };
+        return Ok(());
+    }
+    state.observers.insert(address, record);
+    state.identity_to_observer.insert(identity, address);
+    drop(state_guard);
+
+    unsafe {
+        let run_loop = CFRunLoop::get_main();
+        let mode = core_foundation::runloop::kCFRunLoopDefaultMode;
+        CFRunLoopAddSource(run_loop.as_concrete_TypeRef().cast(), source, mode.cast());
+    }
+    tracing::trace!("Added observer for identity {identity:?}");
     Ok(())
 }
 
-/// Removes the observer for an application.
-pub fn remove_observer_for_pid(pid: i32) {
-    let mut state_guard = OBSERVER_STATE.lock();
-    if let Some(state) = state_guard.as_mut()
-        && let Some(observer) = state.observers.remove(&pid)
-    {
-        // Release the observer
-        unsafe { CFRelease(observer.0.cast()) };
-        tracing::trace!("Removed observer for pid {pid}");
+/// Exact removal seam (pure, never calls Core Foundation).
+fn take_observer_record_for_identity(
+    state: &mut ObserverState,
+    identity: &AppIdentity,
+) -> Option<ObserverRecord> {
+    let address = state.identity_to_observer.remove(identity)?;
+    state.observers.remove(&address)
+}
+
+/// Removes and releases the observer registered for an exact identity.
+pub fn remove_observer_for_identity(identity: &AppIdentity) {
+    let record = {
+        let mut state_guard = OBSERVER_STATE.lock();
+        state_guard
+            .as_mut()
+            .and_then(|state| take_observer_record_for_identity(state, identity))
+    };
+    let Some(record) = record else {
+        return;
+    };
+
+    let address = record.observer.0 as usize;
+    unsafe {
+        let source = AXObserverGetRunLoopSource(record.observer.0);
+        if !source.is_null() {
+            let run_loop = CFRunLoop::get_main();
+            let mode = core_foundation::runloop::kCFRunLoopDefaultMode;
+            CFRunLoopRemoveSource(run_loop.as_concrete_TypeRef().cast(), source, mode.cast());
+        }
+        CFRelease(record.observer.0.cast());
     }
+    tracing::trace!(address, "ax_observer: removed observer for identity");
 }
 
 /// Checks if we should observe an app.
@@ -350,7 +437,7 @@ pub fn should_observe_app(bundle_id: &str, name: &str) -> bool {
 /// This function is called by macOS accessibility framework. The `element` and
 /// `notification` pointers are valid for the duration of the callback.
 unsafe extern "C" fn observer_callback(
-    _observer: AXObserverRef,
+    observer: AXObserverRef,
     element: AXUIElementRef,
     notification: *const c_void,
     refcon: *mut c_void,
@@ -362,7 +449,7 @@ unsafe extern "C" fn observer_callback(
         let notification_str = CFString::wrap_under_get_rule(cf_notification);
         let notification_name = notification_str.to_string();
 
-        // Get the PID from refcon
+        // Get the PID from refcon (logging only)
         let pid = refcon as i32;
 
         // Log destroyed events specifically
@@ -378,8 +465,22 @@ unsafe extern "C" fn observer_callback(
             return;
         };
 
+        // Derive identity from the observer address, never from a bare PID.
+        let identity = {
+            let state_guard = OBSERVER_STATE.lock();
+            let record = state_guard
+                .as_ref()
+                .and_then(|state| state.observers.get(&(observer as usize)))
+                .map(|record| record.identity);
+            drop(state_guard);
+            let Some(identity) = record else {
+                return;
+            };
+            identity
+        };
+
         // Create event and forward to adapter
-        let event = WindowEvent::new(event_type, pid, element as usize);
+        let event = WindowEvent::new(event_type, pid, element as usize, identity);
         super::ax_observer::adapter_callback(event);
     }
 }
@@ -412,5 +513,38 @@ mod tests {
         assert!(!INITIALIZED.load(Ordering::SeqCst));
         shutdown();
         assert!(!INITIALIZED.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn removal_by_identity_preserves_same_pid_replacement() {
+        use crate::modules::tiling::identity::{AppIdentity, LaunchDateBits};
+        let mut state = ObserverState {
+            observers: HashMap::new(),
+            identity_to_observer: HashMap::new(),
+        };
+        let a = AppIdentity {
+            pid: 42,
+            launch_date: LaunchDateBits::from_time_interval_since_reference_date(100.0).unwrap(),
+        };
+        let b = AppIdentity {
+            pid: 42,
+            launch_date: LaunchDateBits::from_time_interval_since_reference_date(200.0).unwrap(),
+        };
+        state.observers.insert(0xAAA, ObserverRecord {
+            observer: ObserverRef(0xAAA as *mut c_void),
+            identity: a,
+        });
+        state.observers.insert(0xBBB, ObserverRecord {
+            observer: ObserverRef(0xBBB as *mut c_void),
+            identity: b,
+        });
+        state.identity_to_observer.insert(a, 0xAAA);
+        state.identity_to_observer.insert(b, 0xBBB);
+
+        let removed = take_observer_record_for_identity(&mut state, &a).expect("a present");
+        assert_eq!(removed.observer.0, 0xAAA as *mut c_void);
+        assert!(state.identity_to_observer.contains_key(&b));
+        assert!(state.observers.contains_key(&0xBBB));
+        assert!(state.observers.get(&0xAAA).is_none());
     }
 }

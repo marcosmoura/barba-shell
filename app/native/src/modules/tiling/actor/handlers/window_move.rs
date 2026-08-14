@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use super::workspace::resolve_screen;
 use crate::modules::tiling::actor::messages::TargetScreen;
+use crate::modules::tiling::identity::WindowTarget;
 use crate::modules::tiling::init::get_subscriber_handle;
 use crate::modules::tiling::state::TilingState;
 
@@ -132,7 +133,10 @@ pub fn on_toggle_floating(state: &mut TilingState, window_id: u32) {
 
     // Notify subscriber about floating change and layout recalculation
     if let Some(handle) = get_subscriber_handle() {
-        handle.notify_floating_changed(window_id, new_floating);
+        // Exact target required: re-read the stored identity.
+        if let Some(identity) = state.get_window(window_id).and_then(|w| w.identity) {
+            handle.notify_floating_changed(WindowTarget { identity, window_id }, new_floating);
+        }
         handle.notify_layout_changed(workspace_id, true);
     }
 }

@@ -42,8 +42,9 @@ use parking_lot::RwLock;
 
 use crate::modules::tiling::events::EventProcessor;
 use crate::modules::tiling::events::observer::{
-    add_observer_for_pid, remove_observer_for_pid, should_observe_app,
+    add_observer_for_pid, remove_observer_for_identity, should_observe_app,
 };
+use crate::modules::tiling::identity::AppIdentity;
 use crate::platform::objc::nsstring;
 
 // ============================================================================
@@ -220,11 +221,21 @@ impl AppMonitorAdapter {
     }
 
     /// Handles an app launch event.
-    fn on_app_launched(&self, pid: i32, bundle_id: Option<String>, name: Option<String>) {
+    fn on_app_launched(
+        &self,
+        identity: Option<AppIdentity>,
+        pid: i32,
+        bundle_id: Option<String>,
+        name: Option<String>,
+    ) {
         if !self.gate_open() {
             return;
         }
 
+        let Some(identity) = identity else {
+            tracing::trace!(pid, "app_monitor: dropping launch event (no identity)");
+            return;
+        };
         let bundle_id = bundle_id.unwrap_or_default();
         let name = name.unwrap_or_default();
 
@@ -237,21 +248,31 @@ impl AppMonitorAdapter {
             tracing::warn!("Failed to add observer for pid {pid}: {e}");
         }
 
-        self.processor.on_app_launched(pid, bundle_id, name);
+        self.processor.on_app_launched(identity, pid, bundle_id, name);
     }
 
     /// Handles an app termination event.
-    fn on_app_terminated(&self, pid: i32, bundle_id: Option<&str>, name: Option<&str>) {
+    fn on_app_terminated(
+        &self,
+        identity: Option<AppIdentity>,
+        pid: i32,
+        bundle_id: Option<&str>,
+        name: Option<&str>,
+    ) {
         if !self.gate_open() {
             return;
         }
 
+        let Some(identity) = identity else {
+            tracing::trace!(pid, "app_monitor: dropping terminate event (no identity)");
+            return;
+        };
         tracing::debug!("App terminated: pid={pid}, bundle={bundle_id:?}, name={name:?}");
 
         // Remove the AX observer for this app (must happen on main thread)
-        remove_observer_for_pid(pid);
+        remove_observer_for_identity(&identity);
 
-        self.processor.on_app_terminated(pid);
+        self.processor.on_app_terminated(identity, pid);
     }
 }
 
@@ -300,13 +321,13 @@ extern "C" fn handle_app_launch_notification(_self: &Object, _cmd: Sel, notifica
         return;
     }
 
-    let (pid, bundle_id, app_name) = extract_app_info(notification);
-    if pid <= 0 {
+    let (identity, pid, bundle_id, app_name) = extract_app_info(notification);
+    if identity.is_none() || pid <= 0 {
         return;
     }
 
     if let Some(adapter) = get_installed_adapter() {
-        adapter.on_app_launched(pid, bundle_id, app_name);
+        adapter.on_app_launched(identity, pid, bundle_id, app_name);
     }
 }
 
@@ -320,40 +341,48 @@ extern "C" fn handle_app_terminate_notification(
         return;
     }
 
-    let (pid, bundle_id, app_name) = extract_app_info(notification);
-    if pid <= 0 {
+    let (identity, pid, bundle_id, app_name) = extract_app_info(notification);
+    if identity.is_none() || pid <= 0 {
         return;
     }
 
     if let Some(adapter) = get_installed_adapter() {
-        adapter.on_app_terminated(pid, bundle_id.as_deref(), app_name.as_deref());
+        adapter.on_app_terminated(identity, pid, bundle_id.as_deref(), app_name.as_deref());
     }
 }
 
 /// Extracts app info from an `NSNotification`.
-fn extract_app_info(notification: *mut Object) -> (i32, Option<String>, Option<String>) {
+/// Returns (`identity`, `pid`, `bundle_id`, `app_name`). `identity` is None if
+/// capture fails (fail-closed — the caller drops the event).
+fn extract_app_info(
+    notification: *mut Object,
+) -> (Option<AppIdentity>, i32, Option<String>, Option<String>) {
     if notification.is_null() {
-        return (0, None, None);
+        return (None, 0, None, None);
     }
 
     unsafe {
         // Get userInfo dictionary from notification
         let user_info: *mut Object = msg_send![notification, userInfo];
         if user_info.is_null() {
-            return (0, None, None);
+            return (None, 0, None, None);
         }
 
         // Get NSRunningApplication from userInfo
         let app_key = nsstring("NSWorkspaceApplicationKey");
         let running_app: *mut Object = msg_send![user_info, objectForKey: app_key];
         if running_app.is_null() {
-            return (0, None, None);
+            return (None, 0, None, None);
         }
+
+        // Capture identity from this exact object BEFORE extracting PID.
+        // Must use the same object — no separate PID rediscovery.
+        let identity = objc::rc::autoreleasepool(|| AppIdentity::from_ns_running_app(running_app));
 
         // Get the PID
         let pid: i32 = msg_send![running_app, processIdentifier];
         if pid <= 0 {
-            return (0, None, None);
+            return (None, 0, None, None);
         }
 
         // Get the bundle identifier
@@ -376,7 +405,7 @@ fn extract_app_info(notification: *mut Object) -> (i32, Option<String>, Option<S
             }
         };
 
-        (pid, bundle_id, app_name)
+        (identity, pid, bundle_id, app_name)
     }
 }
 
@@ -448,7 +477,8 @@ mod tests {
 
     #[test]
     fn test_extract_app_info_null_notification() {
-        let (pid, bundle_id, name) = extract_app_info(std::ptr::null_mut());
+        let (identity, pid, bundle_id, name) = extract_app_info(std::ptr::null_mut());
+        assert!(identity.is_none());
         assert_eq!(pid, 0);
         assert!(bundle_id.is_none());
         assert!(name.is_none());

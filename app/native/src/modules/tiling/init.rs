@@ -44,6 +44,7 @@ use super::effects::subscriber::EffectSubscriberHandle;
 use super::effects::{EffectExecutor, EffectSubscriber};
 use super::events::{AXObserverAdapter, AppMonitorAdapter, EventProcessor, ScreenMonitorAdapter};
 use crate::config::get_config;
+use crate::modules::tiling::identity::{AppIdentity, WindowTarget};
 use crate::{events, is_accessibility_granted};
 
 // ============================================================================
@@ -805,6 +806,24 @@ fn initialize_state(handle: &StateActorHandle, processor: &EventProcessor) {
     track_existing_windows(handle, processor);
 }
 
+/// Captures the exact application identity for a PID from one local
+/// `NSRunningApplication` object inside an autorelease pool.
+fn capture_identity_for_pid(pid: i32) -> Option<AppIdentity> {
+    use objc::runtime::Object;
+    use objc::{class, msg_send, sel, sel_impl};
+
+    objc::rc::autoreleasepool(|| unsafe {
+        let app: *mut Object = msg_send![
+            class!(NSRunningApplication),
+            runningApplicationWithProcessIdentifier: pid
+        ];
+        if app.is_null() {
+            return None;
+        }
+        AppIdentity::from_ns_running_app(app)
+    })
+}
+
 // ============================================================================
 // Window Tracking
 // ============================================================================
@@ -815,6 +834,7 @@ fn initialize_state(handle: &StateActorHandle, processor: &EventProcessor) {
 /// a batch `BatchWindowsCreated` message to the actor.
 /// Also sends a `WindowFocused` message for the currently focused window,
 /// and an `InitComplete` message to trigger initial layouts.
+#[allow(clippy::too_many_lines)] // initial-scan enumeration, by design
 fn track_existing_windows(handle: &StateActorHandle, processor: &EventProcessor) {
     use super::actor::WindowCreatedInfo;
     use super::rules::should_tile_window;
@@ -854,9 +874,18 @@ fn track_existing_windows(handle: &StateActorHandle, processor: &EventProcessor)
         }
     }
 
+    // Capture exact identities for every unique PID before building infos.
+    let identities: std::collections::HashMap<i32, AppIdentity> = pids_seen
+        .iter()
+        .filter_map(|&pid| {
+            let identity = capture_identity_for_pid(pid);
+            identity.map(|identity| (pid, identity))
+        })
+        .collect();
+
     // Scan and register tabs for each app using the new TabRegistry approach
-    for pid in &pids_seen {
-        crate::modules::tiling::tabs::scan_and_register_tabs_for_app(*pid);
+    for identity in identities.values() {
+        crate::modules::tiling::tabs::scan_and_register_tabs_for_app(*identity);
     }
 
     for window in &windows {
@@ -870,8 +899,12 @@ fn track_existing_windows(handle: &StateActorHandle, processor: &EventProcessor)
             continue;
         }
 
+        let identity = identities.get(&window.pid).copied();
+
         // Check if this window is a tab (skip it - tabs are tracked separately)
-        if crate::modules::tiling::tabs::is_tab(window.id) {
+        if identity.is_some_and(|identity| {
+            crate::modules::tiling::tabs::is_tab_for_identity(window.id, identity)
+        }) {
             continue;
         }
 
@@ -879,7 +912,7 @@ fn track_existing_windows(handle: &StateActorHandle, processor: &EventProcessor)
         let info = WindowCreatedInfo {
             window_id: window.id,
             pid: window.pid,
-            identity: None,
+            identity,
             app_id: window.bundle_id.clone(),
             app_name: window.app_name.clone(),
             title: window.title.clone(),
@@ -898,8 +931,19 @@ fn track_existing_windows(handle: &StateActorHandle, processor: &EventProcessor)
 
     // Also track these windows in the event processor for destroy detection
     // This is necessary because BatchWindowsCreated bypasses the processor
-    let window_pids: Vec<(u32, i32)> = window_infos.iter().map(|w| (w.window_id, w.pid)).collect();
-    processor.track_windows_for_destroy_detection(&window_pids);
+    let window_targets: Vec<(u32, AppIdentity)> = window_infos
+        .iter()
+        .filter_map(|w| w.identity.map(|identity| (w.window_id, identity)))
+        .collect();
+    processor.track_windows_for_destroy_detection(&window_targets);
+
+    // Resolve the initial focus identity BEFORE the batch consumes the infos.
+    let focus_identity = focused_window_id.and_then(|window_id| {
+        window_infos
+            .iter()
+            .find(|info| info.window_id == window_id)
+            .and_then(|info| info.identity)
+    });
 
     // Send batch message (no individual layout notifications)
     if !window_infos.is_empty()
@@ -910,11 +954,18 @@ fn track_existing_windows(handle: &StateActorHandle, processor: &EventProcessor)
 
     tracing::debug!("tiling: tracked {tracked_count} windows");
 
-    // Send focus event for the currently focused window
+    // Send focus event for the currently focused window (only with an exact
+    // identity; otherwise fail closed and log).
     if let Some(window_id) = focused_window_id {
-        tracing::trace!("tiling: setting initial focus to window {window_id}");
-        if let Err(e) = handle.send(StateMessage::WindowFocused { window_id }) {
-            tracing::error!("tiling: failed to send WindowFocused: {e}");
+        if let Some(identity) = focus_identity {
+            tracing::trace!("tiling: setting initial focus to window {window_id}");
+            if let Err(e) = handle.send(StateMessage::WindowFocused { window_id, identity }) {
+                tracing::error!("tiling: failed to send WindowFocused: {e}");
+            }
+        } else {
+            tracing::warn!(
+                "tiling: no identity for initially focused window {window_id}, skipping focus event"
+            );
         }
     } else {
         tracing::trace!("tiling: no focused window detected at startup");
@@ -1654,13 +1705,13 @@ fn handle_move_finished(info: &super::events::drag_state::DragInfo, handle: &Sta
     let current_frames = get_current_frames_for_snapshots(&info.window_snapshots);
 
     // Check if a window was dragged onto another window for swapping
-    if let Some((dragged_id, target_id)) =
+    if let Some((dragged_target, target_target)) =
         find_drag_swap_target(&info.window_snapshots, &current_frames)
     {
-        // Send swap command
+        // Send swap command (exact targets)
         let _ = handle.send(StateMessage::SwapWindows {
-            window_id_a: dragged_id,
-            window_id_b: target_id,
+            target_a: dragged_target,
+            target_b: target_target,
         });
         return;
     }
@@ -1688,11 +1739,11 @@ fn handle_resize_finished(info: &super::events::drag_state::DragInfo, handle: &S
     // Find which window was resized
     let resized_info = find_resized_window(&info.window_snapshots, &current_frames);
 
-    if let Some((window_id, old_frame, new_frame)) = resized_info {
-        // Send the resize completion message with window info
+    if let Some((target, old_frame, new_frame)) = resized_info {
+        // Send the resize completion message with the exact target
         let _ = handle.send(StateMessage::UserResizeCompleted {
             workspace_id: info.workspace_id,
-            window_id,
+            target,
             old_frame,
             new_frame,
         });
@@ -1709,14 +1760,14 @@ fn handle_resize_finished(info: &super::events::drag_state::DragInfo, handle: &S
 /// This is used during mouse-up handling when we need current positions.
 fn get_current_frames_for_snapshots(
     snapshots: &[super::events::drag_state::WindowSnapshot],
-) -> Vec<(u32, super::state::Rect)> {
+) -> Vec<(WindowTarget, super::state::Rect)> {
     use super::effects::window_ops;
 
     let mut frames = Vec::with_capacity(snapshots.len());
 
     for snapshot in snapshots {
-        if let Some(frame) = window_ops::get_window_frame(snapshot.window_id) {
-            frames.push((snapshot.window_id, frame));
+        if let Some(frame) = window_ops::get_window_frame(snapshot.target) {
+            frames.push((snapshot.target, frame));
         }
     }
 
@@ -1725,15 +1776,15 @@ fn get_current_frames_for_snapshots(
 
 /// Finds if a dragged window should be swapped with another window.
 ///
-/// Returns `Some((dragged_id, target_id))` if a swap should occur.
+/// Returns `Some((dragged_target, target_target))` if a swap should occur.
 fn find_drag_swap_target(
     snapshots: &[super::events::drag_state::WindowSnapshot],
-    current_frames: &[(u32, super::state::Rect)],
-) -> Option<(u32, u32)> {
+    current_frames: &[(WindowTarget, super::state::Rect)],
+) -> Option<(WindowTarget, WindowTarget)> {
     const MIN_DRAG_DISTANCE: f64 = 50.0;
 
     // Find which window was dragged (moved significantly from original position)
-    let mut dragged: Option<(u32, super::state::Rect)> = None;
+    let mut dragged: Option<(WindowTarget, super::state::Rect)> = None;
     let mut max_distance = 0.0f64;
 
     for snapshot in snapshots {
@@ -1742,7 +1793,7 @@ fn find_drag_swap_target(
         }
 
         let Some((_, current_frame)) =
-            current_frames.iter().find(|(id, _)| *id == snapshot.window_id)
+            current_frames.iter().find(|(t, _)| t.window_id == snapshot.target.window_id)
         else {
             continue;
         };
@@ -1758,17 +1809,17 @@ fn find_drag_swap_target(
 
         if distance > max_distance && distance > MIN_DRAG_DISTANCE {
             max_distance = distance;
-            dragged = Some((snapshot.window_id, *current_frame));
+            dragged = Some((snapshot.target, *current_frame));
         }
     }
 
-    let (dragged_id, dragged_frame) = dragged?;
+    let (dragged_target, dragged_frame) = dragged?;
 
     let dragged_center_x = dragged_frame.x + dragged_frame.width / 2.0;
     let dragged_center_y = dragged_frame.y + dragged_frame.height / 2.0;
 
     for snapshot in snapshots {
-        if snapshot.window_id == dragged_id || snapshot.is_floating {
+        if snapshot.target.window_id == dragged_target.window_id || snapshot.is_floating {
             continue;
         }
 
@@ -1779,7 +1830,7 @@ fn find_drag_swap_target(
             && dragged_center_y >= orig.y
             && dragged_center_y <= orig.y + orig.height
         {
-            return Some((dragged_id, snapshot.window_id));
+            return Some((dragged_target, snapshot.target));
         }
     }
 
@@ -1789,10 +1840,10 @@ fn find_drag_swap_target(
 /// Finds which window was resized by comparing snapshots to current frames.
 fn find_resized_window(
     snapshots: &[super::events::drag_state::WindowSnapshot],
-    current_frames: &[(u32, super::state::Rect)],
-) -> Option<(u32, super::state::Rect, super::state::Rect)> {
+    current_frames: &[(WindowTarget, super::state::Rect)],
+) -> Option<(WindowTarget, super::state::Rect, super::state::Rect)> {
     let mut max_diff = 0.0f64;
-    let mut resized: Option<(u32, super::state::Rect, super::state::Rect)> = None;
+    let mut resized: Option<(WindowTarget, super::state::Rect, super::state::Rect)> = None;
 
     for snapshot in snapshots {
         if snapshot.is_floating {
@@ -1800,7 +1851,7 @@ fn find_resized_window(
         }
 
         let Some((_, current_frame)) =
-            current_frames.iter().find(|(id, _)| *id == snapshot.window_id)
+            current_frames.iter().find(|(t, _)| t.window_id == snapshot.target.window_id)
         else {
             continue;
         };
@@ -1811,7 +1862,7 @@ fn find_resized_window(
 
         if size_diff > max_diff {
             max_diff = size_diff;
-            resized = Some((snapshot.window_id, snapshot.original_frame, *current_frame));
+            resized = Some((snapshot.target, snapshot.original_frame, *current_frame));
         }
     }
 

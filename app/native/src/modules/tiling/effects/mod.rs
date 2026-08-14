@@ -55,7 +55,8 @@ pub use window_ops::{
     focus_window, get_window_frame, raise_window, set_window_frame, set_window_frame_fast,
 };
 
-use crate::modules::tiling::state::Rect;
+use crate::modules::tiling::identity::WindowTarget;
+use crate::modules::tiling::state::{LayoutType, Rect};
 
 // ============================================================================
 // Effect Types
@@ -69,8 +70,8 @@ use crate::modules::tiling::state::Rect;
 pub enum TilingEffect {
     /// Move/resize a window to a target frame.
     SetWindowFrame {
-        /// Window ID to move/resize.
-        window_id: u32,
+        /// Exact target window to move/resize.
+        target: WindowTarget,
         /// Target frame (position and size).
         frame: Rect,
         /// Whether to animate the transition.
@@ -79,42 +80,45 @@ pub enum TilingEffect {
 
     /// Show or hide a window.
     SetWindowVisible {
-        /// Window ID to show/hide.
-        window_id: u32,
+        /// Exact target window to show/hide.
+        target: WindowTarget,
         /// Whether the window should be visible.
         visible: bool,
     },
 
     /// Focus a window.
     FocusWindow {
-        /// Window ID to focus.
-        window_id: u32,
+        /// Exact target window to focus.
+        target: WindowTarget,
     },
 
     /// Raise (bring to front) a window.
     RaiseWindow {
-        /// Window ID to raise.
-        window_id: u32,
+        /// Exact target window to raise.
+        target: WindowTarget,
     },
 
-    /// Update the border state of a window.
-    UpdateBorder {
-        /// Window ID to update border for.
-        window_id: u32,
-        /// New border state.
-        state: BorderState,
+    /// Refresh the active border for a window after its layout/focus state
+    /// changed.
+    RefreshActiveBorder {
+        /// Exact target window to refresh the border for.
+        target: WindowTarget,
+        /// Layout of the window's workspace.
+        layout: LayoutType,
+        /// Whether the window is floating.
+        is_window_floating: bool,
     },
 
     /// Hide borders for multiple windows.
     HideBorders {
-        /// Window IDs to hide borders for.
-        window_ids: Vec<u32>,
+        /// Exact target windows to hide borders for.
+        targets: Vec<WindowTarget>,
     },
 
     /// Show borders for multiple windows.
     ShowBorders {
-        /// Window IDs to show borders for.
-        window_ids: Vec<u32>,
+        /// Exact target windows to show borders for.
+        targets: Vec<WindowTarget>,
     },
 
     /// Emit an event to the frontend.
@@ -176,11 +180,11 @@ pub struct LayoutChange {
     /// The workspace that changed.
     pub workspace_id: Uuid,
 
-    /// Previous window positions (`window_id` -> `frame`).
-    pub old_positions: Vec<(u32, Rect)>,
+    /// Previous window positions (exact target -> `frame`).
+    pub old_positions: Vec<(WindowTarget, Rect)>,
 
-    /// New window positions (`window_id` -> `frame`).
-    pub new_positions: Vec<(u32, Rect)>,
+    /// New window positions (exact target -> `frame`).
+    pub new_positions: Vec<(WindowTarget, Rect)>,
 
     /// Whether this change was triggered by user action (should animate).
     pub user_triggered: bool,
@@ -191,8 +195,8 @@ impl LayoutChange {
     #[must_use]
     pub const fn new(
         workspace_id: Uuid,
-        old_positions: Vec<(u32, Rect)>,
-        new_positions: Vec<(u32, Rect)>,
+        old_positions: Vec<(WindowTarget, Rect)>,
+        new_positions: Vec<(WindowTarget, Rect)>,
         user_triggered: bool,
     ) -> Self {
         Self {
@@ -211,8 +215,8 @@ impl LayoutChange {
         }
 
         // Check if any position actually changed
-        for (new_id, new_frame) in &self.new_positions {
-            let old_frame = self.old_positions.iter().find(|(id, _)| id == new_id);
+        for (new_target, new_frame) in &self.new_positions {
+            let old_frame = self.old_positions.iter().find(|(t, _)| t == new_target);
             match old_frame {
                 Some((_, old)) if old != new_frame => return true,
                 None => return true, // New window added
@@ -226,24 +230,24 @@ impl LayoutChange {
     /// Returns window IDs that were added (new windows).
     #[must_use]
     pub fn added_windows(&self) -> Vec<u32> {
-        let old_ids: std::collections::HashSet<_> =
-            self.old_positions.iter().map(|(id, _)| *id).collect();
+        let old_targets: std::collections::HashSet<_> =
+            self.old_positions.iter().map(|(t, _)| *t).collect();
         self.new_positions
             .iter()
-            .filter(|(id, _)| !old_ids.contains(id))
-            .map(|(id, _)| *id)
+            .filter(|(t, _)| !old_targets.contains(t))
+            .map(|(t, _)| t.window_id)
             .collect()
     }
 
     /// Returns window IDs that were removed.
     #[must_use]
     pub fn removed_windows(&self) -> Vec<u32> {
-        let new_ids: std::collections::HashSet<_> =
-            self.new_positions.iter().map(|(id, _)| *id).collect();
+        let new_targets: std::collections::HashSet<_> =
+            self.new_positions.iter().map(|(t, _)| *t).collect();
         self.old_positions
             .iter()
-            .filter(|(id, _)| !new_ids.contains(id))
-            .map(|(id, _)| *id)
+            .filter(|(t, _)| !new_targets.contains(t))
+            .map(|(t, _)| t.window_id)
             .collect()
     }
 }
@@ -255,10 +259,10 @@ impl LayoutChange {
 #[derive(Debug, Clone)]
 pub struct FocusChange {
     /// Previously focused window (if any).
-    pub old_window_id: Option<u32>,
+    pub old_window: Option<WindowTarget>,
 
     /// Newly focused window (if any).
-    pub new_window_id: Option<u32>,
+    pub new_window: Option<WindowTarget>,
 
     /// Previously focused workspace (if any).
     pub old_workspace_id: Option<Uuid>,
@@ -271,14 +275,14 @@ impl FocusChange {
     /// Creates a new focus change.
     #[must_use]
     pub const fn new(
-        old_window_id: Option<u32>,
-        new_window_id: Option<u32>,
+        old_window: Option<WindowTarget>,
+        new_window: Option<WindowTarget>,
         old_workspace_id: Option<Uuid>,
         new_workspace_id: Option<Uuid>,
     ) -> Self {
         Self {
-            old_window_id,
-            new_window_id,
+            old_window,
+            new_window,
             old_workspace_id,
             new_workspace_id,
         }
@@ -286,8 +290,8 @@ impl FocusChange {
 
     /// Returns true if the focused window changed.
     #[must_use]
-    pub const fn window_changed(&self) -> bool {
-        match (self.old_window_id, self.new_window_id) {
+    pub fn window_changed(&self) -> bool {
+        match (self.old_window, self.new_window) {
             (Some(old), Some(new)) => old != new,
             (None, None) => false,
             _ => true,
@@ -341,6 +345,17 @@ impl VisibilityChange {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::tiling::identity::{AppIdentity, LaunchDateBits};
+
+    fn t(window_id: u32) -> WindowTarget {
+        WindowTarget {
+            identity: AppIdentity {
+                pid: 42,
+                launch_date: LaunchDateBits::from_time_interval_since_reference_date(1.0).unwrap(),
+            },
+            window_id,
+        }
+    }
 
     #[test]
     fn test_border_state_default() {
@@ -376,7 +391,7 @@ mod tests {
         let change = LayoutChange::new(
             Uuid::now_v7(),
             vec![],
-            vec![(1, Rect::new(0.0, 0.0, 100.0, 100.0))],
+            vec![(t(1), Rect::new(0.0, 0.0, 100.0, 100.0))],
             false,
         );
         assert!(change.has_changes());
@@ -386,7 +401,7 @@ mod tests {
     fn test_layout_change_has_changes_removed() {
         let change = LayoutChange::new(
             Uuid::now_v7(),
-            vec![(1, Rect::new(0.0, 0.0, 100.0, 100.0))],
+            vec![(t(1), Rect::new(0.0, 0.0, 100.0, 100.0))],
             vec![],
             false,
         );
@@ -397,8 +412,8 @@ mod tests {
     fn test_layout_change_has_changes_moved() {
         let change = LayoutChange::new(
             Uuid::now_v7(),
-            vec![(1, Rect::new(0.0, 0.0, 100.0, 100.0))],
-            vec![(1, Rect::new(50.0, 50.0, 100.0, 100.0))],
+            vec![(t(1), Rect::new(0.0, 0.0, 100.0, 100.0))],
+            vec![(t(1), Rect::new(50.0, 50.0, 100.0, 100.0))],
             false,
         );
         assert!(change.has_changes());
@@ -407,7 +422,8 @@ mod tests {
     #[test]
     fn test_layout_change_no_changes_same() {
         let frame = Rect::new(0.0, 0.0, 100.0, 100.0);
-        let change = LayoutChange::new(Uuid::now_v7(), vec![(1, frame)], vec![(1, frame)], false);
+        let change =
+            LayoutChange::new(Uuid::now_v7(), vec![(t(1), frame)], vec![(t(1), frame)], false);
         assert!(!change.has_changes());
     }
 
@@ -415,10 +431,10 @@ mod tests {
     fn test_layout_change_added_windows() {
         let change = LayoutChange::new(
             Uuid::now_v7(),
-            vec![(1, Rect::new(0.0, 0.0, 100.0, 100.0))],
+            vec![(t(1), Rect::new(0.0, 0.0, 100.0, 100.0))],
             vec![
-                (1, Rect::new(0.0, 0.0, 100.0, 100.0)),
-                (2, Rect::new(100.0, 0.0, 100.0, 100.0)),
+                (t(1), Rect::new(0.0, 0.0, 100.0, 100.0)),
+                (t(2), Rect::new(100.0, 0.0, 100.0, 100.0)),
             ],
             false,
         );
@@ -430,10 +446,10 @@ mod tests {
         let change = LayoutChange::new(
             Uuid::now_v7(),
             vec![
-                (1, Rect::new(0.0, 0.0, 100.0, 100.0)),
-                (2, Rect::new(100.0, 0.0, 100.0, 100.0)),
+                (t(1), Rect::new(0.0, 0.0, 100.0, 100.0)),
+                (t(2), Rect::new(100.0, 0.0, 100.0, 100.0)),
             ],
-            vec![(1, Rect::new(0.0, 0.0, 200.0, 100.0))],
+            vec![(t(1), Rect::new(0.0, 0.0, 200.0, 100.0))],
             false,
         );
         assert_eq!(change.removed_windows(), vec![2]);
@@ -441,16 +457,16 @@ mod tests {
 
     #[test]
     fn test_focus_change_window_changed() {
-        let change = FocusChange::new(Some(1), Some(2), None, None);
+        let change = FocusChange::new(Some(t(1)), Some(t(2)), None, None);
         assert!(change.window_changed());
 
-        let change = FocusChange::new(None, Some(1), None, None);
+        let change = FocusChange::new(None, Some(t(1)), None, None);
         assert!(change.window_changed());
 
-        let change = FocusChange::new(Some(1), None, None, None);
+        let change = FocusChange::new(Some(t(1)), None, None, None);
         assert!(change.window_changed());
 
-        let change = FocusChange::new(Some(1), Some(1), None, None);
+        let change = FocusChange::new(Some(t(1)), Some(t(1)), None, None);
         assert!(!change.window_changed());
 
         let change = FocusChange::new(None, None, None, None);

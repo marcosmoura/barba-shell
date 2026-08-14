@@ -42,10 +42,11 @@ use std::collections::HashMap;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use super::executor::{EffectExecutor, effects_from_focus_change, effects_from_layout_change};
-use super::{FocusChange, LayoutChange, TilingEffect, begin_animation, cancel_animation};
+use super::executor::{EffectExecutor, effects_from_layout_change};
+use super::{LayoutChange, TilingEffect, begin_animation, cancel_animation};
 use crate::modules::tiling::actor::{QueryResult, StateActorHandle, StateQuery};
-use crate::modules::tiling::state::{FocusState, LayoutType, Rect};
+use crate::modules::tiling::identity::WindowTarget;
+use crate::modules::tiling::state::{LayoutType, Rect};
 
 // ============================================================================
 // Subscriber State
@@ -55,10 +56,13 @@ use crate::modules::tiling::state::{FocusState, LayoutType, Rect};
 #[derive(Debug, Default)]
 struct SubscriberState {
     /// Previous layout positions per workspace.
-    layout_positions: HashMap<Uuid, Vec<(u32, Rect)>>,
+    layout_positions: HashMap<Uuid, Vec<(WindowTarget, Rect)>>,
 
-    /// Previous focus state.
-    focus: FocusState,
+    /// Previous focused window (exact target).
+    focused_window: Option<WindowTarget>,
+
+    /// Previous focused workspace.
+    focused_workspace_id: Option<Uuid>,
 
     /// Previous visible workspaces (`workspace_id` -> `screen_id`).
     visible_workspaces: HashMap<Uuid, u32>,
@@ -81,7 +85,7 @@ impl SubscriberState {
     fn update_layout(
         &mut self,
         workspace_id: Uuid,
-        new_positions: Vec<(u32, Rect)>,
+        new_positions: Vec<(WindowTarget, Rect)>,
         user_triggered: bool,
     ) -> Option<LayoutChange> {
         let old_positions = self.layout_positions.get(&workspace_id).cloned().unwrap_or_default();
@@ -105,25 +109,17 @@ impl SubscriberState {
         Some(change)
     }
 
-    /// Updates focus and returns the change if any.
-    fn update_focus(&mut self, new_focus: FocusState) -> Option<FocusChange> {
-        let old_focus = self.focus.clone();
-
-        // Check if anything actually changed
-        if old_focus == new_focus {
-            return None;
-        }
-
-        let change = FocusChange::new(
-            old_focus.focused_window_id,
-            new_focus.focused_window_id,
-            old_focus.focused_workspace_id,
-            new_focus.focused_workspace_id,
-        );
-
-        self.focus = new_focus;
-
-        Some(change)
+    /// Updates focus and returns whether anything changed.
+    fn update_focus(
+        &mut self,
+        focused_window: Option<WindowTarget>,
+        focused_workspace_id: Option<Uuid>,
+    ) -> bool {
+        let changed = self.focused_window != focused_window
+            || self.focused_workspace_id != focused_workspace_id;
+        self.focused_window = focused_window;
+        self.focused_workspace_id = focused_workspace_id;
+        changed
     }
 
     /// Checks if a workspace is in monocle layout.
@@ -173,7 +169,10 @@ pub enum SubscriberNotification {
     VisibilityChanged { workspace_id: Uuid, visible: bool },
 
     /// Window floating state changed.
-    FloatingChanged { window_id: u32, floating: bool },
+    FloatingChanged {
+        target: WindowTarget,
+        floating: bool,
+    },
 
     /// Workspace layout type changed.
     WorkspaceLayoutChanged {
@@ -245,13 +244,14 @@ impl EffectSubscriberHandle {
     }
 
     /// Notifies the subscriber that a window's floating state changed.
-    pub fn notify_floating_changed(&self, window_id: u32, floating: bool) {
+    pub fn notify_floating_changed(&self, target: WindowTarget, floating: bool) {
         if let Err(e) = self
             .notification_tx
-            .try_send(SubscriberNotification::FloatingChanged { window_id, floating })
+            .try_send(SubscriberNotification::FloatingChanged { target, floating })
         {
             tracing::warn!(
-                "tiling: dropped FloatingChanged notification for window {window_id}: {e}"
+                "tiling: dropped FloatingChanged notification for window {}: {e}",
+                target.window_id
             );
         }
     }
@@ -379,18 +379,14 @@ impl EffectSubscriber {
                 self.handle_visibility_changed(workspace_id, visible).await
             }
 
-            SubscriberNotification::FloatingChanged { window_id, floating } => {
-                self.handle_floating_changed(window_id, floating);
-                let focused_window_id = self.state.focus.focused_window_id;
-                self.refresh_active_border(focused_window_id).await;
-                Vec::new()
+            SubscriberNotification::FloatingChanged { target, floating } => {
+                self.handle_floating_changed(target, floating);
+                self.refresh_active_border(self.state.focused_window).await
             }
 
             SubscriberNotification::WorkspaceLayoutChanged { workspace_id, layout } => {
                 self.handle_workspace_layout_changed(workspace_id, layout);
-                let focused_window_id = self.state.focus.focused_window_id;
-                self.refresh_active_border(focused_window_id).await;
-                Vec::new()
+                self.refresh_active_border(self.state.focused_window).await
             }
 
             SubscriberNotification::Shutdown => Vec::new(),
@@ -413,11 +409,13 @@ impl EffectSubscriber {
             "tiling: handle_layout_changed for workspace {workspace_id}, user_triggered={user_triggered}"
         );
 
-        // Query the current layout for this workspace
-        let layout_result =
-            self.actor_handle.query(StateQuery::GetWindowLayout { workspace_id }).await;
+        // Query the current layout targets for this workspace
+        let layout_result = self
+            .actor_handle
+            .query(StateQuery::GetWindowLayoutTargets { workspace_id })
+            .await;
 
-        let Ok(QueryResult::Layout(new_positions)) = layout_result else {
+        let Ok(QueryResult::TargetLayout(new_positions)) = layout_result else {
             tracing::warn!("tiling: failed to query layout for workspace {workspace_id}");
             return Vec::new();
         };
@@ -426,8 +424,8 @@ impl EffectSubscriber {
             "tiling: queried layout for workspace {workspace_id}: {} windows",
             new_positions.len()
         );
-        for (win_id, frame) in &new_positions {
-            tracing::trace!("tiling:   window {win_id} -> frame {frame:?}");
+        for (target, frame) in &new_positions {
+            tracing::trace!("tiling:   window {} -> frame {frame:?}", target.window_id);
         }
 
         // Store expected frames for minimum size detection before applying layout
@@ -459,26 +457,26 @@ impl EffectSubscriber {
 
     /// Handles a focus change notification.
     async fn handle_focus_changed(&mut self) -> Vec<TilingEffect> {
-        // Query the current focus state
-        let focus_result = self.actor_handle.query(StateQuery::GetFocusState).await;
+        // Query the current focus targets
+        let focus_result = self.actor_handle.query(StateQuery::GetFocusTargets).await;
 
-        let Ok(QueryResult::Focus(new_focus)) = focus_result else {
-            tracing::warn!("Failed to query focus state");
+        let Ok(QueryResult::TargetFocus {
+            focused_window,
+            focused_workspace_id,
+        }) = focus_result
+        else {
+            tracing::warn!("Failed to query focus targets");
             return Vec::new();
         };
 
-        // Update state and get the change
-        let Some(change) = self.state.update_focus(new_focus.clone()) else {
+        // Update state and detect change
+        if !self.state.update_focus(focused_window, focused_workspace_id) {
             return Vec::new(); // No actual change
-        };
+        }
 
-        let (layout, is_window_floating) =
-            self.refresh_active_border(new_focus.focused_window_id).await;
-
-        // Generate effects for other systems (not borders - handled above)
-        let is_monocle = layout == LayoutType::Monocle;
-        let is_floating = layout == LayoutType::Floating || is_window_floating;
-        effects_from_focus_change(&change, is_monocle, is_floating)
+        // Generate the active-border refresh effect (the executor validates
+        // the exact target and invokes the border helper).
+        self.refresh_active_border(focused_window).await
     }
 
     /// Handles a visibility change notification.
@@ -495,14 +493,16 @@ impl EffectSubscriber {
 
         if visible {
             // Workspace became visible - need to apply layout and show borders
-            // Query current layout
-            let layout_result =
-                self.actor_handle.query(StateQuery::GetWindowLayout { workspace_id }).await;
+            // Query current layout targets
+            let layout_result = self
+                .actor_handle
+                .query(StateQuery::GetWindowLayoutTargets { workspace_id })
+                .await;
 
-            if let Ok(QueryResult::Layout(positions)) = layout_result {
+            if let Ok(QueryResult::TargetLayout(positions)) = layout_result {
                 // --- DIAGNOSTIC: compare layout vs all workspace windows ---
                 // GetWindowsForWorkspace returns ALL windows (including floating/excluded),
-                // unlike GetWindowLayout which only returns layoutable positions.
+                // unlike GetWindowLayoutTargets which only returns layoutable positions.
                 if tracing::enabled!(tracing::Level::DEBUG) {
                     let all_result = self
                         .actor_handle
@@ -511,7 +511,8 @@ impl EffectSubscriber {
                     match all_result {
                         Ok(QueryResult::Windows(all_windows)) => {
                             for w in &all_windows {
-                                let in_positions = positions.iter().any(|(id, _)| *id == w.id);
+                                let in_positions =
+                                    positions.iter().any(|(t, _)| t.window_id == w.id);
                                 if !in_positions {
                                     tracing::debug!(
                                         "tiling: visibility diag window absent from layout: \
@@ -551,18 +552,18 @@ impl EffectSubscriber {
                 // --- END DIAGNOSTIC ---
 
                 // Apply layout to all windows (no animation since workspace just appeared)
-                for (window_id, frame) in &positions {
+                for (target, frame) in &positions {
                     effects.push(TilingEffect::SetWindowFrame {
-                        window_id: *window_id,
+                        target: *target,
                         frame: *frame,
                         animate: false,
                     });
                 }
 
                 // Show borders for all windows in this workspace
-                let window_ids: Vec<u32> = positions.iter().map(|(id, _)| *id).collect();
-                if !window_ids.is_empty() {
-                    effects.push(TilingEffect::ShowBorders { window_ids });
+                let targets: Vec<WindowTarget> = positions.iter().map(|(t, _)| *t).collect();
+                if !targets.is_empty() {
+                    effects.push(TilingEffect::ShowBorders { targets });
                 }
 
                 // Update cached positions
@@ -571,9 +572,9 @@ impl EffectSubscriber {
         } else {
             // Workspace became hidden - hide borders for its windows
             if let Some(positions) = self.state.layout_positions.get(&workspace_id) {
-                let window_ids: Vec<u32> = positions.iter().map(|(id, _)| *id).collect();
-                if !window_ids.is_empty() {
-                    effects.push(TilingEffect::HideBorders { window_ids });
+                let targets: Vec<WindowTarget> = positions.iter().map(|(t, _)| *t).collect();
+                if !targets.is_empty() {
+                    effects.push(TilingEffect::HideBorders { targets });
                 }
             }
         }
@@ -597,8 +598,8 @@ impl EffectSubscriber {
     }
 
     /// Handles a floating state change.
-    fn handle_floating_changed(&mut self, window_id: u32, floating: bool) {
-        self.state.set_window_floating(window_id, floating);
+    fn handle_floating_changed(&mut self, target: WindowTarget, floating: bool) {
+        self.state.set_window_floating(target.window_id, floating);
     }
 
     /// Handles a workspace layout type change.
@@ -622,20 +623,25 @@ impl EffectSubscriber {
                 // Query and cache layout for this workspace
                 let layout_result = self
                     .actor_handle
-                    .query(StateQuery::GetWindowLayout { workspace_id: ws.id })
+                    .query(StateQuery::GetWindowLayoutTargets { workspace_id: ws.id })
                     .await;
 
-                if let Ok(QueryResult::Layout(positions)) = layout_result {
+                if let Ok(QueryResult::TargetLayout(positions)) = layout_result {
                     self.state.layout_positions.insert(ws.id, positions);
                 }
             }
         }
 
-        // Query current focus
-        let focus_result = self.actor_handle.query(StateQuery::GetFocusState).await;
+        // Query current focus targets
+        let focus_result = self.actor_handle.query(StateQuery::GetFocusTargets).await;
 
-        if let Ok(QueryResult::Focus(focus)) = focus_result {
-            self.state.focus = focus;
+        if let Ok(QueryResult::TargetFocus {
+            focused_window,
+            focused_workspace_id,
+        }) = focus_result
+        {
+            self.state.focused_window = focused_window;
+            self.state.focused_workspace_id = focused_workspace_id;
         }
 
         // Query all windows to track floating state
@@ -660,10 +666,24 @@ impl EffectSubscriber {
     /// This should be called after `initialize()` to set up `JankyBorders`
     /// with the correct active color for the current state.
     async fn apply_initial_border_colors(&self) {
-        self.refresh_active_border(self.state.focus.focused_window_id).await;
+        let effects = self.refresh_active_border(self.state.focused_window).await;
+        if !effects.is_empty() {
+            let _ = self.executor.execute_batch(effects);
+        }
     }
 
-    async fn refresh_active_border(&self, focused_window_id: Option<u32>) -> (LayoutType, bool) {
+    /// Builds a `RefreshActiveBorder` effect for the focused window target.
+    ///
+    /// The executor validates the exact target before invoking the border
+    /// helper; the subscriber never calls `borders::on_focus_changed` directly.
+    async fn refresh_active_border(
+        &self,
+        focused_window: Option<WindowTarget>,
+    ) -> Vec<TilingEffect> {
+        let Some(target) = focused_window else {
+            return Vec::new();
+        };
+
         let mut layout = LayoutType::Floating;
         let mut is_window_floating = false;
 
@@ -674,17 +694,17 @@ impl EffectSubscriber {
         }
 
         // Check if the focused window itself is floating
-        if let Some(window_id) = focused_window_id
-            && let Ok(QueryResult::Window(Some(window))) =
-                self.actor_handle.query(StateQuery::GetWindow { id: window_id }).await
+        if let Ok(QueryResult::Window(Some(window))) =
+            self.actor_handle.query(StateQuery::GetWindow { id: target.window_id }).await
         {
             is_window_floating = window.is_floating;
         }
 
-        // Update borders via the simple API
-        crate::modules::tiling::borders::on_focus_changed(layout, is_window_floating);
-
-        (layout, is_window_floating)
+        vec![TilingEffect::RefreshActiveBorder {
+            target,
+            layout,
+            is_window_floating,
+        }]
     }
 }
 
@@ -695,12 +715,23 @@ impl EffectSubscriber {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::tiling::identity::{AppIdentity, LaunchDateBits};
+
+    fn t(window_id: u32) -> WindowTarget {
+        WindowTarget {
+            identity: AppIdentity {
+                pid: 42,
+                launch_date: LaunchDateBits::from_time_interval_since_reference_date(1.0).unwrap(),
+            },
+            window_id,
+        }
+    }
 
     #[test]
     fn test_subscriber_state_default() {
         let state = SubscriberState::new();
         assert!(state.layout_positions.is_empty());
-        assert!(!state.focus.has_focus());
+        assert!(state.focused_window.is_none());
         assert!(state.visible_workspaces.is_empty());
     }
 
@@ -708,7 +739,7 @@ mod tests {
     fn test_subscriber_state_update_layout() {
         let mut state = SubscriberState::new();
         let ws_id = Uuid::now_v7();
-        let positions = vec![(1, Rect::new(0.0, 0.0, 100.0, 100.0))];
+        let positions = vec![(t(1), Rect::new(0.0, 0.0, 100.0, 100.0))];
 
         // First update should produce a change
         let change = state.update_layout(ws_id, positions.clone(), false);
@@ -720,7 +751,7 @@ mod tests {
         assert!(change.is_none());
 
         // Different update should produce a change
-        let new_positions = vec![(1, Rect::new(50.0, 50.0, 100.0, 100.0))];
+        let new_positions = vec![(t(1), Rect::new(50.0, 50.0, 100.0, 100.0))];
         let change = state.update_layout(ws_id, new_positions, false);
         assert!(change.is_some());
     }
@@ -728,27 +759,17 @@ mod tests {
     #[test]
     fn test_subscriber_state_update_focus() {
         let mut state = SubscriberState::new();
+        let ws_id = Uuid::now_v7();
 
         // First update should produce a change
-        let new_focus = FocusState {
-            focused_window_id: Some(1),
-            focused_workspace_id: Some(Uuid::now_v7()),
-            focused_screen_id: Some(1),
-        };
-        let change = state.update_focus(new_focus.clone());
-        assert!(change.is_some());
+        assert!(state.update_focus(Some(t(1)), Some(ws_id)));
 
         // Same update should not produce a change
-        let change = state.update_focus(new_focus.clone());
-        assert!(change.is_none());
+        assert!(!state.update_focus(Some(t(1)), Some(ws_id)));
 
         // Different update should produce a change
-        let new_focus2 = FocusState {
-            focused_window_id: Some(2),
-            ..new_focus
-        };
-        let change = state.update_focus(new_focus2);
-        assert!(change.is_some());
+        assert!(state.update_focus(Some(t(2)), Some(ws_id)));
+        assert_eq!(state.focused_window, Some(t(2)));
     }
 
     #[test]

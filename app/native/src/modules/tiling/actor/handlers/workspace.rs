@@ -126,8 +126,9 @@ pub fn on_switch_workspace(state: &mut TilingState, name: &str) {
             state.update_focus(|focus| {
                 focus.focused_window_id = Some(window_id);
             });
-            // Use the window_ops to focus the window via AX API
-            let _ = crate::modules::tiling::effects::window_ops::focus_window(window_id);
+            // Use the window_ops to focus the window via AX API (exact target)
+            let _ =
+                crate::modules::tiling::effects::window_ops::focus_stored_window(state, window_id);
         } else {
             // No windows in workspace - clear focused window
             state.update_focus(|focus| {
@@ -259,8 +260,9 @@ pub fn on_cycle_workspace(state: &mut TilingState, direction: CycleDirection) {
             state.update_focus(|focus| {
                 focus.focused_window_id = Some(window_id);
             });
-            // Use the window_ops to focus the window via AX API
-            let _ = crate::modules::tiling::effects::window_ops::focus_window(window_id);
+            // Use the window_ops to focus the window via AX API (exact target)
+            let _ =
+                crate::modules::tiling::effects::window_ops::focus_stored_window(state, window_id);
         } else {
             // No windows in workspace - clear focused window
             state.update_focus(|focus| {

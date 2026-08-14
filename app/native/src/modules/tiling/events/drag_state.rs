@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use uuid::Uuid;
 
+use crate::modules::tiling::identity::{AppIdentity, WindowTarget};
 use crate::modules::tiling::state::Rect;
 
 // ============================================================================
@@ -36,8 +37,8 @@ pub enum DragOperation {
 /// Information about a window's state before the drag started.
 #[derive(Debug, Clone)]
 pub struct WindowSnapshot {
-    /// The window ID.
-    pub window_id: u32,
+    /// The exact target window.
+    pub target: WindowTarget,
     /// The frame before the drag started.
     pub original_frame: Rect,
     /// Whether the window is floating.
@@ -49,7 +50,9 @@ pub struct WindowSnapshot {
 pub struct DragInfo {
     /// The type of operation.
     pub operation: DragOperation,
-    /// The process ID that triggered the event.
+    /// The exact identity that triggered the event.
+    pub identity: AppIdentity,
+    /// The process ID that triggered the event (logging only).
     pub pid: i32,
     /// The workspace ID.
     pub workspace_id: Uuid,
@@ -100,8 +103,10 @@ pub fn get_operation() -> Option<DragInfo> {
 ///
 /// Call this when we detect that a window is being moved or resized
 /// while the mouse button is down.
+#[allow(clippy::too_many_arguments)] // one snapshot payload, by design
 pub fn start_operation(
     operation: DragOperation,
+    identity: AppIdentity,
     pid: i32,
     workspace_id: Uuid,
     workspace_name: &str,
@@ -112,6 +117,7 @@ pub fn start_operation(
     if let Ok(mut guard) = CURRENT_OPERATION.lock() {
         let info = DragInfo {
             operation,
+            identity,
             pid,
             workspace_id,
             workspace_name: workspace_name.to_string(),
@@ -169,14 +175,16 @@ mod tests {
         reset_state();
 
         let frame = Rect::new(100.0, 100.0, 800.0, 600.0);
+        let identity = test_identity(456);
         let snapshots = vec![WindowSnapshot {
-            window_id: 123,
+            target: WindowTarget { identity, window_id: 123 },
             original_frame: frame,
             is_floating: false,
         }];
 
         start_operation(
             DragOperation::Resize,
+            identity,
             456,
             Uuid::nil(),
             "workspace-1",
@@ -195,6 +203,7 @@ mod tests {
         assert_eq!(info.workspace_name, "workspace-1");
         assert_eq!(info.window_snapshots.len(), 1);
         assert!(!info.window_snapshots[0].is_floating);
+        assert_eq!(info.identity, identity);
 
         assert!(!is_operation_in_progress());
         reset_state();
@@ -205,13 +214,23 @@ mod tests {
         reset_state();
 
         let frame = Rect::new(0.0, 0.0, 100.0, 100.0);
+        let identity = test_identity(111);
         let snapshots = vec![WindowSnapshot {
-            window_id: 789,
+            target: WindowTarget { identity, window_id: 789 },
             original_frame: frame,
             is_floating: true,
         }];
 
-        start_operation(DragOperation::Move, 111, Uuid::nil(), "test", 1, snapshots, 2);
+        start_operation(
+            DragOperation::Move,
+            identity,
+            111,
+            Uuid::nil(),
+            "test",
+            1,
+            snapshots,
+            2,
+        );
 
         assert!(is_operation_in_progress());
 
@@ -224,20 +243,22 @@ mod tests {
 
     #[test]
     fn test_has_tiled_windows() {
+        let identity = test_identity(1);
         let info = DragInfo {
             operation: DragOperation::Resize,
+            identity,
             pid: 1,
             workspace_id: Uuid::nil(),
             workspace_name: "test".to_string(),
             screen_id: 1,
             window_snapshots: vec![
                 WindowSnapshot {
-                    window_id: 1,
+                    target: WindowTarget { identity, window_id: 1 },
                     original_frame: Rect::default(),
                     is_floating: true,
                 },
                 WindowSnapshot {
-                    window_id: 2,
+                    target: WindowTarget { identity, window_id: 2 },
                     original_frame: Rect::default(),
                     is_floating: false,
                 },
@@ -245,5 +266,13 @@ mod tests {
             drag_sequence: 1,
         };
         assert!(info.has_tiled_windows());
+    }
+
+    fn test_identity(pid: i32) -> AppIdentity {
+        use crate::modules::tiling::identity::LaunchDateBits;
+        AppIdentity {
+            pid,
+            launch_date: LaunchDateBits::from_time_interval_since_reference_date(1.0).unwrap(),
+        }
     }
 }

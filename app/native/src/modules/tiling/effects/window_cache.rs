@@ -23,6 +23,7 @@ use std::time::{Duration, Instant};
 use dashmap::DashMap;
 
 use crate::modules::tiling::ffi::skylight;
+use crate::modules::tiling::identity::{AppIdentity, WindowTarget};
 use crate::modules::tiling::state::Rect;
 
 // ============================================================================
@@ -105,8 +106,6 @@ fn cf_role() -> *const c_void {
 /// A cached window element entry.
 #[derive(Debug)]
 struct CachedWindowElement {
-    /// Process ID owning this window.
-    pid: i32,
     /// Retained `AXUIElement` reference.
     element: AXUIElementRef,
     /// When this entry was cached.
@@ -114,13 +113,12 @@ struct CachedWindowElement {
 }
 
 impl CachedWindowElement {
-    fn new(pid: i32, element: AXUIElementRef) -> Self {
+    fn new(element: AXUIElementRef) -> Self {
         // Retain the element for cache storage
         if !element.is_null() {
             unsafe { CFRetain(element.cast()) };
         }
         Self {
-            pid,
             element,
             cached_at: Instant::now(),
         }
@@ -183,10 +181,10 @@ const CACHE_MAX_AGE: Duration = Duration::from_secs(30);
 /// This cache dramatically reduces the cost of window element resolution
 /// during animations by avoiding repeated O(n*m) lookups.
 pub struct WindowElementCache {
-    /// Window ID -> cached element mapping.
-    windows: DashMap<u32, CachedWindowElement>,
-    /// PID -> cached app element mapping.
-    apps: DashMap<i32, CachedAppElement>,
+    /// Exact target -> cached element mapping.
+    windows: DashMap<WindowTarget, CachedWindowElement>,
+    /// Identity -> cached app element mapping.
+    apps: DashMap<AppIdentity, CachedAppElement>,
     /// Counter for cache hits (for diagnostics).
     hits: AtomicU64,
     /// Counter for cache misses (for diagnostics).
@@ -205,13 +203,13 @@ impl WindowElementCache {
         }
     }
 
-    /// Resolves a window ID to its `AXUIElement`, using cache if available.
+    /// Resolves an exact target to its `AXUIElement`, using cache if available.
     ///
     /// Returns a retained element that the caller must release.
     #[must_use]
-    pub fn resolve(&self, window_id: u32) -> Option<AXUIElementRef> {
+    pub fn resolve(&self, target: WindowTarget) -> Option<AXUIElementRef> {
         // Fast path: check cache first
-        if let Some(entry) = self.windows.get(&window_id) {
+        if let Some(entry) = self.windows.get(&target) {
             // Check if entry is still fresh
             if entry.cached_at.elapsed() < CACHE_MAX_AGE {
                 // Quick validity check - try to get window ID from element
@@ -224,81 +222,86 @@ impl WindowElementCache {
             }
             // Entry is stale or invalid, remove it
             drop(entry);
-            self.windows.remove(&window_id);
+            self.windows.remove(&target);
         }
 
         self.misses.fetch_add(1, Ordering::Relaxed);
-        // Slow path: full resolution
-        self.resolve_and_cache(window_id)
+        // Slow path: full exact resolution
+        self.resolve_and_cache(target)
     }
 
-    /// Resolves a window element and caches it.
-    fn resolve_and_cache(&self, window_id: u32) -> Option<AXUIElementRef> {
-        // Get running app PIDs
-        let pids = get_running_app_pids();
-
-        for pid in pids {
-            // Get or create app element
-            let app_element = self.get_or_create_app_element(pid)?;
-
-            // Search windows of this app
-            if let Some(element) = find_window_in_app(app_element, window_id) {
-                // Cache the result
-                self.windows.insert(window_id, CachedWindowElement::new(pid, element));
-                // Return retained element
-                unsafe { CFRetain(element.cast()) };
-                return Some(element);
-            }
+    /// Resolves a window element exactly and caches it.
+    ///
+    /// Obtains one local `NSRunningApplication` for the target's PID, captures
+    /// `AppIdentity` from that same object, requires exact equality, then
+    /// enumerates only that app's AX windows for `target.window_id`.
+    fn resolve_and_cache(&self, target: WindowTarget) -> Option<AXUIElementRef> {
+        // Revalidate the identity against the current process state.
+        if resolve_current_identity(target.identity) != Some(target.identity) {
+            tracing::trace!("window_cache: identity mismatch, refusing to resolve {target:?}");
+            return None;
         }
 
-        tracing::trace!("window_cache: window {window_id} not found");
+        // Get or create app element
+        let app_element = self.get_or_create_app_element(target.identity)?;
+
+        // Search windows of this app
+        if let Some(element) = find_window_in_app(app_element, target.window_id) {
+            // Cache the result
+            self.windows.insert(target, CachedWindowElement::new(element));
+            // Return retained element
+            unsafe { CFRetain(element.cast()) };
+            return Some(element);
+        }
+
+        tracing::trace!("window_cache: target {target:?} not found");
         None
     }
 
-    /// Gets or creates a cached app element for a PID.
-    fn get_or_create_app_element(&self, pid: i32) -> Option<AXUIElementRef> {
+    /// Gets or creates a cached app element for an identity.
+    fn get_or_create_app_element(&self, identity: AppIdentity) -> Option<AXUIElementRef> {
         // Check cache first
-        if let Some(entry) = self.apps.get(&pid) {
+        if let Some(entry) = self.apps.get(&identity) {
             if entry.cached_at.elapsed() < CACHE_MAX_AGE {
                 return Some(entry.element);
             }
             drop(entry);
-            self.apps.remove(&pid);
+            self.apps.remove(&identity);
         }
 
         // Create new app element
-        let element = unsafe { AXUIElementCreateApplication(pid) };
+        let element = unsafe { AXUIElementCreateApplication(identity.pid) };
         if element.is_null() {
             return None;
         }
 
-        self.apps.insert(pid, CachedAppElement::new(element));
+        self.apps.insert(identity, CachedAppElement::new(element));
         Some(element)
     }
 
-    /// Pre-resolves multiple windows in batch, returning resolved elements.
+    /// Pre-resolves multiple targets in batch, returning resolved elements.
     ///
     /// This is optimized for animation setup where we need all elements at once.
-    /// Returns a vector of (`window_id`, element) pairs. Elements are retained
+    /// Returns a vector of (`WindowTarget`, element) pairs. Elements are retained
     /// and must be released by the caller.
     #[must_use]
-    pub fn batch_resolve(&self, window_ids: &[u32]) -> Vec<(u32, AXUIElementRef)> {
-        let mut results = Vec::with_capacity(window_ids.len());
-        let mut missing: Vec<u32> = Vec::new();
+    pub fn batch_resolve(&self, targets: &[WindowTarget]) -> Vec<(WindowTarget, AXUIElementRef)> {
+        let mut results = Vec::with_capacity(targets.len());
+        let mut missing: Vec<WindowTarget> = Vec::new();
 
         // First pass: collect from cache
-        for &window_id in window_ids {
-            if let Some(entry) = self.windows.get(&window_id) {
+        for &target in targets {
+            if let Some(entry) = self.windows.get(&target) {
                 if entry.cached_at.elapsed() < CACHE_MAX_AGE && is_element_valid(entry.element) {
                     self.hits.fetch_add(1, Ordering::Relaxed);
                     unsafe { CFRetain(entry.element.cast()) };
-                    results.push((window_id, entry.element));
+                    results.push((target, entry.element));
                     continue;
                 }
                 drop(entry);
-                self.windows.remove(&window_id);
+                self.windows.remove(&target);
             }
-            missing.push(window_id);
+            missing.push(target);
         }
 
         // If nothing missing, we're done
@@ -308,17 +311,20 @@ impl WindowElementCache {
 
         self.misses.fetch_add(missing.len() as u64, Ordering::Relaxed);
 
-        // Second pass: resolve missing windows
-        // Group by app to minimize AX calls
-        let pids = get_running_app_pids();
-        let mut remaining: std::collections::HashSet<u32> = missing.into_iter().collect();
+        // Second pass: resolve missing targets, grouped by identity.
+        let mut remaining: std::collections::HashSet<WindowTarget> = missing.into_iter().collect();
 
-        for pid in pids {
+        let identities: Vec<AppIdentity> = remaining.iter().map(|t| t.identity).collect();
+        for identity in identities {
             if remaining.is_empty() {
                 break;
             }
 
-            let Some(app_element) = self.get_or_create_app_element(pid) else {
+            if resolve_current_identity(identity) != Some(identity) {
+                continue;
+            }
+
+            let Some(app_element) = self.get_or_create_app_element(identity) else {
                 continue;
             };
 
@@ -326,11 +332,12 @@ impl WindowElementCache {
             let windows = get_app_window_ids_with_elements(app_element);
 
             for (wid, element) in windows {
-                if remaining.remove(&wid) {
+                let target = WindowTarget { identity, window_id: wid };
+                if remaining.remove(&target) {
                     // Cache and add to results
-                    self.windows.insert(wid, CachedWindowElement::new(pid, element));
+                    self.windows.insert(target, CachedWindowElement::new(element));
                     unsafe { CFRetain(element.cast()) };
-                    results.push((wid, element));
+                    results.push((target, element));
 
                     // Release the element from get_app_window_ids_with_elements
                     unsafe { CFRelease(element.cast()) };
@@ -342,13 +349,13 @@ impl WindowElementCache {
     }
 
     /// Invalidates a window entry (call when window is destroyed).
-    pub fn invalidate_window(&self, window_id: u32) { self.windows.remove(&window_id); }
+    pub fn invalidate_window(&self, target: WindowTarget) { self.windows.remove(&target); }
 
-    /// Invalidates all windows for a PID (call when app terminates).
-    pub fn invalidate_app(&self, pid: i32) {
-        self.apps.remove(&pid);
+    /// Invalidates all windows for an identity (call when app terminates).
+    pub fn invalidate_app_identity(&self, identity: AppIdentity) {
+        self.apps.remove(&identity);
         // Remove all windows belonging to this app
-        self.windows.retain(|_, entry| entry.pid != pid);
+        self.windows.retain(|target, _| target.identity != identity);
     }
 
     /// Clears the entire cache.
@@ -357,23 +364,23 @@ impl WindowElementCache {
         self.apps.clear();
     }
 
-    /// Returns window IDs that are no longer valid from the given list.
+    /// Returns window IDs that are no longer valid from the given targets.
     ///
     /// This is an efficient way to detect destroyed windows without enumerating
     /// all windows from macOS. Uses cached elements for O(1) validity checks
     /// where possible.
     #[must_use]
-    pub fn find_invalid_windows(&self, window_ids: &[u32]) -> Vec<u32> {
+    pub fn find_invalid_windows(&self, targets: &[WindowTarget]) -> Vec<u32> {
         let mut invalid = Vec::new();
 
-        for &window_id in window_ids {
+        for &target in targets {
             // First check if we have a cached element
-            if let Some(entry) = self.windows.get(&window_id) {
+            if let Some(entry) = self.windows.get(&target) {
                 if !is_element_valid(entry.element) {
                     // Cached element is invalid - window was destroyed
                     drop(entry);
-                    self.windows.remove(&window_id);
-                    invalid.push(window_id);
+                    self.windows.remove(&target);
+                    invalid.push(target.window_id);
                 }
                 // If element is valid, window still exists
                 continue;
@@ -381,8 +388,8 @@ impl WindowElementCache {
 
             // No cached element - try to resolve
             // If resolution fails, window is likely destroyed
-            if self.resolve(window_id).is_none() {
-                invalid.push(window_id);
+            if self.resolve(target).is_none() {
+                invalid.push(target.window_id);
             }
         }
 
@@ -404,8 +411,8 @@ impl WindowElementCache {
     ///
     /// This combines resolution and frame retrieval in one call.
     #[must_use]
-    pub fn get_window_frame(&self, window_id: u32) -> Option<Rect> {
-        let element = self.resolve(window_id)?;
+    pub fn get_window_frame(&self, target: WindowTarget) -> Option<Rect> {
+        let element = self.resolve(target)?;
         let frame = get_frame_from_element(element);
         unsafe { CFRelease(element.cast()) };
         frame
@@ -415,27 +422,16 @@ impl WindowElementCache {
     ///
     /// Falls back to the AX-based cache if `SkyLight` fails.
     #[must_use]
-    pub fn get_window_frame_fast(&self, window_id: u32) -> Option<Rect> {
-        skylight::get_window_bounds_fast(window_id).or_else(|| self.get_window_frame(window_id))
-    }
-
-    /// Gets the PID for a cached window if available.
-    #[must_use]
-    pub fn get_window_pid(&self, window_id: u32) -> Option<i32> {
-        self.windows.get(&window_id).map(|entry| entry.pid).or_else(|| {
-            let element = self.resolve(window_id)?;
-            let pid = self.windows.get(&window_id).map(|entry| entry.pid);
-            unsafe { CFRelease(element.cast()) };
-            pid
-        })
+    pub fn get_window_frame_fast(&self, target: WindowTarget) -> Option<Rect> {
+        skylight::get_window_bounds_fast(target.window_id).or_else(|| self.get_window_frame(target))
     }
 
     /// Sets the frame of a window using a cached or resolved element.
     ///
     /// Uses the fast path (2 AX calls) suitable for animations.
     #[must_use]
-    pub fn set_window_frame_fast(&self, window_id: u32, frame: &Rect) -> bool {
-        let Some(element) = self.resolve(window_id) else {
+    pub fn set_window_frame_fast(&self, target: WindowTarget, frame: &Rect) -> bool {
+        let Some(element) = self.resolve(target) else {
             return false;
         };
         let result = set_frame_on_element(element, frame);
@@ -597,49 +593,22 @@ fn is_window_element(element: AXUIElementRef) -> bool {
     role == "AXWindow"
 }
 
-/// Gets PIDs of all running regular applications.
-fn get_running_app_pids() -> Vec<i32> {
-    use objc::runtime::{Class, Object};
-    use objc::{msg_send, sel, sel_impl};
+/// Re-resolves the exact identity for a PID from one local
+/// `NSRunningApplication` object.
+fn resolve_current_identity(identity: AppIdentity) -> Option<AppIdentity> {
+    use objc::runtime::Object;
+    use objc::{class, msg_send, sel, sel_impl};
 
-    unsafe {
-        let Some(workspace_class) = Class::get("NSWorkspace") else {
-            return Vec::new();
-        };
-
-        let workspace: *mut Object = msg_send![workspace_class, sharedWorkspace];
-        if workspace.is_null() {
-            return Vec::new();
+    objc::rc::autoreleasepool(|| unsafe {
+        let app: *mut Object = msg_send![
+            class!(NSRunningApplication),
+            runningApplicationWithProcessIdentifier: identity.pid
+        ];
+        if app.is_null() {
+            return None;
         }
-
-        let apps: *mut Object = msg_send![workspace, runningApplications];
-        if apps.is_null() {
-            return Vec::new();
-        }
-
-        let count: usize = msg_send![apps, count];
-        let mut pids = Vec::with_capacity(count);
-
-        for i in 0..count {
-            let app: *mut Object = msg_send![apps, objectAtIndex: i];
-            if app.is_null() {
-                continue;
-            }
-
-            // Only include regular apps (not background processes)
-            let activation_policy: i64 = msg_send![app, activationPolicy];
-            if activation_policy != 0 {
-                continue;
-            }
-
-            let pid: i32 = msg_send![app, processIdentifier];
-            if pid > 0 {
-                pids.push(pid);
-            }
-        }
-
-        pids
-    }
+        AppIdentity::from_ns_running_app(app)
+    })
 }
 
 /// Gets the frame from an already-resolved `AXUIElement`.
@@ -744,6 +713,14 @@ unsafe extern "C" {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::tiling::identity::{AppIdentity, LaunchDateBits};
+
+    fn test_identity() -> AppIdentity {
+        AppIdentity {
+            pid: 42,
+            launch_date: LaunchDateBits::from_time_interval_since_reference_date(1.0).unwrap(),
+        }
+    }
 
     #[test]
     fn test_cache_creation() {
@@ -766,8 +743,11 @@ mod tests {
     fn test_cache_invalidation() {
         let cache = WindowElementCache::new();
         // These should not panic even with no entries
-        cache.invalidate_window(12345);
-        cache.invalidate_app(99999);
+        cache.invalidate_window(WindowTarget {
+            identity: test_identity(),
+            window_id: 12345,
+        });
+        cache.invalidate_app_identity(test_identity());
         cache.clear();
     }
 

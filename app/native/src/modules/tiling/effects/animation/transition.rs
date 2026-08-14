@@ -1,6 +1,7 @@
 //! Window transition types for animation.
 
 use super::easing::lerp;
+use crate::modules::tiling::identity::WindowTarget;
 use crate::modules::tiling::state::Rect;
 
 // ============================================================================
@@ -10,8 +11,8 @@ use crate::modules::tiling::state::Rect;
 /// A window transition from one frame to another.
 #[derive(Debug, Clone)]
 pub struct WindowTransition {
-    /// Window ID.
-    pub window_id: u32,
+    /// Exact target window.
+    pub target: WindowTarget,
     /// Starting frame.
     pub from: Rect,
     /// Target frame.
@@ -21,7 +22,9 @@ pub struct WindowTransition {
 impl WindowTransition {
     /// Creates a new window transition.
     #[must_use]
-    pub const fn new(window_id: u32, from: Rect, to: Rect) -> Self { Self { window_id, from, to } }
+    pub const fn new(target: WindowTarget, from: Rect, to: Rect) -> Self {
+        Self { target, from, to }
+    }
 
     /// Returns the maximum distance any property needs to travel.
     #[must_use]
@@ -68,14 +71,25 @@ impl WindowTransition {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::tiling::identity::{AppIdentity, LaunchDateBits};
+
+    fn t(window_id: u32) -> WindowTarget {
+        WindowTarget {
+            identity: AppIdentity {
+                pid: 42,
+                launch_date: LaunchDateBits::from_time_interval_since_reference_date(1.0).unwrap(),
+            },
+            window_id,
+        }
+    }
 
     #[test]
     fn test_window_transition_new() {
         let from = Rect::new(0.0, 0.0, 100.0, 100.0);
         let to = Rect::new(100.0, 100.0, 200.0, 200.0);
-        let transition = WindowTransition::new(123, from, to);
+        let transition = WindowTransition::new(t(123), from, to);
 
-        assert_eq!(transition.window_id, 123);
+        assert_eq!(transition.target.window_id, 123);
         assert_eq!(transition.from, from);
         assert_eq!(transition.to, to);
     }
@@ -83,14 +97,14 @@ mod tests {
     #[test]
     fn test_window_transition_max_distance() {
         let t1 = WindowTransition::new(
-            1,
+            t(1),
             Rect::new(0.0, 0.0, 100.0, 100.0),
             Rect::new(500.0, 10.0, 110.0, 120.0),
         );
         assert!((t1.max_distance() - 500.0).abs() < f64::EPSILON);
 
         let t2 = WindowTransition::new(
-            1,
+            t(1),
             Rect::new(0.0, 0.0, 100.0, 100.0),
             Rect::new(10.0, 20.0, 130.0, 400.0),
         );
@@ -101,7 +115,7 @@ mod tests {
     fn test_window_transition_interpolate() {
         let from = Rect::new(0.0, 0.0, 100.0, 100.0);
         let to = Rect::new(100.0, 200.0, 200.0, 300.0);
-        let transition = WindowTransition::new(1, from, to);
+        let transition = WindowTransition::new(t(1), from, to);
 
         let at_start = transition.interpolate(0.0);
         assert_eq!(at_start, from);
@@ -119,14 +133,14 @@ mod tests {
     #[test]
     fn test_window_transition_involves_resize() {
         let position_only = WindowTransition::new(
-            1,
+            t(1),
             Rect::new(0.0, 0.0, 100.0, 100.0),
             Rect::new(50.0, 50.0, 100.0, 100.0),
         );
         assert!(!position_only.involves_resize());
 
         let with_resize = WindowTransition::new(
-            1,
+            t(1),
             Rect::new(0.0, 0.0, 100.0, 100.0),
             Rect::new(50.0, 50.0, 200.0, 100.0),
         );

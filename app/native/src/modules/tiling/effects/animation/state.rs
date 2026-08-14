@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use dashmap::DashMap;
 use parking_lot::RwLock;
 
+use crate::modules::tiling::identity::WindowTarget;
 use crate::modules::tiling::state::Rect;
 
 // ============================================================================
@@ -60,10 +61,10 @@ pub fn clear_animation_end_time() {
 
 /// Stores the last rendered position for each window when animation is cancelled.
 /// Uses `DashMap` for lock-free concurrent access.
-static INTERRUPTED_POSITIONS: OnceLock<DashMap<u32, Rect>> = OnceLock::new();
+static INTERRUPTED_POSITIONS: OnceLock<DashMap<WindowTarget, Rect>> = OnceLock::new();
 
 /// Gets the interrupted positions map, initializing if needed.
-fn get_interrupted_positions() -> &'static DashMap<u32, Rect> {
+fn get_interrupted_positions() -> &'static DashMap<WindowTarget, Rect> {
     INTERRUPTED_POSITIONS.get_or_init(DashMap::new)
 }
 
@@ -129,8 +130,8 @@ pub fn set_animation_active(active: bool) {
 ///
 /// Lock-free read via `DashMap`.
 #[must_use]
-pub fn get_interrupted_position(window_id: u32) -> Option<Rect> {
-    get_interrupted_positions().get(&window_id).map(|r| *r)
+pub fn get_interrupted_position(target: WindowTarget) -> Option<Rect> {
+    get_interrupted_positions().get(&target).map(|r| *r)
 }
 
 /// Stores interrupted positions for the given windows.
@@ -138,20 +139,20 @@ pub fn get_interrupted_position(window_id: u32) -> Option<Rect> {
 /// Called when animation is cancelled to record where windows are.
 /// Lock-free writes via `DashMap`.
 #[allow(dead_code)] // Will be used when animation cancellation stores positions
-pub fn store_interrupted_positions(positions: &[(u32, Rect)]) {
+pub fn store_interrupted_positions(positions: &[(WindowTarget, Rect)]) {
     let map = get_interrupted_positions();
-    for (window_id, rect) in positions {
-        map.insert(*window_id, *rect);
+    for (target, rect) in positions {
+        map.insert(*target, *rect);
     }
 }
 
 /// Clears interrupted positions for the given windows.
 ///
 /// Lock-free removals via `DashMap`.
-pub fn clear_interrupted_positions(window_ids: &[u32]) {
+pub fn clear_interrupted_positions(targets: &[WindowTarget]) {
     let map = get_interrupted_positions();
-    for window_id in window_ids {
-        map.remove(window_id);
+    for target in targets {
+        map.remove(target);
     }
 }
 
@@ -177,6 +178,14 @@ pub(crate) static TEST_ANIMATION_LOCK: parking_lot::Mutex<()> = parking_lot::Mut
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::tiling::identity::{AppIdentity, LaunchDateBits};
+
+    fn test_identity() -> AppIdentity {
+        AppIdentity {
+            pid: 42,
+            launch_date: LaunchDateBits::from_time_interval_since_reference_date(1.0).unwrap(),
+        }
+    }
 
     #[test]
     fn test_cancel_begin_animation() {
@@ -202,13 +211,17 @@ mod tests {
     fn test_interrupted_positions() {
         let _guard = TEST_ANIMATION_LOCK.lock();
         let rect = Rect::new(10.0, 20.0, 100.0, 200.0);
-        store_interrupted_positions(&[(123, rect)]);
+        let target = WindowTarget {
+            identity: test_identity(),
+            window_id: 123,
+        };
+        store_interrupted_positions(&[(target, rect)]);
 
-        let retrieved = get_interrupted_position(123);
+        let retrieved = get_interrupted_position(target);
         assert_eq!(retrieved, Some(rect));
 
-        clear_interrupted_positions(&[123]);
-        let cleared = get_interrupted_position(123);
+        clear_interrupted_positions(&[target]);
+        let cleared = get_interrupted_position(target);
         assert_eq!(cleared, None);
     }
 
@@ -218,14 +231,26 @@ mod tests {
         cancel_animation();
         cancel_animation();
         set_animation_active(true);
-        store_interrupted_positions(&[(1, Rect::new(0.0, 0.0, 10.0, 10.0))]);
+        store_interrupted_positions(&[(
+            WindowTarget {
+                identity: test_identity(),
+                window_id: 1,
+            },
+            Rect::new(0.0, 0.0, 10.0, 10.0),
+        )]);
 
         reset_transient_state();
 
         assert!(!is_animation_active());
         assert!(!should_cancel());
         assert!(!is_animation_settling());
-        assert!(get_interrupted_position(1).is_none());
+        assert!(
+            get_interrupted_position(WindowTarget {
+                identity: test_identity(),
+                window_id: 1
+            })
+            .is_none()
+        );
     }
 
     #[test]

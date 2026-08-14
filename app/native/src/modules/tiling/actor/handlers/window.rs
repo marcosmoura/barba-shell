@@ -13,6 +13,7 @@ use crate::modules::tiling::actor::messages::{
     GeometryUpdate, GeometryUpdateType, WindowCreatedInfo,
 };
 use crate::modules::tiling::effects::{get_window_cache, should_ignore_geometry_events};
+use crate::modules::tiling::identity::{AppIdentity, WindowTarget};
 use crate::modules::tiling::init::get_subscriber_handle;
 use crate::modules::tiling::state::{Rect, TilingState, Window, WindowIdList, Workspace};
 use crate::modules::tiling::tabs;
@@ -25,11 +26,13 @@ use crate::modules::tiling::tabs;
 /// 2. The focused workspace on the window's screen
 /// 3. A default workspace
 pub fn on_window_created(state: &mut TilingState, info: WindowCreatedInfo) {
-    let workspace_id = on_window_created_internal(state, info);
+    let affected = on_window_created_internal(state, info);
 
-    // Notify subscriber that layout needs to be recomputed for this workspace
-    if let (Some(ws_id), Some(handle)) = (workspace_id, get_subscriber_handle()) {
-        handle.notify_layout_changed(ws_id, false);
+    // Notify subscriber that layout needs to be recomputed for each workspace
+    if let Some(handle) = get_subscriber_handle() {
+        for ws_id in affected {
+            handle.notify_layout_changed(ws_id, false);
+        }
     }
 }
 
@@ -43,9 +46,9 @@ pub fn on_window_created_silent(state: &mut TilingState, info: WindowCreatedInfo
 
 /// Internal implementation of window creation.
 ///
-/// Returns the workspace ID if a new window was created and layout should be triggered,
-/// None if window was just updated or is a tab (no layout needed).
-fn on_window_created_internal(state: &mut TilingState, info: WindowCreatedInfo) -> Option<Uuid> {
+/// Returns the de-duplicated set of affected workspace IDs (layout should be
+/// triggered for each), or an empty vector if nothing changed.
+fn on_window_created_internal(state: &mut TilingState, info: WindowCreatedInfo) -> Vec<Uuid> {
     tracing::debug!(
         "Handling window created: id={}, app={}, title='{}'",
         info.window_id,
@@ -53,25 +56,51 @@ fn on_window_created_internal(state: &mut TilingState, info: WindowCreatedInfo) 
         info.title
     );
 
-    // Check if window already exists
-    if state.get_window(info.window_id).is_some() {
-        tracing::debug!("Window {} already tracked, updating", info.window_id);
-        state.update_window(info.window_id, |w| {
-            w.title.clone_from(&info.title);
-            w.frame = info.frame;
-            w.is_minimized = info.is_minimized;
-            w.is_fullscreen = info.is_fullscreen;
-        });
-        return None;
+    let mut affected_workspaces: Vec<Uuid> = Vec::new();
+    let existing_identity = state.get_window(info.window_id).and_then(|w| w.identity);
+    match (existing_identity, info.identity) {
+        (Some(existing), Some(incoming)) if existing != incoming => {
+            // Window ID reused by another application instance: remove every
+            // stale reference before creating the new instance.
+            tracing::debug!(
+                "tiling: window ID {} reused by a different identity, removing stale state",
+                info.window_id
+            );
+            if let Some(workspace_id) = on_window_destroyed(state, info.window_id, incoming) {
+                affected_workspaces.push(workspace_id);
+            }
+        }
+        (_, incoming) if state.get_window(info.window_id).is_some() => {
+            state.update_window(info.window_id, |w| {
+                if w.identity.is_none() {
+                    w.identity = incoming;
+                }
+                // Preserve an existing Some identity when incoming is None or equal.
+                w.title.clone_from(&info.title);
+                w.frame = info.frame;
+                w.is_minimized = info.is_minimized;
+                w.is_fullscreen = info.is_fullscreen;
+            });
+            return affected_workspaces;
+        }
+        _ => {}
     }
 
-    // Scan and register tabs for this app to update the tab registry
-    tabs::scan_and_register_tabs_for_app(info.pid);
+    // Scan and register tabs for this app to update the tab registry.
+    // Requires a concrete identity for exact tab ownership.
+    let Some(identity) = info.identity else {
+        tracing::trace!(
+            "tiling: dropping window created without identity for window_id={}",
+            info.window_id
+        );
+        return affected_workspaces;
+    };
+    tabs::scan_and_register_tabs_for_app(identity);
 
     // Check if this window is a tab (already tracked in the tab registry)
-    if tabs::is_tab(info.window_id) {
+    if tabs::is_tab_for_identity(info.window_id, identity) {
         // Don't track tabs in state at all - they're managed by the tab registry
-        return None;
+        return affected_workspaces;
     }
 
     // Find workspace to assign the window to
@@ -84,10 +113,10 @@ fn on_window_created_internal(state: &mut TilingState, info: WindowCreatedInfo) 
         .unwrap_or_default();
 
     // Check if this new window is a tab being added to an existing window
-    if tabs::is_new_window_a_tab(info.pid, info.window_id, &workspace_window_ids) {
+    if tabs::is_new_window_a_tab(identity, info.window_id, &workspace_window_ids) {
         // Register this as a tab and skip layout
-        tabs::register_tab(info.window_id, info.pid);
-        return None;
+        tabs::register_tab(info.window_id, identity);
+        return affected_workspaces;
     }
 
     // Create the window (this is a real window, not a tab)
@@ -142,7 +171,10 @@ fn on_window_created_internal(state: &mut TilingState, info: WindowCreatedInfo) 
         focused_window_id
     );
 
-    Some(workspace_id)
+    affected_workspaces.push(workspace_id);
+    affected_workspaces.sort_unstable();
+    affected_workspaces.dedup();
+    affected_workspaces
 }
 
 /// Handles a window destroyed event.
@@ -150,13 +182,27 @@ fn on_window_created_internal(state: &mut TilingState, info: WindowCreatedInfo) 
 /// Removes the window from tracking and from its workspace.
 /// Returns the workspace ID if the window was tracked AND was a real window (for layout recomputation).
 /// Tabs return None since they don't affect layout.
-pub fn on_window_destroyed(state: &mut TilingState, window_id: u32) -> Option<uuid::Uuid> {
+pub fn on_window_destroyed(
+    state: &mut TilingState,
+    window_id: u32,
+    identity: AppIdentity,
+) -> Option<uuid::Uuid> {
     tracing::debug!("tiling: handler on_window_destroyed called for window_id={window_id}");
 
-    // Check if this window is a tracked tab - if so, just unregister and skip layout
-    if tabs::is_tab(window_id) {
-        tabs::unregister_tab(window_id);
+    // Check if this window is a tracked tab of this identity - if so, just
+    // unregister and skip layout
+    if tabs::is_tab_for_identity(window_id, identity) {
+        tabs::unregister_tab_for_identity(window_id, identity);
         return None;
+    }
+
+    // Reject stale destroys for a window now owned by a different identity.
+    match state.get_window(window_id).and_then(|w| w.identity) {
+        Some(stored) if stored != identity => {
+            tracing::trace!("tiling: dropping stale WindowDestroyed for window_id={window_id}");
+            return None;
+        }
+        _ => {}
     }
 
     // Get the window info before removing
@@ -165,7 +211,7 @@ pub fn on_window_destroyed(state: &mut TilingState, window_id: u32) -> Option<uu
     let Some(workspace_id) = window_info else {
         tracing::debug!("tiling: window {window_id} was not tracked in state");
         // Still try to unregister from tab registry in case it was there
-        tabs::unregister_tab(window_id);
+        tabs::unregister_tab_for_identity(window_id, identity);
         return None;
     };
 
@@ -176,7 +222,7 @@ pub fn on_window_destroyed(state: &mut TilingState, window_id: u32) -> Option<uu
     tracing::debug!("tiling: window {window_id} removed from state");
 
     // Invalidate window cache entry for this window
-    get_window_cache().invalidate_window(window_id);
+    get_window_cache().invalidate_window(WindowTarget { identity, window_id });
 
     // Remove from workspace's window list
     state.update_workspace(workspace_id, |ws| {
@@ -644,26 +690,33 @@ pub fn on_batched_geometry_updates(state: &mut TilingState, updates: &[GeometryU
             drag_state::DragOperation::Move
         };
 
-        // Get the first window's workspace info
+        // Get the first window's workspace info (exact identity required)
         if let Some(first_window) = updates.first().and_then(|u| state.get_window(u.window_id)) {
+            let Some(identity) = first_window.identity else {
+                tracing::trace!("tiling: no identity for drag start, skipping");
+                return;
+            };
             let workspace_id = first_window.workspace_id;
             let pid = first_window.pid;
 
             if let Some(workspace) = state.get_workspace(workspace_id) {
-                // Collect snapshots of all windows in the workspace
+                // Collect snapshots of all windows in the workspace (exact targets)
                 let window_snapshots: Vec<drag_state::WindowSnapshot> = workspace
                     .window_ids
                     .iter()
                     .filter_map(|&id| state.get_window(id))
-                    .map(|w| drag_state::WindowSnapshot {
-                        window_id: w.id,
-                        original_frame: w.frame,
-                        is_floating: w.is_floating,
+                    .filter_map(|w| {
+                        w.identity.map(|identity| drag_state::WindowSnapshot {
+                            target: WindowTarget { identity, window_id: w.id },
+                            original_frame: w.frame,
+                            is_floating: w.is_floating,
+                        })
                     })
                     .collect();
 
                 drag_state::start_operation(
                     operation,
+                    identity,
                     pid,
                     workspace_id,
                     &workspace.name,
@@ -874,7 +927,15 @@ fn create_default_workspace(state: &TilingState) -> Workspace {
 #[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
+    use crate::modules::tiling::identity::{AppIdentity, LaunchDateBits};
     use crate::modules::tiling::state::LayoutType;
+
+    fn test_identity() -> AppIdentity {
+        AppIdentity {
+            pid: 1000,
+            launch_date: LaunchDateBits::from_time_interval_since_reference_date(1.0).unwrap(),
+        }
+    }
 
     fn make_state_with_workspace() -> (TilingState, Uuid) {
         let mut state = TilingState::new();
@@ -902,7 +963,7 @@ mod tests {
         WindowCreatedInfo {
             window_id,
             pid: 1000,
-            identity: None,
+            identity: Some(test_identity()),
             app_id: "com.test.app".to_string(),
             app_name: "Test App".to_string(),
             title: format!("Window {window_id}"),
@@ -938,7 +999,7 @@ mod tests {
         let info = make_window_info(100);
 
         on_window_created(&mut state, info);
-        on_window_destroyed(&mut state, 100);
+        on_window_destroyed(&mut state, 100, test_identity());
 
         // Window should be gone
         assert!(state.get_window(100).is_none());
@@ -1010,11 +1071,13 @@ mod tests {
         let updates = vec![
             GeometryUpdate {
                 window_id: 100,
+                identity: test_identity(),
                 frame: Rect::new(10.0, 10.0, 400.0, 300.0),
                 update_type: crate::modules::tiling::actor::GeometryUpdateType::Move,
             },
             GeometryUpdate {
                 window_id: 200,
+                identity: test_identity(),
                 frame: Rect::new(420.0, 10.0, 400.0, 300.0),
                 update_type: crate::modules::tiling::actor::GeometryUpdateType::Move,
             },
@@ -1035,7 +1098,7 @@ mod tests {
 
         assert!(eyeball::Observable::get(&state.focus).has_focus());
 
-        on_window_destroyed(&mut state, 100);
+        on_window_destroyed(&mut state, 100, test_identity());
 
         assert!(!eyeball::Observable::get(&state.focus).has_focus());
     }

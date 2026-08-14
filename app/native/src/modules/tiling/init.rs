@@ -160,9 +160,7 @@ const RUNTIME_STOP_TIMEOUT: Duration = Duration::from_secs(2);
 /// real seconds in unit tests.
 static STOP_TIMEOUT_OVERRIDE: Mutex<Option<Duration>> = Mutex::new(None);
 
-fn stop_timeout() -> Duration {
-    (*STOP_TIMEOUT_OVERRIDE.lock()).unwrap_or(RUNTIME_STOP_TIMEOUT)
-}
+fn stop_timeout() -> Duration { (*STOP_TIMEOUT_OVERRIDE.lock()).unwrap_or(RUNTIME_STOP_TIMEOUT) }
 
 #[cfg(test)]
 fn set_stop_timeout(override_value: Option<Duration>) {

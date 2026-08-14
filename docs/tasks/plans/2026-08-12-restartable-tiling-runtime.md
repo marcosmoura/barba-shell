@@ -2018,6 +2018,8 @@ In `build_runtime`, replace the optional stages:
     }
     if let Err(e) = factory.setup_borders() {
         tracing::warn!("{e}");
+    } else {
+        super::borders::resume();
     }
 ```
 

@@ -2,7 +2,7 @@
 
 use std::io::{IsTerminal, Write as IoWrite};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -87,6 +87,9 @@ pub struct WallpaperManager {
     current_index: AtomicUsize,
     /// Whether the cycling timer is running.
     timer_running: AtomicBool,
+    /// Generation counter for the cycling timer; a stopped timer can never
+    /// apply another wallpaper.
+    timer_generation: AtomicU64,
     /// Mutex for thread-safe wallpaper changes.
     change_lock: Mutex<()>,
 }
@@ -109,6 +112,7 @@ impl WallpaperManager {
             config: config.clone(),
             current_index: AtomicUsize::new(0),
             timer_running: AtomicBool::new(false),
+            timer_generation: AtomicU64::new(0),
             change_lock: Mutex::new(()),
         })
     }
@@ -299,17 +303,20 @@ impl WallpaperManager {
 
     /// Starts the automatic wallpaper cycling timer.
     ///
-    /// Does nothing if the interval is 0.
+    /// Does nothing if the interval is 0. A worker thread fires only while its
+    /// captured generation still matches the manager's current generation, so a
+    /// stopped timer can never apply another wallpaper, and restart needs no sleep.
     pub fn start_timer(self: &Arc<Self>) {
         if self.config.interval == 0 {
             return;
         }
 
         if self.timer_running.swap(true, Ordering::SeqCst) {
-            // Timer already running
+            // Timer already claimed by a live worker.
             return;
         }
 
+        let generation = self.timer_generation.load(Ordering::SeqCst);
         let manager = Arc::clone(self);
         let interval = Duration::from_secs(self.config.interval);
 
@@ -317,7 +324,9 @@ impl WallpaperManager {
             loop {
                 std::thread::sleep(interval);
 
-                if !manager.timer_running.load(Ordering::SeqCst) {
+                if !manager.timer_running.load(Ordering::SeqCst)
+                    || manager.timer_generation.load(Ordering::SeqCst) != generation
+                {
                     break;
                 }
 
@@ -330,13 +339,18 @@ impl WallpaperManager {
     }
 
     /// Stops the automatic wallpaper cycling timer.
-    pub fn stop_timer(&self) { self.timer_running.store(false, Ordering::SeqCst); }
+    ///
+    /// Bumping the generation invalidates any in-flight worker so it exits at
+    /// its next wakeup without applying a wallpaper. No sleep is required
+    /// before restart.
+    pub fn stop_timer(&self) {
+        self.timer_running.store(false, Ordering::SeqCst);
+        self.timer_generation.fetch_add(1, Ordering::SeqCst);
+    }
 
     /// Resets the timer (stops and starts it again).
     pub fn reset_timer(self: &Arc<Self>) {
         self.stop_timer();
-        // Small delay to ensure the old timer thread has exited
-        std::thread::sleep(Duration::from_millis(100));
         self.start_timer();
     }
 }
@@ -774,6 +788,70 @@ fn print_single_result<W: IoWrite>(w: &mut W, result: &ProcessResult) {
     }
 }
 
+/// Pure status decision so the global `OnceLock` is not required in tests.
+fn wallpaper_status(config: &WallpaperConfig, manager: Option<&WallpaperManager>) -> ModuleStatus {
+    if !config.is_enabled() {
+        return ModuleStatus::ConfiguredOff;
+    }
+    let Some(manager) = manager else {
+        return ModuleStatus::Unavailable("no wallpapers configured or load failed".into());
+    };
+    if config.interval == 0 || manager.timer_running.load(Ordering::SeqCst) {
+        ModuleStatus::Running
+    } else {
+        ModuleStatus::Paused
+    }
+}
+
+use crate::modules::services::lifecycle::{LifecycleModule, ModuleStatus};
+
+/// Tray-toggleable lifecycle handle for the global wallpaper manager.
+///
+/// The manager stays lazily initialized in its `OnceLock`; this unit struct
+/// resolves it through `get_manager()` on demand and never forces init.
+pub struct WallpaperLifecycle;
+
+impl WallpaperLifecycle {
+    fn manager() -> Option<Arc<WallpaperManager>> { get_manager().cloned() }
+}
+
+impl LifecycleModule for WallpaperLifecycle {
+    fn name(&self) -> &'static str { "Wallpapers" }
+
+    fn id(&self) -> &'static str { "wallpapers" }
+
+    fn start(&self) -> Result<(), String> {
+        Self::manager().map_or_else(
+            || Err("wallpaper manager not initialized".into()),
+            |manager| {
+                manager.start_timer();
+                Ok(())
+            },
+        )
+    }
+
+    fn pause(&self) -> Result<(), String> {
+        Self::manager().map_or_else(
+            || Err("wallpaper manager not initialized".into()),
+            |manager| {
+                manager.stop_timer();
+                Ok(())
+            },
+        )
+    }
+
+    fn resume(&self) -> Result<(), String> { self.start() }
+
+    fn status(&self) -> ModuleStatus {
+        let config = &crate::config::get_config().wallpapers;
+        wallpaper_status(config, Self::manager().as_deref())
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1101,5 +1179,80 @@ mod tests {
     fn test_list_wallpapers_without_init_returns_error() {
         // Similar to above - depends on global state
         let _result = list_wallpapers();
+    }
+
+    fn manager_with_interval(interval: u64) -> Arc<WallpaperManager> {
+        let dir = tempfile::tempdir().unwrap();
+        let img = dir.path().join("wall.jpg");
+        std::fs::write(&img, b"").unwrap();
+        let config = WallpaperConfig {
+            enabled: true,
+            list: vec![img.display().to_string()],
+            interval,
+            ..Default::default()
+        };
+        Arc::new(WallpaperManager::new(&config).unwrap())
+    }
+
+    #[test]
+    fn start_timer_is_idempotent_and_preserves_generation() {
+        let manager = manager_with_interval(100);
+
+        manager.start_timer();
+        let generation = manager.timer_generation.load(Ordering::SeqCst);
+        assert!(manager.timer_running.load(Ordering::SeqCst));
+
+        manager.start_timer();
+        assert!(manager.timer_running.load(Ordering::SeqCst));
+        assert_eq!(manager.timer_generation.load(Ordering::SeqCst), generation);
+
+        manager.stop_timer();
+        assert!(!manager.timer_running.load(Ordering::SeqCst));
+        assert_eq!(manager.timer_generation.load(Ordering::SeqCst), generation + 1);
+    }
+
+    #[test]
+    fn reset_timer_restarts_immediately_without_arbitrary_sleep() {
+        let manager = manager_with_interval(100);
+
+        manager.start_timer();
+        manager.reset_timer();
+        // Must return without sleeping: running is re-claimed and generation moved forward.
+        assert!(manager.timer_running.load(Ordering::SeqCst));
+        manager.stop_timer();
+    }
+
+    #[test]
+    fn wallpaper_status_maps_states() {
+        let manager = manager_with_interval(100);
+        let on_config = manager.config.clone();
+        assert_eq!(
+            wallpaper_status(&WallpaperConfig::default(), None),
+            ModuleStatus::ConfiguredOff
+        );
+        assert!(matches!(
+            wallpaper_status(&on_config, None),
+            ModuleStatus::Unavailable(reason) if reason.contains("no wallpapers")
+        ));
+
+        assert_eq!(
+            wallpaper_status(&on_config, Some(&manager)),
+            ModuleStatus::Paused
+        );
+
+        let fixed_config = WallpaperConfig {
+            interval: 0,
+            ..on_config.clone()
+        };
+        assert_eq!(
+            wallpaper_status(&fixed_config, Some(&manager)),
+            ModuleStatus::Running
+        );
+
+        manager.timer_running.store(true, Ordering::SeqCst);
+        assert_eq!(
+            wallpaper_status(&on_config, Some(&manager)),
+            ModuleStatus::Running
+        );
     }
 }

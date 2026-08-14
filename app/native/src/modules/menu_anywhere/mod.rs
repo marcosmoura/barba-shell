@@ -58,9 +58,100 @@ pub fn init(app_handle: tauri::AppHandle) {
     IS_RUNNING.store(true, Ordering::SeqCst);
 }
 
+use crate::modules::services::lifecycle::{LifecycleModule, ModuleStatus};
+
+/// Pure status decision: config gate, then accessibility, then the real tap state.
+fn menu_anywhere_status(
+    config_enabled: bool,
+    accessibility: bool,
+    running: bool,
+    tap_state: Option<bool>,
+) -> ModuleStatus {
+    if !config_enabled {
+        return ModuleStatus::ConfiguredOff;
+    }
+    if !accessibility {
+        return ModuleStatus::Unavailable("Accessibility permission required".into());
+    }
+    match tap_state {
+        None if running => ModuleStatus::Unavailable(
+            "event tap creation failed — check Accessibility permission".into(),
+        ),
+        Some(true) => ModuleStatus::Running,
+        None | Some(false) => ModuleStatus::Paused,
+    }
+}
+
+/// Tray-toggleable lifecycle handle for MenuAnywhere.
+pub struct MenuAnywhereLifecycle {
+    app_handle: tauri::AppHandle,
+}
+
+impl MenuAnywhereLifecycle {
+    #[must_use]
+    pub const fn new(app_handle: tauri::AppHandle) -> Self { Self { app_handle } }
+}
+
+impl LifecycleModule for MenuAnywhereLifecycle {
+    fn name(&self) -> &'static str { "Menu Anywhere" }
+
+    fn id(&self) -> &'static str { "menuAnywhere" }
+
+    fn start(&self) -> Result<(), String> {
+        if IS_RUNNING.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        init(self.app_handle.clone());
+        Ok(())
+    }
+
+    fn pause(&self) -> Result<(), String> { event_monitor::set_enabled(false) }
+
+    fn resume(&self) -> Result<(), String> { event_monitor::set_enabled(true) }
+
+    fn status(&self) -> ModuleStatus {
+        let config = crate::config::get_config();
+        let config_enabled = config.menu_anywhere.is_enabled();
+        let accessibility = crate::is_accessibility_granted();
+        let running = IS_RUNNING.load(Ordering::SeqCst);
+        let tap_state = event_monitor::tap_state();
+        menu_anywhere_status(config_enabled, accessibility, running, tap_state)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn menu_anywhere_status_maps_states() {
+        use crate::modules::services::lifecycle::ModuleStatus;
+
+        assert_eq!(
+            menu_anywhere_status(false, true, true, Some(true)),
+            ModuleStatus::ConfiguredOff
+        );
+        assert!(matches!(
+            menu_anywhere_status(true, false, false, None),
+            ModuleStatus::Unavailable(reason) if reason.contains("Accessibility")
+        ));
+        assert_eq!(
+            menu_anywhere_status(true, true, true, Some(true)),
+            ModuleStatus::Running
+        );
+        assert_eq!(
+            menu_anywhere_status(true, true, true, Some(false)),
+            ModuleStatus::Paused
+        );
+        assert_eq!(
+            menu_anywhere_status(true, true, false, None),
+            ModuleStatus::Paused
+        );
+        assert!(matches!(
+            menu_anywhere_status(true, true, true, None),
+            ModuleStatus::Unavailable(reason) if reason.contains("Accessibility")
+        ));
+    }
 
     #[test]
     fn test_is_running_starts_false() {

@@ -41,6 +41,7 @@ unsafe extern "C" {
     ) -> CFMachPortRef;
 
     fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
+    fn CGEventTapIsEnabled(tap: CFMachPortRef) -> bool;
     fn CGEventGetFlags(event: CGEventRef) -> u64;
     fn CGEventGetLocation(event: CGEventRef) -> CGPoint;
 }
@@ -69,6 +70,19 @@ const ALL_MODIFIER_FLAGS: u64 = 0x001E_0000; // Shift | Control | Option | Comma
 // Pre-computed configuration stored in atomics for fast access in callback
 static EXPECTED_EVENT_TYPE: AtomicU32 = AtomicU32::new(0);
 static REQUIRED_MODIFIERS: AtomicU64 = AtomicU64::new(0);
+
+/// Retained event tap port. `CFMachPort` is a raw-pointer wrapper that is not
+/// `Send`/`Sync`; the explicit impls are sound because the retained port is only
+/// touched via `CGEventTapEnable`/`CGEventTapIsEnabled` (thread-safe) and the
+/// port was retained (`wrap_under_create_rule` takes ownership).
+#[derive(Clone)]
+struct RetainedEventTap(CFMachPort);
+#[allow(clippy::non_send_fields_in_send_ty)]
+unsafe impl Send for RetainedEventTap {}
+#[allow(clippy::non_send_fields_in_send_ty)]
+unsafe impl Sync for RetainedEventTap {}
+
+static EVENT_TAP: Mutex<Option<RetainedEventTap>> = Mutex::new(None);
 
 /// Starts the event monitor with the given configuration.
 pub fn start(config: &MenuAnywhereConfig) {
@@ -104,8 +118,35 @@ pub fn start(config: &MenuAnywhereConfig) {
         let run_loop = CFRunLoop::get_current();
         run_loop.add_source(&run_loop_source, kCFRunLoopCommonModes);
         CGEventTapEnable(tap, true);
+        *EVENT_TAP.lock() = Some(RetainedEventTap(tap_port));
         CFRunLoop::run_current();
     }
+}
+
+/// Enables or disables the retained event tap.
+///
+/// # Errors
+///
+/// Returns an error if the tap was never created.
+pub fn set_enabled(enabled: bool) -> Result<(), String> {
+    let tap = EVENT_TAP.lock().clone();
+    match tap {
+        Some(tap) => {
+            unsafe { CGEventTapEnable(tap.0.as_concrete_TypeRef().cast(), enabled) };
+            Ok(())
+        }
+        None => Err("event tap handle not available".into()),
+    }
+}
+
+/// Returns the real tap state: `Some(bool)` if the tap exists, `None` if the
+/// tap was never created.
+#[must_use]
+pub fn tap_state() -> Option<bool> {
+    let guard = EVENT_TAP.lock();
+    guard
+        .as_ref()
+        .map(|tap| unsafe { CGEventTapIsEnabled(tap.0.as_concrete_TypeRef().cast()) })
 }
 
 /// Fast callback - uses atomics instead of mutex for configuration.
@@ -275,5 +316,11 @@ mod tests {
     #[test]
     fn test_cgpoint_is_repr_c() {
         assert_eq!(std::mem::size_of::<CGPoint>(), 16);
+    }
+
+    #[test]
+    fn retained_event_tap_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<RetainedEventTap>();
     }
 }

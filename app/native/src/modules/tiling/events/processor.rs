@@ -16,7 +16,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use parking_lot::Mutex;
@@ -73,6 +73,31 @@ const MIN_REFRESH_RATE: f64 = 30.0;
 /// Maximum refresh rate to prevent too-slow batching.
 const MAX_REFRESH_RATE: f64 = 360.0;
 
+/// Repeatable, resettable completion signal used to acknowledge that a screen
+/// batch timer task has fully exited its loop.
+#[derive(Default)]
+struct TimerCompletion {
+    done: parking_lot::Mutex<bool>,
+    cv: parking_lot::Condvar,
+}
+
+impl TimerCompletion {
+    fn reset(&self) { *self.done.lock() = false; }
+
+    fn mark(&self) {
+        *self.done.lock() = true;
+        self.cv.notify_all();
+    }
+
+    fn wait(&self, timeout: Duration) -> bool {
+        let mut done = self.done.lock();
+        if !*done {
+            self.cv.wait_for(&mut done, timeout);
+        }
+        *done
+    }
+}
+
 /// A batch queue for a single screen.
 struct ScreenBatch {
     /// Screen ID (`CGDirectDisplayID`).
@@ -87,6 +112,9 @@ struct ScreenBatch {
 
     /// Whether the timer for this screen is running.
     timer_running: AtomicBool,
+
+    /// Completion acknowledgment for the currently running timer task.
+    timer_done: Arc<TimerCompletion>,
 }
 
 impl ScreenBatch {
@@ -96,6 +124,7 @@ impl ScreenBatch {
             refresh_rate: refresh_rate.clamp(MIN_REFRESH_RATE, MAX_REFRESH_RATE),
             updates: HashMap::new(),
             timer_running: AtomicBool::new(false),
+            timer_done: Arc::new(TimerCompletion::default()),
         }
     }
 
@@ -241,25 +270,6 @@ impl EventProcessor {
             .map_or_else(|| self.default_screen_id.load(Ordering::SeqCst), |entry| *entry)
     }
 
-    /// Start the batch flush timers for all registered screens.
-    pub fn start(&self) {
-        if self
-            .running
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .is_err()
-        {
-            tracing::warn!("EventProcessor already running");
-            return;
-        }
-
-        let screen_ids: Vec<u32> = self.screen_batches.lock().keys().copied().collect();
-        for screen_id in screen_ids {
-            self.start_screen_timer(screen_id);
-        }
-
-        tracing::debug!("EventProcessor started");
-    }
-
     /// Start the timer for a specific screen.
     fn start_screen_timer(&self, screen_id: u32) {
         let batches = self.screen_batches.clone();
@@ -278,6 +288,7 @@ impl EventProcessor {
                     {
                         return; // Timer already running
                     }
+                    batch.timer_done.reset();
                     batch.batch_interval()
                 }
                 None => return,
@@ -323,6 +334,10 @@ impl EventProcessor {
             if let Some(batch) = batches.lock().get(&screen_id) {
                 batch.timer_running.store(false, Ordering::SeqCst);
             }
+            let timer_done = batches.lock().get(&screen_id).map(|b| Arc::clone(&b.timer_done));
+            if let Some(timer_done) = timer_done {
+                timer_done.mark();
+            }
 
             tracing::trace!("Batch timer stopped for screen {screen_id}");
         });
@@ -334,7 +349,6 @@ impl EventProcessor {
     pub fn stop(&self) {
         self.running.store(false, Ordering::SeqCst);
 
-        // Stop all screen timers
         {
             let batches = self.screen_batches.lock();
             for batch in batches.values() {
@@ -343,6 +357,73 @@ impl EventProcessor {
         }
 
         tracing::debug!("EventProcessor stopped");
+    }
+
+    /// Atomically reject new events, stop all timers, wait for each timer
+    /// task's completion acknowledgment, then clear all pending batches and
+    /// routing maps.
+    ///
+    /// Returns `false` if any timer task failed to acknowledge within
+    /// `timeout`; routing maps are still cleared in that case.
+    pub fn stop_and_wait(&self, timeout: Duration) -> bool {
+        self.running.store(false, Ordering::SeqCst);
+
+        let completions: Vec<Arc<TimerCompletion>> = {
+            let mut batches = self.screen_batches.lock();
+            batches
+                .values_mut()
+                .filter(|batch| batch.timer_running.swap(false, Ordering::SeqCst))
+                .map(|batch| Arc::clone(&batch.timer_done))
+                .collect()
+        };
+
+        let deadline = Instant::now() + timeout;
+        let all_done = completions.iter().all(|completion| {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            completion.wait(remaining)
+        });
+
+        if !all_done {
+            tracing::warn!("tiling: EventProcessor timers did not stop within {timeout:?}");
+        }
+
+        self.clear_routing_maps();
+        all_done
+    }
+
+    /// Discard pending geometry updates and all routing/tracking maps.
+    ///
+    /// Idempotent: safe to call when already stopped or on retry.
+    fn clear_routing_maps(&self) {
+        {
+            let mut batches = self.screen_batches.lock();
+            for batch in batches.values_mut() {
+                batch.updates.clear();
+            }
+        }
+        self.window_screen_map.clear();
+        self.pid_windows.lock().clear();
+    }
+
+    /// Start the batch flush timers for all registered screens.
+    pub fn start(&self) {
+        if self
+            .running
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            tracing::warn!("EventProcessor already running");
+            return;
+        }
+
+        // Pending updates enqueued before start belong to this generation;
+        // stale routes from a prior generation are cleared by stop_and_wait.
+        let screen_ids: Vec<u32> = self.screen_batches.lock().keys().copied().collect();
+        for screen_id in screen_ids {
+            self.start_screen_timer(screen_id);
+        }
+
+        tracing::debug!("EventProcessor started");
     }
 
     /// Check if the processor is running.
@@ -961,6 +1042,66 @@ mod tests {
         processor.flush_all();
 
         assert_eq!(processor.pending_geometry_count(), 0);
+
+        handle.shutdown().unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_stop_and_wait_clears_routes_and_batches() {
+        let (handle, _stopped) = StateActor::spawn();
+        let processor = EventProcessor::new(handle.clone());
+
+        processor.register_screen(1, 60.0);
+        processor.set_window_screen(100, 1);
+        processor.on_window_moved(100, Rect::new(0.0, 0.0, 100.0, 100.0));
+        processor.start();
+        assert!(processor.is_running());
+        assert_eq!(processor.pending_geometry_count(), 1);
+
+        let stopped = processor.stop_and_wait(Duration::from_secs(1));
+        assert!(stopped, "timer should acknowledge completion");
+        assert!(!processor.is_running());
+        assert_eq!(processor.pending_geometry_count(), 0);
+        assert_eq!(processor.window_screen_map.len(), 0);
+        assert_eq!(processor.pid_windows.lock().len(), 0);
+
+        handle.shutdown().unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_stop_and_wait_when_not_running_is_idempotent() {
+        let (handle, _stopped) = StateActor::spawn();
+        let processor = EventProcessor::new(handle.clone());
+
+        processor.register_screen(1, 60.0);
+        processor.set_window_screen(100, 1);
+        processor.on_window_moved(100, Rect::new(0.0, 0.0, 100.0, 100.0));
+
+        // Never started: no timer tasks exist, so nothing to wait on.
+        let stopped = processor.stop_and_wait(Duration::from_millis(100));
+        assert!(stopped);
+        assert_eq!(processor.pending_geometry_count(), 0);
+        assert_eq!(processor.window_screen_map.len(), 0);
+
+        handle.shutdown().unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_start_discards_stale_routes() {
+        let (handle, _stopped) = StateActor::spawn();
+        let processor = EventProcessor::new(handle.clone());
+
+        processor.register_screen(1, 60.0);
+        processor.set_window_screen(100, 1);
+        processor.on_window_moved(100, Rect::new(0.0, 0.0, 100.0, 100.0));
+
+        let _ = processor.stop_and_wait(Duration::from_secs(1));
+        assert_eq!(processor.pending_geometry_count(), 0);
+
+        // Restart must not resurrect the stale move.
+        processor.start();
+        assert_eq!(processor.pending_geometry_count(), 0);
+        assert_eq!(processor.window_screen_map.len(), 0);
 
         handle.shutdown().unwrap();
     }

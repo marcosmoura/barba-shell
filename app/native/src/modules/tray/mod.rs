@@ -42,7 +42,7 @@ fn item_state(status: &ModuleStatus, name: &str) -> (bool, bool, String) {
 }
 
 impl TrayMenuState {
-    /// Builds one CheckMenuItem per registered module and appends them to the
+    /// Builds one `CheckMenuItem` per registered module and appends them to the
     /// retained Modules submenu. Idempotent.
     fn install_modules(&self, app: &tauri::AppHandle, registry: &LifecycleRegistry) {
         {
@@ -102,8 +102,8 @@ impl TrayMenuState {
                 ModuleStatus::Unavailable(reason) => {
                     Err(format!("{id_owned} is unavailable: {reason}"))
                 }
-                ModuleStatus::Running => module.pause().and_then(|_| Ok(module.status())),
-                ModuleStatus::Paused => module.resume().and_then(|_| Ok(module.status())),
+                ModuleStatus::Running => module.pause().map(|()| module.status()),
+                ModuleStatus::Paused => module.resume().map(|()| module.status()),
             };
             let _ = app.run_on_main_thread(move || match result {
                 Ok(status) => {

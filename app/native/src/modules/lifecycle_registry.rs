@@ -5,9 +5,11 @@ use parking_lot::Mutex;
 use crate::modules::services::lifecycle::{LifecycleModule, ModuleStatus};
 
 /// Fixed collection of all toggleable modules, registered once at startup and
-/// never mutated afterwards. `toggle` clones the `Arc` out of the guard and
-/// drops the lock before calling `pause`/`resume`, so slow OS calls never block
-/// concurrent lookups or registrations.
+/// never mutated afterwards.
+///
+/// `toggle` clones the `Arc` out of the guard and drops the lock before
+/// calling `pause`/`resume`, so slow OS calls never block concurrent lookups
+/// or registrations.
 pub struct LifecycleRegistry {
     modules: Mutex<Vec<Arc<dyn LifecycleModule>>>,
 }

@@ -64,3 +64,6 @@ pub fn init(app: &App) {
 
     tracing::debug!("system tray initialized");
 }
+
+/// Placeholder; replaced by Task 17.
+pub fn install_modules_submenu(_app: &tauri::AppHandle) {}

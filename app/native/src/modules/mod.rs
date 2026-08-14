@@ -18,6 +18,7 @@ pub mod audio;
 pub mod bar;
 pub mod cmd_q;
 pub mod hotkey;
+pub mod lifecycle_registry;
 pub mod menu_anywhere;
 pub mod notunes;
 pub mod services;

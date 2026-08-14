@@ -25,7 +25,7 @@ use std::sync::OnceLock;
 
 pub use modules::{audio, tiling};
 use modules::{bar, cmd_q, hotkey, menu_anywhere, notunes, tray, wallpaper, widgets};
-use tauri::App;
+use tauri::{App, Manager};
 
 /// Cached accessibility permission status.
 static ACCESSIBILITY_GRANTED: OnceLock<bool> = OnceLock::new();
@@ -137,6 +137,10 @@ fn lazy_load_modules(app: &App, config: &config::StacheConfig) {
             tracing::debug!("tiling initialization complete");
         }
 
+        // Install the Modules submenu only after every background module has
+        // had a chance to start, so the initial check states are accurate.
+        modules::tray::install_modules_submenu(&handle);
+
         tracing::info!("background initialization complete");
     });
 }
@@ -205,6 +209,24 @@ pub fn run() {
             {
                 tracing::warn!(error = %e, "failed to set activation policy");
             }
+
+            // Phase 4: the registry must exist before base modules and before
+            // the background startup reads it. Registration starts nothing —
+            // each module stays lazily initialized.
+            let registry = modules::lifecycle_registry::LifecycleRegistry::new();
+            registry.register(std::sync::Arc::new(modules::wallpaper::WallpaperLifecycle));
+            registry.register(std::sync::Arc::new(modules::cmd_q::CmdQLifecycle::new(
+                app.handle().clone(),
+            )));
+            registry.register(std::sync::Arc::new(modules::notunes::NoTunesLifecycle));
+            registry.register(std::sync::Arc::new(modules::audio::ProxyAudioLifecycle));
+            registry.register(std::sync::Arc::new(
+                modules::menu_anywhere::MenuAnywhereLifecycle::new(app.handle().clone()),
+            ));
+            registry.register(std::sync::Arc::new(modules::tiling::TilingLifecycle::new(
+                app.handle().clone(),
+            )));
+            app.manage(registry);
 
             // Load critical base modules (blocking)
             load_base_modules(app);

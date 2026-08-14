@@ -33,7 +33,7 @@ pub fn init() {
 
     // Only start if proxy audio is enabled
     if config.proxy_audio.is_enabled() {
-        watcher::start(config.proxy_audio.clone());
+        watcher::start(&config.proxy_audio);
     }
 }
 

@@ -291,18 +291,18 @@ fn remove_generation() {
 /// # Arguments
 ///
 /// * `config` - Proxy audio configuration for device priority rules.
-pub fn start(config: ProxyAudioConfig) {
+pub fn start(config: &ProxyAudioConfig) {
     if RUNTIME.lock().unwrap().is_some() {
         return;
     }
-    on_audio_device_change(&config);
-    if let Err(e) = start_generation(&config) {
+    on_audio_device_change(config);
+    if let Err(e) = start_generation(config) {
         tracing::error!(error = %e, "proxyAudio: failed to start watcher");
     }
 }
 
 /// Pure status decision so the global `RUNTIME` slot is not required in tests.
-fn proxy_audio_status(config_enabled: bool, runtime_present: bool) -> ModuleStatus {
+const fn proxy_audio_status(config_enabled: bool, runtime_present: bool) -> ModuleStatus {
     if !config_enabled {
         return ModuleStatus::ConfiguredOff;
     }

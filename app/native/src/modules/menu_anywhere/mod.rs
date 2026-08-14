@@ -82,7 +82,7 @@ fn menu_anywhere_status(
     }
 }
 
-/// Tray-toggleable lifecycle handle for MenuAnywhere.
+/// Tray-toggleable lifecycle handle for `MenuAnywhere`.
 pub struct MenuAnywhereLifecycle {
     app_handle: tauri::AppHandle,
 }

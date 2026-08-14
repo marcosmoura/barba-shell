@@ -44,8 +44,8 @@ pub use spring::{SpringParams, SpringState};
 pub use state::{
     ANIMATION_SETTLE_DURATION_MS, begin_animation, cancel_animation, clear_animation_end_time,
     clear_interrupted_positions, get_interrupted_position, is_animation_active,
-    is_animation_settling, set_animation_active, should_cancel, should_ignore_geometry_events,
-    store_interrupted_positions,
+    is_animation_settling, reset_transient_state, set_animation_active, should_cancel,
+    should_ignore_geometry_events, store_interrupted_positions,
 };
 pub use sync::{
     ca_transaction_begin_disabled, ca_transaction_commit, init_display_link, precision_sleep,

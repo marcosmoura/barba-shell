@@ -44,7 +44,7 @@ pub mod window_ops;
 
 pub use animation::{
     AnimationConfig, AnimationSystem, WindowTransition, begin_animation, cancel_animation,
-    get_interrupted_position, is_animation_active, is_animation_settling,
+    get_interrupted_position, is_animation_active, is_animation_settling, reset_transient_state,
     should_ignore_geometry_events,
 };
 pub use executor::EffectExecutor;

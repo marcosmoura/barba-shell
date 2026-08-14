@@ -76,6 +76,12 @@ static INITIALIZED: AtomicBool = AtomicBool::new(false);
 /// Whether the left mouse button is currently pressed.
 static MOUSE_DOWN: AtomicBool = AtomicBool::new(false);
 
+/// Whether event processing is currently enabled.
+///
+/// The tap and run loop live for the process lifetime; this flag gates
+/// callback work so a paused tiling runtime receives no drag state.
+static ACTIVE: AtomicBool = AtomicBool::new(true);
+
 /// Callback to invoke when mouse button is released.
 static MOUSE_UP_CALLBACK: Mutex<Option<fn()>> = Mutex::new(None);
 
@@ -112,6 +118,22 @@ pub fn clear_mouse_up_callback() {
         *cb = None;
     }
 }
+
+/// Enables or disables event processing.
+///
+/// Disabling also resets the tracked mouse-down state and clears the
+/// mouse-up callback so no stale drag finishes during a pause.
+pub fn set_active(active: bool) {
+    ACTIVE.store(active, Ordering::SeqCst);
+    if !active {
+        MOUSE_DOWN.store(false, Ordering::SeqCst);
+        clear_mouse_up_callback();
+    }
+}
+
+/// Returns whether event processing is enabled.
+#[must_use]
+pub fn is_active() -> bool { ACTIVE.load(Ordering::SeqCst) }
 
 /// Initializes the mouse event monitor.
 ///
@@ -206,6 +228,10 @@ extern "C" fn mouse_event_callback(
     event: CGEventRef,
     _user_info: *mut c_void,
 ) -> CGEventRef {
+    if !ACTIVE.load(Ordering::SeqCst) {
+        return event;
+    }
+
     match event_type {
         K_CG_EVENT_LEFT_MOUSE_DOWN | K_CG_EVENT_RIGHT_MOUSE_DOWN => {
             MOUSE_DOWN.store(true, Ordering::SeqCst);
@@ -262,5 +288,18 @@ mod tests {
         fn dummy_callback() {}
         set_mouse_up_callback(dummy_callback);
         clear_mouse_up_callback();
+    }
+
+    #[test]
+    fn test_set_active_gates_processing() {
+        set_active(true);
+        assert!(is_active());
+
+        set_active(false);
+        assert!(!is_active());
+        assert!(!is_mouse_down());
+
+        set_active(true);
+        assert!(is_active());
     }
 }

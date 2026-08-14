@@ -159,6 +159,18 @@ pub fn clear_interrupted_positions(window_ids: &[u32]) {
 // Tests
 // ============================================================================
 
+/// Resets every transient animation counter and position map.
+///
+/// The display-link/sync singletons are retained process-wide; only the
+/// mutable animation bookkeeping is cleared so a paused runtime publishes
+/// no further effects.
+pub fn reset_transient_state() {
+    ANIMATION_ACTIVE.store(false, Ordering::Relaxed);
+    WAITING_COMMANDS.store(0, Ordering::Relaxed);
+    clear_animation_end_time();
+    get_interrupted_positions().clear();
+}
+
 #[cfg(test)]
 pub(crate) static TEST_ANIMATION_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 
@@ -198,6 +210,22 @@ mod tests {
         clear_interrupted_positions(&[123]);
         let cleared = get_interrupted_position(123);
         assert_eq!(cleared, None);
+    }
+
+    #[test]
+    fn test_reset_transient_state_clears_counters() {
+        let _guard = TEST_ANIMATION_LOCK.lock();
+        cancel_animation();
+        cancel_animation();
+        set_animation_active(true);
+        store_interrupted_positions(&[(1, Rect::new(0.0, 0.0, 10.0, 10.0))]);
+
+        reset_transient_state();
+
+        assert!(!is_animation_active());
+        assert!(!should_cancel());
+        assert!(!is_animation_settling());
+        assert!(get_interrupted_position(1).is_none());
     }
 
     #[test]

@@ -15,6 +15,7 @@
 use std::ffi::CString;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{OnceLock, mpsc};
 use std::time::{Duration, Instant};
 
@@ -124,6 +125,11 @@ fn process_update(
     rx: &mpsc::Receiver<AnimationCommand>,
     cmd: AnimationCommand,
 ) -> Option<AnimationCommand> {
+    if PAUSED.load(Ordering::SeqCst) {
+        tracing::trace!("tiling: borders paused, dropping queued animation command");
+        return None;
+    }
+
     let AnimationCommand::Update { args, animation } = cmd;
     *get_last_command().lock() = String::new();
     if !send_command(&args) {
@@ -664,6 +670,42 @@ pub fn init() -> bool {
     true
 }
 
+/// Whether the border system is paused.
+///
+/// The animation runner thread lives for the process lifetime; this flag
+/// makes it inert during a tiling pause.
+static PAUSED: AtomicBool = AtomicBool::new(false);
+
+/// Pauses the border system: marks the runner inactive, clears the
+/// last-command cache, and sends a zero-width/hidden border command so no
+/// stale borders linger on screen.
+pub fn pause() {
+    PAUSED.store(true, Ordering::SeqCst);
+    *get_last_command().lock() = String::new();
+
+    let args = vec![
+        "width=0".to_string(),
+        "active_color=0x00000000".to_string(),
+        "inactive_color=0x00000000".to_string(),
+    ];
+    if !send_command(&args) {
+        tracing::debug!("tiling: borders pause hide command not sent (borders unavailable)");
+    }
+
+    tracing::debug!("tiling: borders paused");
+}
+
+/// Resumes the border system and refreshes it against fresh tiling state.
+pub fn resume() {
+    PAUSED.store(false, Ordering::SeqCst);
+    refresh();
+    tracing::debug!("tiling: borders resumed");
+}
+
+/// Returns whether the border system is paused.
+#[must_use]
+pub fn is_paused() -> bool { PAUSED.load(Ordering::SeqCst) }
+
 /// Updates borders based on workspace layout.
 ///
 /// Called when focus changes. Determines the correct active color based on:
@@ -674,6 +716,11 @@ pub fn init() -> bool {
 /// Always sends unfocused color as `inactive_color`.
 /// All settings are batched into a single `JankyBorders` call.
 pub fn on_focus_changed(layout: LayoutType, is_window_floating: bool) {
+    if PAUSED.load(Ordering::SeqCst) {
+        tracing::trace!("tiling: borders paused, ignoring focus change");
+        return;
+    }
+
     let config = get_config();
     let borders = &config.tiling.borders;
 
@@ -980,5 +1027,17 @@ mod tests {
         let AnimationCommand::Update { args, animation } = command;
         assert_eq!(args, vec!["active_color=0xFFFF0000".to_string()]);
         assert!(animation.is_none());
+    }
+
+    #[test]
+    fn test_pause_and_resume_flags() {
+        resume(); // ensure clean initial state
+        assert!(!is_paused());
+
+        pause();
+        assert!(is_paused());
+
+        resume();
+        assert!(!is_paused());
     }
 }

@@ -2441,6 +2441,10 @@ git commit -m "feat(tiling): TilingLifecycle module"
         assert!(matches!(&*RUNTIME.lock(), RuntimeSlot::Quarantined(_)));
         assert_eq!(*LIFECYCLE.lock(), LifecycleState::Stopping);
 
+        // Leave the globals clean so serialized siblings see Empty/Stopped.
+        *RUNTIME.lock() = RuntimeSlot::Empty;
+        *LIFECYCLE.lock() = LifecycleState::Stopped;
+
         set_stop_timeout(None);
     }
 ```

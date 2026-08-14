@@ -1940,4 +1940,128 @@ mod tests {
             "actor must stop after the last handle is dropped"
         );
     }
+
+    #[test]
+    fn ensure_can_start_rejects_running_and_quarantined() {
+        let _guard = TEST_LIFECYCLE_LOCK.lock();
+        assert!(ensure_can_start().is_ok());
+
+        *LIFECYCLE.lock() = LifecycleState::Starting;
+        assert!(ensure_can_start().is_err());
+        *LIFECYCLE.lock() = LifecycleState::Stopped;
+
+        *RUNTIME.lock() = RuntimeSlot::Quarantined(PartialRuntime {
+            generation: 1,
+            actor: None,
+            actor_stopped: None,
+            processor: None,
+            subscriber: None,
+            subscriber_stopped: None,
+            app_monitor: None,
+            screen_monitor: None,
+            ax_adapter: None,
+            teardown: TeardownProgress::default(),
+        });
+        assert!(ensure_can_start().is_err());
+        *RUNTIME.lock() = RuntimeSlot::Empty;
+    }
+
+    #[test]
+    fn pause_runtime_when_stopped_errors() {
+        let _guard = TEST_LIFECYCLE_LOCK.lock();
+        *LIFECYCLE.lock() = LifecycleState::Stopped;
+        *RUNTIME.lock() = RuntimeSlot::Empty;
+        assert!(pause_runtime().is_err(), "pause with no runtime must error");
+    }
+
+    #[test]
+    fn pause_from_quarantined_retries_unfinished_stages_then_empties() {
+        let _guard = TEST_LIFECYCLE_LOCK.lock();
+        set_stop_timeout(Some(Duration::from_millis(30)));
+
+        // Quarantined partial: only the subscriber latch is unfinished and it
+        // never completes on the first attempt -> stays quarantined.
+        let unfinished = CompletionLatch::new();
+        let partial = PartialRuntime {
+            generation: 7,
+            actor: None,
+            actor_stopped: None,
+            processor: None,
+            subscriber: None,
+            subscriber_stopped: Some(unfinished.clone()),
+            app_monitor: None,
+            screen_monitor: None,
+            ax_adapter: None,
+            teardown: TeardownProgress {
+                visibility_restored: true,
+                main_thread_sources_removed: true,
+                processor_stopped: true,
+                transient_services_paused: true,
+                ..TeardownProgress::default()
+            },
+        };
+        *RUNTIME.lock() = RuntimeSlot::Quarantined(partial);
+        *LIFECYCLE.lock() = LifecycleState::Stopping;
+
+        let err = pause_runtime().unwrap_err();
+        assert!(
+            err.contains("subscriber"),
+            "first attempt must time out on the subscriber latch: {err}"
+        );
+        assert!(
+            matches!(&*RUNTIME.lock(), RuntimeSlot::Quarantined(_)),
+            "unfinished runtime must stay quarantined"
+        );
+        assert_eq!(*LIFECYCLE.lock(), LifecycleState::Stopping);
+
+        // Complete the latch and retry: teardown finishes and the slot empties.
+        unfinished.mark_complete();
+        pause_runtime().unwrap();
+        assert!(matches!(&*RUNTIME.lock(), RuntimeSlot::Empty));
+        assert_eq!(*LIFECYCLE.lock(), LifecycleState::Stopped);
+
+        set_stop_timeout(None);
+    }
+
+    #[test]
+    fn pause_from_quarantined_with_restore_pending_runs_restore_first() {
+        let _guard = TEST_LIFECYCLE_LOCK.lock();
+        set_stop_timeout(Some(Duration::from_millis(30)));
+
+        // All stages except visibility_restored are marked done; the restore
+        // call runs with no running handle and is a harmless empty no-op that
+        // still advances the stage flag (idempotency with terminal cleanup).
+        let partial = PartialRuntime {
+            generation: 8,
+            actor: None,
+            actor_stopped: None,
+            processor: None,
+            subscriber: None,
+            subscriber_stopped: Some(CompletionLatch::new()),
+            app_monitor: None,
+            screen_monitor: None,
+            ax_adapter: None,
+            teardown: TeardownProgress {
+                main_thread_sources_removed: true,
+                processor_stopped: true,
+                transient_services_paused: true,
+                ..TeardownProgress::default()
+            },
+        };
+        *RUNTIME.lock() = RuntimeSlot::Quarantined(partial);
+        *LIFECYCLE.lock() = LifecycleState::Stopping;
+
+        // The subscriber latch below never completes; the error proves we got
+        // past the restore + transient stages, and the quarantine is retained.
+        let err = pause_runtime().unwrap_err();
+        assert!(err.contains("subscriber"), "{err}");
+        assert!(matches!(&*RUNTIME.lock(), RuntimeSlot::Quarantined(_)));
+        assert_eq!(*LIFECYCLE.lock(), LifecycleState::Stopping);
+
+        // Leave the globals clean so serialized siblings see Empty/Stopped.
+        *RUNTIME.lock() = RuntimeSlot::Empty;
+        *LIFECYCLE.lock() = LifecycleState::Stopped;
+
+        set_stop_timeout(None);
+    }
 }

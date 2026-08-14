@@ -74,6 +74,7 @@ impl StateActor {
     /// `pub(crate)` because the tuple exposes the crate-private
     /// `crate::modules::tiling::init::CompletionLatch`.
     #[must_use]
+    #[allow(dead_code)] // used by test callsites; production uses spawn_with_registry
     pub(crate) fn spawn() -> (StateActorHandle, crate::modules::tiling::init::CompletionLatch) {
         Self::spawn_with_registry(Arc::new(VisibilityRegistry::default()))
     }
@@ -877,7 +878,7 @@ impl StateActor {
         }
     }
 
-    /// AppShown with identity revalidation. OS visible → relinquish ownership and
+    /// `AppShown` with identity revalidation. OS visible → relinquish ownership and
     /// mark windows shown; OS hidden/unknown → retain (unavoidable-history policy).
     pub(crate) fn on_app_shown_revalidated(
         &mut self,
@@ -892,7 +893,7 @@ impl StateActor {
         }
     }
 
-    /// AppHidden — OS confirms hidden. Mismatch/unknown → no state change.
+    /// `AppHidden` — OS confirms hidden. Mismatch/unknown → no state change.
     fn on_app_hidden_revalidated(&mut self, identity: AppIdentity, os_hidden: Option<bool>) {
         if os_hidden == Some(true) {
             for wid in self.state.windows_identity_iter(&identity) {

@@ -2144,4 +2144,109 @@ mod tests {
 
         set_stop_timeout(None);
     }
+
+    #[test]
+    fn pause_restores_then_teardown_is_idempotent_and_terminal_cleanup_empty() {
+        let _guard = TEST_LIFECYCLE_LOCK.lock();
+        set_stop_timeout(Some(Duration::from_millis(30)));
+
+        // A quarantined generation with restore pending: the first pause runs
+        // the public restore (empty summary — no running handle) and advances
+        // the stage flag; teardown then times out on the unfinished subscriber
+        // latch and retains the quarantine.
+        let unfinished = CompletionLatch::new();
+        let partial = PartialRuntime {
+            generation: 9,
+            actor: None,
+            actor_stopped: None,
+            processor: None,
+            subscriber: None,
+            subscriber_stopped: Some(unfinished.clone()),
+            app_monitor: None,
+            screen_monitor: None,
+            ax_adapter: None,
+            teardown: TeardownProgress {
+                main_thread_sources_removed: true,
+                processor_stopped: true,
+                transient_services_paused: true,
+                ..TeardownProgress::default()
+            },
+        };
+        *RUNTIME.lock() = RuntimeSlot::Quarantined(partial);
+        *LIFECYCLE.lock() = LifecycleState::Stopping;
+
+        let err = pause_runtime().unwrap_err();
+        assert!(err.contains("subscriber"), "{err}");
+        assert!(matches!(&*RUNTIME.lock(), RuntimeSlot::Quarantined(_)));
+
+        // Retry after completing the latch: teardown finishes, restore stage is
+        // already marked done so nothing is restored a second time.
+        unfinished.mark_complete();
+        pause_runtime().unwrap();
+        assert!(matches!(&*RUNTIME.lock(), RuntimeSlot::Empty));
+        assert_eq!(*LIFECYCLE.lock(), LifecycleState::Stopped);
+
+        // Terminal cleanup: a further pause on the stopped runtime errors and
+        // performs no restore.
+        assert!(pause_runtime().is_err());
+        assert!(matches!(&*RUNTIME.lock(), RuntimeSlot::Empty));
+
+        set_stop_timeout(None);
+    }
+
+    #[test]
+    fn pause_restores_via_published_handle_before_teardown() {
+        let _guard = TEST_LIFECYCLE_LOCK.lock();
+        set_stop_timeout(Some(Duration::from_millis(30)));
+
+        let identity = AppIdentity {
+            pid: 42,
+            launch_date: crate::modules::tiling::identity::LaunchDateBits::
+                from_time_interval_since_reference_date(1.0)
+                .unwrap(),
+        };
+        let registry = Arc::new(VisibilityRegistry::default());
+        assert!(registry.insert(identity));
+
+        let (tx, _rx) = tokio::sync::mpsc::channel(16);
+        let handle = StateActorHandle::new_with_registry(tx, Arc::clone(&registry));
+        let processor = Arc::new(EventProcessor::new(handle.clone()));
+        let (_, subscriber, _subscriber_stopped) =
+            EffectSubscriber::new(handle.clone(), EffectExecutor::new());
+        let runtime = TilingRuntime {
+            generation: 7,
+            actor: handle,
+            actor_stopped: CompletionLatch::new(),
+            processor: Arc::clone(&processor),
+            subscriber,
+            subscriber_stopped: CompletionLatch::new(),
+            app_monitor: Arc::new(AppMonitorAdapter::new(Arc::clone(&processor))),
+            screen_monitor: Arc::new(ScreenMonitorAdapter::new(Arc::clone(&processor))),
+            ax_adapter: Arc::new(AXObserverAdapter::new(Arc::clone(&processor))),
+            teardown: TeardownProgress {
+                main_thread_sources_removed: true,
+                processor_stopped: true,
+                transient_services_paused: true,
+                subscriber_stopped: true,
+                actor_stopped: true,
+                caches_cleared: true,
+                ..TeardownProgress::default()
+            },
+        };
+        *RUNTIME.lock() = RuntimeSlot::Running(runtime);
+        *LIFECYCLE.lock() = LifecycleState::Running;
+
+        pause_runtime().unwrap();
+        assert!(matches!(&*RUNTIME.lock(), RuntimeSlot::Empty));
+        assert_eq!(*LIFECYCLE.lock(), LifecycleState::Stopped);
+
+        // The published handle sealed and drained the populated registry.
+        // This fails if pause restores after taking the runtime (get_handle
+        // → None → empty summary → registry never sealed).
+        assert!(registry.sealed());
+        assert!(!registry.contains(&identity));
+        assert!(registry.is_empty());
+
+        set_stop_timeout(None);
+    }
 }

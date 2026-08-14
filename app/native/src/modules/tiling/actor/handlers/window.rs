@@ -405,11 +405,12 @@ pub struct VisibilityDelta {
     pub hiding: Vec<AppIdentity>,
 }
 
-/// Identity-based collector. `showing` = identities in becoming-visible
-/// workspaces; `hidden_candidates` = identities in becoming-hidden workspaces;
-/// `currently_visible` = identities in ANY visible workspace after the
-/// transition; `hiding` = candidates minus currently-visible. Sorted for
-/// deterministic tests.
+/// Identity-based collector for workspace visibility transitions.
+///
+/// `showing` = identities in becoming-visible workspaces; `hiding` =
+/// candidates in becoming-hidden workspaces minus identities still
+/// visible elsewhere. Sorted for deterministic tests.
+#[must_use]
 pub fn sync_window_visibility_for_workspaces(
     state: &TilingState,
     becoming_visible: &[Uuid],

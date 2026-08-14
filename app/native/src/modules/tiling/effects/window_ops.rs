@@ -790,20 +790,6 @@ pub fn set_window_frames_batch(frames: &[(WindowTarget, Rect)]) -> usize {
 // App Visibility Operations
 // ============================================================================
 
-/// Hides an application by PID.
-///
-/// Delegates to `hide_app_with_outcome` for the single `ObjC` hide path.
-///
-/// # Arguments
-///
-/// * `pid` - The process ID of the app to hide.
-///
-/// # Returns
-///
-/// `true` if the app was successfully hidden or was already hidden, `false` otherwise.
-#[must_use]
-pub fn hide_app(pid: i32) -> bool { hide_app_with_outcome(pid).succeeded() }
-
 /// Outcome of unhiding (showing) an application.
 ///
 /// Distinguishes whether Stache actually performed a hidden→shown transition
@@ -848,9 +834,8 @@ pub fn hide_app_instance_with_outcome(identity: AppIdentity) -> HideAppOutcome {
         if app.is_null() {
             return HideAppOutcome::Failed;
         }
-        let actual = match AppIdentity::from_ns_running_app(app) {
-            Some(a) => a,
-            None => return HideAppOutcome::Failed,
+        let Some(actual) = AppIdentity::from_ns_running_app(app) else {
+            return HideAppOutcome::Failed;
         };
         if actual != identity {
             // PID-reuse: a different process now owns this PID.
@@ -885,9 +870,8 @@ pub fn unhide_app_instance_with_outcome(identity: AppIdentity) -> UnhideAppOutco
         if app.is_null() {
             return UnhideAppOutcome::Failed;
         }
-        let actual = match AppIdentity::from_ns_running_app(app) {
-            Some(a) => a,
-            None => return UnhideAppOutcome::Failed,
+        let Some(actual) = AppIdentity::from_ns_running_app(app) else {
+            return UnhideAppOutcome::Failed;
         };
         if actual != identity {
             return UnhideAppOutcome::Failed;
@@ -907,8 +891,9 @@ pub fn unhide_app_instance_with_outcome(identity: AppIdentity) -> UnhideAppOutco
 }
 
 /// OS hidden state for an exact identity, validated on the same local
-/// `NSRunningApplication`. Read-only — lifecycle handlers never hide/unhide.
-/// Creates its own autorelease pool (called from the actor's task thread).
+/// `NSRunningApplication`. Read-only; lifecycle handlers never hide/unhide.
+///
+/// Creates its own autorelease pool (actor task thread).
 #[must_use]
 pub fn app_instance_is_hidden(identity: AppIdentity) -> Option<bool> {
     objc::rc::autoreleasepool(|| unsafe {
@@ -928,91 +913,6 @@ pub fn app_instance_is_hidden(identity: AppIdentity) -> Option<bool> {
         Some(is_hidden == YES)
     })
 }
-
-/// Returns the current OS-level hidden state for an application.
-///
-/// # Returns
-///
-/// - `Some(true)` if the app exists and is hidden.
-/// - `Some(false)` if the app exists and is visible.
-/// - `None` if the app cannot be found or the class is unavailable.
-#[must_use]
-pub fn app_is_hidden(pid: i32) -> Option<bool> {
-    use objc::runtime::{BOOL, Class, Object, YES};
-    use objc::{msg_send, sel, sel_impl};
-
-    unsafe {
-        let app_class = Class::get("NSRunningApplication")?;
-
-        let app: *mut Object = msg_send![app_class, runningApplicationWithProcessIdentifier: pid];
-        if app.is_null() {
-            return None;
-        }
-
-        let is_hidden: BOOL = msg_send![app, isHidden];
-        Some(is_hidden == YES)
-    }
-}
-
-/// Shows (unhides) an application by PID with detailed outcome classification.
-///
-/// Checks the current hidden state before calling `unhide`. This lets callers
-/// distinguish an actual hidden→shown transition from a no-op on an already-
-/// visible app (important for ownership-token bookkeeping).
-///
-/// # Arguments
-///
-/// * `pid` - The process ID of the app to unhide.
-///
-/// # Returns
-///
-/// The detailed `UnhideAppOutcome`.
-#[must_use]
-pub fn unhide_app_with_outcome(pid: i32) -> UnhideAppOutcome {
-    use objc::runtime::{BOOL, Class, Object, YES};
-    use objc::{msg_send, sel, sel_impl};
-
-    let Some(app_class) = Class::get("NSRunningApplication") else {
-        tracing::warn!("NSRunningApplication class not found");
-        return UnhideAppOutcome::Failed;
-    };
-
-    let app: *mut Object =
-        unsafe { msg_send![app_class, runningApplicationWithProcessIdentifier: pid] };
-    if app.is_null() {
-        tracing::debug!("unhide_app_with_outcome: no running application for pid {pid}");
-        return UnhideAppOutcome::Failed;
-    }
-
-    let is_hidden: BOOL = unsafe { msg_send![app, isHidden] };
-    if is_hidden != YES {
-        return UnhideAppOutcome::AlreadyShown;
-    }
-
-    let unhide_result: BOOL = unsafe { msg_send![app, unhide] };
-    if unhide_result == YES {
-        UnhideAppOutcome::UnhiddenByStache
-    } else {
-        UnhideAppOutcome::Failed
-    }
-}
-
-/// Shows (unhides) an application by PID.
-///
-/// Compatibility wrapper that returns a simple boolean. Prefer
-/// `unhide_app_with_outcome` when the caller needs to distinguish a
-/// genuine hidden→shown transition from a no-op on an already-visible app.
-///
-/// # Arguments
-///
-/// * `pid` - The process ID of the app to unhide.
-///
-/// # Returns
-///
-/// `true` if the app is now visible (was successfully unhidden or was already visible),
-/// `false` otherwise.
-#[must_use]
-pub fn unhide_app(pid: i32) -> bool { unhide_app_with_outcome(pid).succeeded() }
 
 // ============================================================================
 // Hide Outcome
@@ -1036,81 +936,9 @@ impl HideAppOutcome {
     /// Returns `true` if the hide operation was functionally successful
     /// (either hidden by us or already hidden).
     #[must_use]
+    #[allow(dead_code)] // public API kept for outcome consumers
     const fn succeeded(self) -> bool { matches!(self, Self::HiddenByStache | Self::AlreadyHidden) }
 }
-
-/// Pure classifier that determines the outcome given the pre-hide state
-/// and the result of the OS hide call.
-///
-/// This is a pure function (no side effects) making it easily testable
-/// without any macOS APIs.
-#[must_use]
-const fn classify_hide_outcome(was_hidden: bool, hide_succeeded: bool) -> HideAppOutcome {
-    if was_hidden {
-        HideAppOutcome::AlreadyHidden
-    } else if hide_succeeded {
-        HideAppOutcome::HiddenByStache
-    } else {
-        HideAppOutcome::Failed
-    }
-}
-
-/// Hides an app and returns the detailed outcome.
-///
-/// Like `hide_app` but provides full outcome information including whether
-/// Stache caused the hide or the app was already hidden.
-#[must_use]
-pub fn hide_app_with_outcome(pid: i32) -> HideAppOutcome {
-    use objc::runtime::{BOOL, Class, Object, YES};
-    use objc::{msg_send, sel, sel_impl};
-
-    unsafe {
-        let Some(app_class) = Class::get("NSRunningApplication") else {
-            tracing::warn!("NSRunningApplication class not found");
-            return HideAppOutcome::Failed;
-        };
-
-        let app: *mut Object = msg_send![app_class, runningApplicationWithProcessIdentifier: pid];
-        if app.is_null() {
-            tracing::debug!("hide_app_with_outcome: no running application for pid {pid}");
-            return HideAppOutcome::Failed;
-        }
-
-        // Check if already hidden
-        let is_hidden: BOOL = msg_send![app, isHidden];
-        if is_hidden == YES {
-            return classify_hide_outcome(true, false);
-        }
-
-        // Hide the app
-        let result: BOOL = msg_send![app, hide];
-        classify_hide_outcome(false, result == YES)
-    }
-}
-
-/// Hides multiple apps by their PIDs.
-///
-/// # Arguments
-///
-/// * `pids` - The process IDs of the apps to hide.
-///
-/// # Returns
-///
-/// The number of apps successfully hidden.
-#[must_use]
-pub fn hide_apps(pids: &[i32]) -> usize { pids.iter().filter(|&&pid| hide_app(pid)).count() }
-
-/// Shows (unhides) multiple apps by their PIDs.
-///
-/// # Arguments
-///
-/// * `pids` - The process IDs of the apps to unhide.
-///
-/// # Returns
-///
-/// The number of apps successfully unhidden.
-#[must_use]
-pub fn unhide_apps(pids: &[i32]) -> usize { pids.iter().filter(|&&pid| unhide_app(pid)).count() }
 
 // ============================================================================
 // Tests
@@ -1134,38 +962,5 @@ mod tests {
         let _ = cf_main();
         let _ = cf_raise();
         let _ = cf_role();
-    }
-
-    // ========================================================================
-    // HideAppOutcome / classify_hide_outcome tests
-    // ========================================================================
-
-    #[test]
-    fn test_classify_was_not_hidden_hide_succeeded() {
-        let outcome = classify_hide_outcome(false, true);
-        assert_eq!(outcome, HideAppOutcome::HiddenByStache);
-        assert!(outcome.succeeded());
-    }
-
-    #[test]
-    fn test_classify_was_hidden_hide_succeeded() {
-        let outcome = classify_hide_outcome(true, true);
-        assert_eq!(outcome, HideAppOutcome::AlreadyHidden);
-        assert!(outcome.succeeded());
-    }
-
-    #[test]
-    fn test_classify_hide_failed_was_not_hidden() {
-        let outcome = classify_hide_outcome(false, false);
-        assert_eq!(outcome, HideAppOutcome::Failed);
-        assert!(!outcome.succeeded());
-    }
-
-    #[test]
-    fn test_classify_hide_failed_was_hidden() {
-        // was_hidden=true takes precedence: returns AlreadyHidden even if hide_succeeded=false
-        let outcome = classify_hide_outcome(true, false);
-        assert_eq!(outcome, HideAppOutcome::AlreadyHidden);
-        assert!(outcome.succeeded());
     }
 }

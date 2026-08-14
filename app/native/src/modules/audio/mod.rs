@@ -21,6 +21,7 @@ mod watcher;
 // Re-export commonly used types
 pub use device::{AudioDevice, AudioDeviceType};
 pub use list::{AudioDeviceInfo, DeviceFilter, format_devices_table, list_devices};
+pub use watcher::ProxyAudioLifecycle;
 
 use crate::config::get_config;
 

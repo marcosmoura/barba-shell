@@ -10,16 +10,17 @@
 //! Inspired by <https://github.com/tombonez/noTunes> (MIT License, Tom Taylor 2017).
 
 use std::ptr::null_mut;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use objc::declare::ClassDecl;
 use objc::runtime::{Class, Object, Sel};
 use objc::{class, msg_send, sel, sel_impl};
 
 use crate::config::{self, TargetMusicApp};
+use crate::modules::services::lifecycle::{LifecycleModule, ModuleStatus};
 use crate::platform::objc::{get_app_bundle_id, nsstring};
-use crate::platform::thread::spawn_named_thread;
+use crate::platform::thread::{dispatch_on_main_sync, spawn_named_thread};
 
 /// Bundle identifier for Apple Music.
 const APPLE_MUSIC_BUNDLE_ID: &str = "com.apple.Music";
@@ -29,6 +30,18 @@ const ITUNES_BUNDLE_ID: &str = "com.apple.iTunes";
 
 /// Flag indicating if the module is running.
 static IS_RUNNING: AtomicBool = AtomicBool::new(false);
+
+/// Retained `NSWorkspace` observer instance. The raw pointer is not `Send`/`Sync`;
+/// the explicit impls are sound because the object is retained by
+/// `NSNotificationCenter` for its whole lifetime and is only dereferenced via
+/// `removeObserver:` on the main thread.
+struct ObserverPtr(*mut Object);
+#[allow(clippy::non_send_fields_in_send_ty)]
+unsafe impl Send for ObserverPtr {}
+#[allow(clippy::non_send_fields_in_send_ty)]
+unsafe impl Sync for ObserverPtr {}
+
+static OBSERVER: Mutex<Option<ObserverPtr>> = Mutex::new(None);
 
 /// Configured target music app (cached from config at init time).
 static TARGET_APP: OnceLock<TargetMusicApp> = OnceLock::new();
@@ -60,15 +73,12 @@ pub fn init() {
     let _ = TARGET_APP.set(config.notunes.target_app.clone());
 
     spawn_named_thread("notunes-init", move || {
-        // SAFETY: These functions interact with NSWorkspace and NSNotificationCenter APIs:
-        // - All Objective-C calls use valid selectors and message passing
-        // - Pointers are checked for null before dereferencing
-        // - The observer is retained by NSNotificationCenter automatically
-        unsafe {
+        // SAFETY: NSWorkspace/NSNotificationCenter must be touched on the main thread.
+        dispatch_on_main_sync(|| unsafe {
             setup_workspace_observer();
             // Also terminate any already-running instances
             terminate_music_apps();
-        }
+        });
     });
 }
 
@@ -119,6 +129,7 @@ unsafe fn setup_workspace_observer() {
 
     // Create an observer object
     let observer = unsafe { create_observer_object() };
+    *OBSERVER.lock().unwrap() = Some(ObserverPtr(observer));
 
     let _: () = msg_send![
         notification_center,
@@ -247,9 +258,92 @@ fn launch_target_app() {
     }
 }
 
+/// Removes the retained observer. Must be called on the main thread.
+unsafe fn remove_observer() {
+    let Some(observer) = OBSERVER.lock().unwrap().take() else {
+        return;
+    };
+    let workspace: *mut Object = msg_send![class!(NSWorkspace), sharedWorkspace];
+    let center: *mut Object = msg_send![workspace, notificationCenter];
+    let _: () = msg_send![center, removeObserver: observer.0];
+}
+
+/// Re-registers the observer. Must be called on the main thread.
+fn start_observer() {
+    dispatch_on_main_sync(|| unsafe { setup_workspace_observer() });
+    IS_RUNNING.store(true, Ordering::SeqCst);
+}
+
+/// Pure status decision so the global `OBSERVER` slot is not required in tests.
+fn no_tunes_status(config_enabled: bool, observer_present: bool, running: bool) -> ModuleStatus {
+    if !config_enabled {
+        return ModuleStatus::ConfiguredOff;
+    }
+    if observer_present {
+        return ModuleStatus::Running;
+    }
+    if running {
+        ModuleStatus::Unavailable("observer registration failed".into())
+    } else {
+        ModuleStatus::Paused
+    }
+}
+
+/// Tray-toggleable lifecycle handle for noTunes.
+pub struct NoTunesLifecycle;
+
+impl LifecycleModule for NoTunesLifecycle {
+    fn name(&self) -> &'static str { "NoTunes" }
+
+    fn id(&self) -> &'static str { "notunes" }
+
+    fn start(&self) -> Result<(), String> {
+        if IS_RUNNING.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        init();
+        Ok(())
+    }
+
+    fn pause(&self) -> Result<(), String> {
+        dispatch_on_main_sync(|| unsafe { remove_observer() });
+        IS_RUNNING.store(false, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn resume(&self) -> Result<(), String> {
+        start_observer();
+        Ok(())
+    }
+
+    fn status(&self) -> ModuleStatus {
+        let config_enabled = crate::config::get_config().notunes.is_enabled();
+        let observer_present = OBSERVER.lock().unwrap().is_some();
+        let running = IS_RUNNING.load(Ordering::SeqCst);
+        no_tunes_status(config_enabled, observer_present, running)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn observer_ptr_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<ObserverPtr>();
+    }
+
+    #[test]
+    fn no_tunes_status_maps_states() {
+        assert_eq!(no_tunes_status(false, true, true), ModuleStatus::ConfiguredOff);
+        assert_eq!(no_tunes_status(true, true, true), ModuleStatus::Running);
+        assert_eq!(no_tunes_status(true, false, false), ModuleStatus::Paused);
+        assert!(matches!(
+            no_tunes_status(true, false, true),
+            ModuleStatus::Unavailable(reason) if reason.contains("observer")
+        ));
+    }
 
     #[test]
     fn test_is_music_app_apple_music() {

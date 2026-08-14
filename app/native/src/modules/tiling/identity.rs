@@ -41,13 +41,11 @@ impl LaunchDateBits {
 
     /// Returns the stored launch-date bit pattern for structured diagnostics.
     #[must_use]
-    pub const fn bits(self) -> u64 {
-        self.0
-    }
+    pub const fn bits(self) -> u64 { self.0 }
 }
 
 impl AppIdentity {
-    /// Captures identity from an `NSRunningApplication` ObjC object.
+    /// Captures identity from an `NSRunningApplication` `ObjC` object.
     ///
     /// Returns `None` if pid ≤ 0, launchDate is null, or the time interval is
     /// not finite and positive. This is fail-closed: callers must skip the app
@@ -142,9 +140,9 @@ mod tests {
             pid: 10,
             launch_date: LaunchDateBits::from_time_interval_since_reference_date(43.0).unwrap(),
         };
-        assert_ne!(
-            WindowTarget { identity: a, window_id: 99 },
-            WindowTarget { identity: b, window_id: 99 },
-        );
+        assert_ne!(WindowTarget { identity: a, window_id: 99 }, WindowTarget {
+            identity: b,
+            window_id: 99
+        },);
     }
 }

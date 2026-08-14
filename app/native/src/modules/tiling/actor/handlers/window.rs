@@ -997,6 +997,9 @@ mod tests {
 
     #[test]
     fn test_batched_geometry_updates() {
+        // on_batched_geometry_updates reads process-global animation state;
+        // serialize against the animation tests that write it.
+        let _guard = crate::modules::tiling::effects::animation::TEST_ANIMATION_LOCK.lock();
         let (mut state, _) = make_state_with_workspace();
 
         on_window_created(&mut state, make_window_info(100));

@@ -160,11 +160,15 @@ pub fn clear_interrupted_positions(window_ids: &[u32]) {
 // ============================================================================
 
 #[cfg(test)]
+pub(crate) static TEST_ANIMATION_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_cancel_begin_animation() {
+        let _guard = TEST_ANIMATION_LOCK.lock();
         cancel_animation();
         assert!(should_cancel());
 
@@ -174,6 +178,7 @@ mod tests {
 
     #[test]
     fn test_animation_active_state() {
+        let _guard = TEST_ANIMATION_LOCK.lock();
         assert!(!is_animation_active());
         set_animation_active(true);
         assert!(is_animation_active());
@@ -183,6 +188,7 @@ mod tests {
 
     #[test]
     fn test_interrupted_positions() {
+        let _guard = TEST_ANIMATION_LOCK.lock();
         let rect = Rect::new(10.0, 20.0, 100.0, 200.0);
         store_interrupted_positions(&[(123, rect)]);
 
@@ -196,6 +202,7 @@ mod tests {
 
     #[test]
     fn test_animation_settling_lifecycle() {
+        let _guard = TEST_ANIMATION_LOCK.lock();
         // This test validates the entire settling lifecycle in order:
         // 1. Clean state (not settling)
         // 2. Animation active (not settling, but should ignore events)

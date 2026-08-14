@@ -26,6 +26,9 @@
 
 mod easing;
 mod spring;
+#[cfg(test)]
+pub(crate) use state::TEST_ANIMATION_LOCK;
+
 mod state;
 mod sync;
 mod transition;

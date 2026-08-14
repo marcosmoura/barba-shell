@@ -94,6 +94,7 @@ fn on_window_created_internal(state: &mut TilingState, info: WindowCreatedInfo) 
     let window = Window {
         id: info.window_id,
         pid: info.pid,
+        identity: info.identity,
         app_id: info.app_id,
         app_name: info.app_name,
         title: info.title,
@@ -901,6 +902,7 @@ mod tests {
         WindowCreatedInfo {
             window_id,
             pid: 1000,
+            identity: None,
             app_id: "com.test.app".to_string(),
             app_name: "Test App".to_string(),
             title: format!("Window {window_id}"),

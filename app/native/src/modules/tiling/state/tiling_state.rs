@@ -16,6 +16,7 @@ use eyeball_im::ObservableVector;
 use uuid::Uuid;
 
 use super::types::{FocusState, Screen, Window, Workspace};
+use crate::modules::tiling::identity::AppIdentity;
 
 /// The root state container for the tiling window manager.
 ///
@@ -262,6 +263,16 @@ impl TilingState {
     #[must_use]
     pub fn get_windows_for_pid(&self, pid: i32) -> Vec<Window> {
         self.windows.iter().filter(|w| w.pid == pid).cloned().collect()
+    }
+
+    /// Returns window IDs whose identity equals the given value.
+    #[must_use]
+    pub fn windows_identity_iter(&self, identity: &AppIdentity) -> Vec<u32> {
+        self.windows
+            .iter()
+            .filter(|w| w.identity.as_ref() == Some(identity))
+            .map(|w| w.id)
+            .collect()
     }
 
     /// Get all windows in a tab group. O(n).
@@ -550,6 +561,7 @@ mod tests {
         Window {
             id,
             pid: 1000,
+            identity: None,
             app_id: "com.test.app".to_string(),
             app_name: "Test App".to_string(),
             title: format!("Window {id}"),
@@ -720,5 +732,51 @@ mod tests {
 
         state.set_enabled(true);
         assert!(state.is_enabled());
+    }
+
+    #[test]
+    fn windows_identity_iter_filters_exact_identity() {
+        use crate::modules::tiling::identity::{AppIdentity, LaunchDateBits};
+        let a = AppIdentity {
+            pid: 42,
+            launch_date: LaunchDateBits::from_time_interval_since_reference_date(100.0).unwrap(),
+        };
+        let b = AppIdentity {
+            pid: 42,
+            launch_date: LaunchDateBits::from_time_interval_since_reference_date(200.0).unwrap(),
+        };
+        let mut state = TilingState::new();
+        state.upsert_window(Window {
+            id: 1,
+            pid: 42,
+            identity: Some(a),
+            workspace_id: Uuid::nil(),
+            ..Window::default()
+        });
+        state.upsert_window(Window {
+            id: 2,
+            pid: 42,
+            identity: Some(b),
+            workspace_id: Uuid::nil(),
+            ..Window::default()
+        });
+        state.upsert_window(Window {
+            id: 3,
+            pid: 43,
+            identity: None,
+            workspace_id: Uuid::nil(),
+            ..Window::default()
+        });
+        assert_eq!(state.windows_identity_iter(&a), vec![1]);
+        assert_eq!(state.windows_identity_iter(&b), vec![2]);
+        assert!(
+            state
+                .windows_identity_iter(&AppIdentity {
+                    pid: 99,
+                    launch_date: LaunchDateBits::from_time_interval_since_reference_date(1.0)
+                        .unwrap(),
+                })
+                .is_empty()
+        );
     }
 }

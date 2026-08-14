@@ -260,6 +260,7 @@ mod tests {
         Window {
             id: 1,
             pid: 1234,
+            identity: None,
             app_id: bundle_id.to_string(),
             app_name: app_name.to_string(),
             title: title.to_string(),

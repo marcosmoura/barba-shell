@@ -8,6 +8,7 @@
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
+use crate::modules::tiling::identity::AppIdentity;
 use crate::modules::tiling::state::{FocusState, LayoutType, Rect, Screen, Window, Workspace};
 
 // ============================================================================
@@ -271,6 +272,7 @@ impl StateMessage {
 pub struct WindowCreatedInfo {
     pub window_id: u32,
     pub pid: i32,
+    pub identity: Option<AppIdentity>,
     pub app_id: String,
     pub app_name: String,
     pub title: String,
@@ -682,6 +684,7 @@ mod tests {
         let info = WindowCreatedInfo {
             window_id: 123,
             pid: 456,
+            identity: None,
             app_id: "com.test.app".to_string(),
             app_name: "Test App".to_string(),
             title: "Window Title".to_string(),

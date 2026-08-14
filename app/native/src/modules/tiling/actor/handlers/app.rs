@@ -180,6 +180,7 @@ mod tests {
         Window {
             id,
             pid,
+            identity: None,
             app_id: format!("com.test.app{pid}"),
             app_name: format!("App {pid}"),
             title: format!("Window {id}"),

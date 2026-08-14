@@ -251,6 +251,7 @@ impl AXObserverAdapter {
         let info = WindowCreatedInfo {
             window_id,
             pid,
+            identity: None,
             app_id,
             app_name,
             title,

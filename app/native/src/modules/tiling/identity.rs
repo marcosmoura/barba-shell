@@ -6,6 +6,11 @@ use serde::{Deserialize, Serialize};
 /// Prevents PID-reuse races: after an app terminates the kernel may reuse
 /// its PID for a different process. Binding ownership to `(pid, launch_date)`
 /// ensures we never restore a wrong process that inherited the same PID.
+///
+/// `unsafe_derive_deserialize` is intentional: deserialization of the plain
+/// `(pid, launch_date_bits)` pair is safe — the unsafe capture path is never
+/// invoked by `serde`.
+#[allow(clippy::unsafe_derive_deserialize)]
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct AppIdentity {
     pub pid: i32,

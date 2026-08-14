@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use uuid::Uuid;
 
+use crate::modules::tiling::identity::AppIdentity;
+
 // ============================================================================
 // Geometry Types
 // ============================================================================
@@ -312,6 +314,11 @@ pub struct Window {
     /// Process ID of the owning application.
     pub pid: i32,
 
+    /// Exact application identity (PID + launch date). `None` only for
+    /// transitional windows before first capture; the actor never runs
+    /// hide/unhide/terminate/restore against a window whose identity is `None`.
+    pub identity: Option<AppIdentity>,
+
     /// Bundle identifier (e.g., "com.apple.Safari").
     pub app_id: String,
 
@@ -368,6 +375,7 @@ impl Default for Window {
         Self {
             id: 0,
             pid: 0,
+            identity: None,
             app_id: String::new(),
             app_name: String::new(),
             title: String::new(),

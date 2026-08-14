@@ -879,6 +879,7 @@ fn track_existing_windows(handle: &StateActorHandle, processor: &EventProcessor)
         let info = WindowCreatedInfo {
             window_id: window.id,
             pid: window.pid,
+            identity: None,
             app_id: window.bundle_id.clone(),
             app_name: window.app_name.clone(),
             title: window.title.clone(),

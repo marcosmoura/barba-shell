@@ -336,6 +336,41 @@ impl From<TilingRuntime> for PartialRuntime {
     }
 }
 
+use crate::modules::services::lifecycle::{LifecycleModule, ModuleStatus};
+
+/// `LifecycleModule` adapter for the tiling window manager.
+pub struct TilingLifecycle {
+    app_handle: tauri::AppHandle,
+}
+
+impl TilingLifecycle {
+    #[must_use]
+    pub const fn new(app_handle: tauri::AppHandle) -> Self { Self { app_handle } }
+}
+
+impl LifecycleModule for TilingLifecycle {
+    fn name(&self) -> &'static str { "Tiling Window Manager" }
+
+    fn id(&self) -> &'static str { "tiling" }
+
+    fn start(&self) -> Result<(), String> { start_runtime(self.app_handle.clone()) }
+
+    fn pause(&self) -> Result<(), String> { pause_runtime() }
+
+    fn resume(&self) -> Result<(), String> { start_runtime(self.app_handle.clone()) }
+
+    fn status(&self) -> ModuleStatus {
+        if !is_enabled() {
+            return ModuleStatus::ConfiguredOff;
+        }
+        let state = *LIFECYCLE.lock();
+        match state {
+            LifecycleState::Running | LifecycleState::Starting => ModuleStatus::Running,
+            LifecycleState::Stopped | LifecycleState::Stopping => ModuleStatus::Paused,
+        }
+    }
+}
+
 // ============================================================================
 // Staged Startup Factory
 // ============================================================================

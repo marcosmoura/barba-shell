@@ -67,9 +67,9 @@ pub use events::{
     WindowEventType,
 };
 pub use init::{
-    emit_layout_applied, emit_window_focus_changed, emit_window_tracked, emit_window_untracked,
-    emit_workspace_changed, get_handle, get_subscriber_handle, init, is_enabled, is_initialized,
-    shutdown,
+    TilingLifecycle, emit_layout_applied, emit_window_focus_changed, emit_window_tracked,
+    emit_window_untracked, emit_workspace_changed, get_handle, get_subscriber_handle, init,
+    is_enabled, is_initialized, pause_runtime, resume, shutdown,
 };
 pub use layout::{
     Gaps, LAYOUT_INLINE_CAP, LayoutResult, MAX_GRID_WINDOWS, MasterPosition, calculate_layout,

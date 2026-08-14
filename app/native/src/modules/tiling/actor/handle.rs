@@ -3,11 +3,13 @@
 //! The `StateActorHandle` provides a safe, cloneable interface for sending
 //! messages to the state actor and subscribing to state changes.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::{mpsc, oneshot};
 
 use super::messages::{QueryResult, ResizeDimension, StateMessage, StateQuery, TargetScreen};
+use crate::modules::tiling::visibility::VisibilityRegistry;
 
 /// Error types for actor communication.
 #[derive(Debug, thiserror::Error)]
@@ -31,11 +33,34 @@ pub enum ActorError {
 #[derive(Clone)]
 pub struct StateActorHandle {
     sender: mpsc::Sender<StateMessage>,
+    #[allow(dead_code)] // sealed/drained by the 19D cutover
+    registry: Arc<VisibilityRegistry>,
 }
 
 impl StateActorHandle {
     /// Create a new handle with the given sender.
-    pub(crate) const fn new(sender: mpsc::Sender<StateMessage>) -> Self { Self { sender } }
+    #[allow(dead_code)] // legacy constructor; 19D spawns via spawn_with_registry
+    pub(crate) fn new(sender: mpsc::Sender<StateMessage>) -> Self {
+        Self::new_with_registry(sender, Arc::new(VisibilityRegistry::default()))
+    }
+
+    /// Create a handle sharing an explicit visibility registry with the actor.
+    pub(crate) const fn new_with_registry(
+        sender: mpsc::Sender<StateMessage>,
+        registry: Arc<VisibilityRegistry>,
+    ) -> Self {
+        Self { sender, registry }
+    }
+
+    /// Atomically seals the registry and drains all owned identities for
+    /// restoration. The actor channel MUST be alive when called (seal happens
+    /// before tiling shutdown closes the actor).
+    #[allow(dead_code)] // called by the 19D restore path
+    pub(crate) fn seal_and_drain_visibility(
+        &self,
+    ) -> Vec<crate::modules::tiling::identity::AppIdentity> {
+        self.registry.seal_and_drain()
+    }
 
     // ========================================================================
     // Fire-and-forget sending

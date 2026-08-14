@@ -20,6 +20,7 @@ mod messages;
 mod minimum_size;
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::Arc;
 
 pub use handle::{ActorError, StateActorHandle};
 pub use messages::{
@@ -33,6 +34,7 @@ use crate::modules::tiling::identity::{AppIdentity, WindowTarget};
 use crate::modules::tiling::init::get_subscriber_handle;
 use crate::modules::tiling::layout::{Gaps, MasterPosition, calculate_layout_full};
 use crate::modules::tiling::state::{LayoutType, Rect, TilingState};
+use crate::modules::tiling::visibility::VisibilityRegistry;
 
 /// Channel buffer size for the state actor.
 ///
@@ -50,6 +52,10 @@ pub struct StateActor {
 
     /// Receiver for incoming messages.
     receiver: mpsc::Receiver<StateMessage>,
+
+    /// Shared visibility registry; the actor is the sole runtime writer.
+    #[allow(dead_code)] // written by the actor's hide/unhide paths in 19D
+    registry: Arc<VisibilityRegistry>,
 }
 
 impl StateActor {
@@ -62,14 +68,26 @@ impl StateActor {
     /// `crate::modules::tiling::init::CompletionLatch`.
     #[must_use]
     pub(crate) fn spawn() -> (StateActorHandle, crate::modules::tiling::init::CompletionLatch) {
+        Self::spawn_with_registry(Arc::new(VisibilityRegistry::default()))
+    }
+
+    /// Spawn a state actor sharing an explicit visibility registry with its
+    /// handle (used by the runtime factory to publish one registry per
+    /// generation).
+    #[must_use]
+    pub(crate) fn spawn_with_registry(
+        registry: Arc<VisibilityRegistry>,
+    ) -> (StateActorHandle, crate::modules::tiling::init::CompletionLatch) {
         tracing::debug!("tiling: spawning state actor");
         let (sender, receiver) = mpsc::channel(CHANNEL_BUFFER_SIZE);
         let stopped = crate::modules::tiling::init::CompletionLatch::new();
         let stopped_for_task = stopped.clone();
+        let handle = StateActorHandle::new_with_registry(sender, Arc::clone(&registry));
 
         let actor = Self {
             state: TilingState::new(),
             receiver,
+            registry,
         };
 
         // Spawn the actor task using Tauri's async runtime
@@ -79,7 +97,7 @@ impl StateActor {
             stopped_for_task.mark_complete();
         });
 
-        (StateActorHandle::new(sender), stopped)
+        (handle, stopped)
     }
 
     /// Run the actor's message loop.

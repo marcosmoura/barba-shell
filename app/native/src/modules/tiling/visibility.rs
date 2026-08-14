@@ -7,7 +7,7 @@
 //! `AppShown` events from current ones and from genuine external/user
 //! `AppShown` events.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::OnceLock;
 
 use parking_lot::Mutex;
@@ -16,6 +16,7 @@ use super::effects::window_ops::{
     HideAppOutcome, UnhideAppOutcome, app_is_hidden, hide_app_with_outcome, unhide_app,
     unhide_app_with_outcome,
 };
+use crate::modules::tiling::identity::AppIdentity;
 
 /// Classification of an `AppShown` event determined by the ownership tracker.
 ///
@@ -1264,5 +1265,220 @@ mod tests {
             ShownClassification::StaleNoDispatch
         );
         assert_eq!(tracker.snapshot_owner(10), Some(1));
+    }
+}
+
+/// Passive registry shared between `StateActor` and `StateActorHandle`.
+///
+/// The actor is the sole runtime writer. The handle's `seal_and_drain_visibility`
+/// is the only external mutation API. Raw `RegistryState` fields are private —
+/// actor code uses the closure methods `hide_if_open`/`unhide_if_open` and the
+/// seal-aware `relinquish_if_open`.
+pub struct VisibilityRegistry {
+    inner: Mutex<RegistryState>,
+}
+
+#[derive(Debug)]
+struct RegistryState {
+    sealed: bool,
+    owned: BTreeSet<AppIdentity>,
+}
+
+impl Default for VisibilityRegistry {
+    fn default() -> Self {
+        Self {
+            inner: Mutex::new(RegistryState {
+                sealed: false,
+                owned: BTreeSet::new(),
+            }),
+        }
+    }
+}
+
+#[allow(dead_code)] // actor/restore consumers land in the 19D cutover
+impl VisibilityRegistry {
+    /// Atomically: sealed check → OS op → `BTreeSet` mutation.
+    /// If sealed, returns `HideAppOutcome::Failed` without calling `op`.
+    pub(crate) fn hide_if_open(
+        &self,
+        identity: AppIdentity,
+        op: impl FnOnce(AppIdentity) -> HideAppOutcome,
+    ) -> HideAppOutcome {
+        let mut state = self.inner.lock();
+        if state.sealed {
+            return HideAppOutcome::Failed;
+        }
+        let outcome = op(identity);
+        if outcome == HideAppOutcome::HiddenByStache {
+            state.owned.insert(identity);
+        }
+        outcome
+    }
+
+    /// Atomically: sealed check → OS op → `BTreeSet` mutation.
+    /// If sealed, returns `UnhideAppOutcome::Failed` without calling `op`.
+    pub(crate) fn unhide_if_open(
+        &self,
+        identity: AppIdentity,
+        op: impl FnOnce(AppIdentity) -> UnhideAppOutcome,
+    ) -> UnhideAppOutcome {
+        let mut state = self.inner.lock();
+        if state.sealed {
+            return UnhideAppOutcome::Failed;
+        }
+        let outcome = op(identity);
+        if matches!(
+            outcome,
+            UnhideAppOutcome::UnhiddenByStache | UnhideAppOutcome::AlreadyShown
+        ) {
+            state.owned.remove(&identity);
+        }
+        outcome
+    }
+
+    /// Actor-owned, seal-aware relinquishment. Returns false (no mutation) if
+    /// the registry is sealed. Used by the actor's revalidation and exact
+    /// termination paths; `EventProcessor` never mutates ownership.
+    pub(crate) fn relinquish_if_open(&self, identity: &AppIdentity) -> bool {
+        let mut state = self.inner.lock();
+        if state.sealed {
+            return false;
+        }
+        state.owned.remove(identity)
+    }
+
+    /// Inserts an identity after a seal check. Test/revalidation-only; not the
+    /// workspace hide/unhide hot path.
+    pub(crate) fn insert(&self, identity: AppIdentity) -> bool {
+        let mut state = self.inner.lock();
+        if state.sealed {
+            return false;
+        }
+        state.owned.insert(identity)
+    }
+
+    pub(crate) fn contains(&self, identity: &AppIdentity) -> bool {
+        self.inner.lock().owned.contains(identity)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn len(&self) -> usize { self.inner.lock().owned.len() }
+
+    pub(crate) fn is_empty(&self) -> bool { self.inner.lock().owned.is_empty() }
+
+    pub(crate) fn sealed(&self) -> bool { self.inner.lock().sealed }
+
+    /// Atomically seals and drains in a single lock acquisition.
+    /// This is the only mutation API exposed outside the actor/controller.
+    pub(crate) fn seal_and_drain(&self) -> Vec<AppIdentity> {
+        let mut state = self.inner.lock();
+        state.sealed = true;
+        let mut result: Vec<_> = state.owned.iter().copied().collect();
+        result.sort_unstable();
+        state.owned.clear();
+        result
+    }
+}
+
+#[cfg(test)]
+mod registry_tests {
+    use super::*;
+    use crate::modules::tiling::identity::LaunchDateBits;
+
+    fn bits(v: u64) -> LaunchDateBits {
+        LaunchDateBits::from_time_interval_since_reference_date(v as f64).unwrap()
+    }
+    fn id10_1() -> AppIdentity {
+        AppIdentity {
+            pid: 10_i32,
+            launch_date: bits(1),
+        }
+    }
+    fn id20_2() -> AppIdentity {
+        AppIdentity {
+            pid: 20_i32,
+            launch_date: bits(2),
+        }
+    }
+    fn id30_3() -> AppIdentity {
+        AppIdentity {
+            pid: 30_i32,
+            launch_date: bits(3),
+        }
+    }
+
+    #[test]
+    fn registry_accepts_and_drains_identities() {
+        let reg = VisibilityRegistry::default();
+        let id1 = id10_1();
+        let id2 = id20_2();
+        assert!(!reg.sealed());
+        assert!(reg.insert(id1));
+        assert!(reg.insert(id2));
+        assert!(reg.contains(&id1));
+        assert_eq!(reg.len(), 2);
+        let drained = reg.seal_and_drain();
+        assert_eq!(drained, vec![id1, id2]); // sorted by Ord
+        assert!(reg.is_empty());
+        reg.insert(id30_3());
+        assert!(reg.is_empty(), "late insert after seal is a no-op");
+    }
+
+    #[test]
+    fn registry_thread_safety() {
+        use std::sync::Arc;
+        use std::thread;
+        let reg = Arc::new(VisibilityRegistry::default());
+        let ids: Vec<_> = (1..=100_i32)
+            .map(|i| AppIdentity {
+                pid: i,
+                launch_date: bits(i as u64),
+            })
+            .collect();
+        let mut handles = Vec::new();
+        for chunk in ids.chunks(25) {
+            let r = Arc::clone(&reg);
+            let c = chunk.to_vec();
+            handles.push(thread::spawn(move || {
+                for id in c {
+                    r.insert(id);
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert_eq!(reg.len(), 100);
+        assert_eq!(reg.seal_and_drain().len(), 100);
+    }
+
+    #[test]
+    fn registry_seal_rejects_actor_ops() {
+        let reg = VisibilityRegistry::default();
+        reg.seal_and_drain();
+        assert_eq!(
+            reg.hide_if_open(id10_1(), |id| { panic!("no OS op after seal: {id:?}") }),
+            HideAppOutcome::Failed
+        );
+        assert_eq!(
+            reg.unhide_if_open(id10_1(), |id| { panic!("no OS op after seal: {id:?}") }),
+            UnhideAppOutcome::Failed
+        );
+        assert!(
+            !reg.relinquish_if_open(&id10_1()),
+            "relinquishment after seal is a no-op"
+        );
+    }
+
+    #[test]
+    fn registry_relinquishment_is_seal_aware() {
+        let reg = VisibilityRegistry::default();
+        reg.insert(id10_1());
+        assert!(reg.relinquish_if_open(&id10_1()));
+        assert!(!reg.contains(&id10_1()));
+        assert!(
+            !reg.relinquish_if_open(&id10_1()),
+            "absent identity relinquishes nothing"
+        );
     }
 }

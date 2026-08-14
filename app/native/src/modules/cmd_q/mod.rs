@@ -60,6 +60,7 @@ unsafe extern "C" {
     ) -> CFMachPortRef;
 
     fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
+    fn CGEventTapIsEnabled(tap: CFMachPortRef) -> bool;
     fn CGEventGetIntegerValueField(event: CGEventRef, field: u32) -> i64;
     fn CGEventGetFlags(event: CGEventRef) -> u64;
 }
@@ -102,6 +103,22 @@ static CHECK_QUIT: AtomicBool = AtomicBool::new(false);
 
 /// Flag indicating if the module is running.
 static IS_RUNNING: AtomicBool = AtomicBool::new(false);
+
+/// Retained event tap port. `CFMachPort` is a raw-pointer wrapper that is not
+/// `Send`/`Sync`; the explicit impls are sound because the retained port is only
+/// touched via `CGEventTapEnable`/`CGEventTapIsEnabled` (thread-safe), and the
+/// port was retained (`wrap_under_create_rule` takes ownership) so crossing
+/// threads never invalidates it.
+#[derive(Clone)]
+struct RetainedEventTap(CFMachPort);
+// Sound: the port is only touched via the thread-safe
+// CGEventTapEnable/CGEventTapIsEnabled functions.
+#[allow(clippy::non_send_fields_in_send_ty)]
+unsafe impl Send for RetainedEventTap {}
+#[allow(clippy::non_send_fields_in_send_ty)]
+unsafe impl Sync for RetainedEventTap {}
+
+static EVENT_TAP: Mutex<Option<RetainedEventTap>> = Mutex::new(None);
 
 /// Tauri app handle for emitting events (stored when initialized).
 static APP_HANDLE: Mutex<Option<tauri::AppHandle>> = Mutex::new(None);
@@ -226,6 +243,9 @@ fn start_event_tap() {
 
         // Enable the event tap
         CGEventTapEnable(tap, true);
+
+        // Retain the port so pause/resume can reach it via CGEventTapEnable.
+        *EVENT_TAP.lock().unwrap() = Some(RetainedEventTap(tap_port));
 
         // Run the run loop
         CFRunLoop::run_current();
@@ -418,9 +438,105 @@ fn show_hold_to_quit_alert() {
     tracing::debug!(message = %message, "cmd_q: hold to quit alert");
 }
 
+use crate::modules::services::lifecycle::{LifecycleModule, ModuleStatus};
+
+/// Pure status decision: config gate, then the real tap state.
+fn cmd_q_status(config_enabled: bool, running: bool, tap_state: Option<bool>) -> ModuleStatus {
+    if !config_enabled {
+        return ModuleStatus::ConfiguredOff;
+    }
+    match tap_state {
+        None if running => ModuleStatus::Unavailable(
+            "event tap creation failed — check Accessibility permission".into(),
+        ),
+        Some(true) => ModuleStatus::Running,
+        None | Some(false) => ModuleStatus::Paused,
+    }
+}
+
+/// Tray-toggleable lifecycle handle for the Hold-to-Quit event tap.
+pub struct CmdQLifecycle {
+    app_handle: tauri::AppHandle,
+}
+
+impl CmdQLifecycle {
+    #[must_use]
+    pub const fn new(app_handle: tauri::AppHandle) -> Self { Self { app_handle } }
+}
+
+impl LifecycleModule for CmdQLifecycle {
+    fn name(&self) -> &'static str { "Command Quit" }
+
+    fn id(&self) -> &'static str { "commandQuit" }
+
+    fn start(&self) -> Result<(), String> {
+        if IS_RUNNING.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        let config = crate::config::get_config().command_quit.clone();
+        init(self.app_handle.clone(), &config);
+        Ok(())
+    }
+
+    fn pause(&self) -> Result<(), String> {
+        let tap = EVENT_TAP.lock().unwrap().clone();
+        match tap {
+            Some(tap) => {
+                unsafe { CGEventTapEnable(tap.0.as_concrete_TypeRef().cast(), false) };
+                Ok(())
+            }
+            None => Err("event tap handle not available".into()),
+        }
+    }
+
+    fn resume(&self) -> Result<(), String> {
+        let tap = EVENT_TAP.lock().unwrap().clone();
+        match tap {
+            Some(tap) => {
+                unsafe { CGEventTapEnable(tap.0.as_concrete_TypeRef().cast(), true) };
+                Ok(())
+            }
+            None => Err("event tap handle not available".into()),
+        }
+    }
+
+    fn status(&self) -> ModuleStatus {
+        let config_enabled = crate::config::get_config().command_quit.is_enabled();
+        let running = IS_RUNNING.load(Ordering::SeqCst);
+        let tap_state = {
+            let guard = EVENT_TAP.lock().unwrap();
+            guard
+                .as_ref()
+                .map(|tap| unsafe { CGEventTapIsEnabled(tap.0.as_concrete_TypeRef().cast()) })
+        };
+        cmd_q_status(config_enabled, running, tap_state)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retained_event_tap_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<RetainedEventTap>();
+    }
+
+    #[test]
+    fn cmd_q_status_maps_states() {
+        assert_eq!(
+            cmd_q_status(false, true, Some(true)),
+            ModuleStatus::ConfiguredOff
+        );
+        assert_eq!(cmd_q_status(true, true, Some(true)), ModuleStatus::Running);
+        assert_eq!(cmd_q_status(true, true, Some(false)), ModuleStatus::Paused);
+        assert_eq!(cmd_q_status(true, false, None), ModuleStatus::Paused);
+        assert!(matches!(
+            cmd_q_status(true, true, None),
+            ModuleStatus::Unavailable(reason) if reason.contains("Accessibility")
+        ));
+    }
 
     #[test]
     fn test_hold_state_default() {

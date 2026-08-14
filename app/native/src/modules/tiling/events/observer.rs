@@ -196,6 +196,29 @@ pub fn init() -> bool {
     true
 }
 
+/// Removes and releases every registered `AXObserver` and resets the system
+/// so it can be re-initialized on a fresh resume.
+///
+/// # Safety
+///
+/// This function must be called from the main thread.
+pub fn shutdown() {
+    if !INITIALIZED.swap(false, Ordering::SeqCst) {
+        return;
+    }
+
+    let mut state_guard = OBSERVER_STATE.lock();
+    if let Some(mut state) = state_guard.take() {
+        for (pid, observer) in state.observers.drain() {
+            unsafe { CFRelease(observer.0.cast()) };
+            tracing::trace!("Released standalone observer for pid {pid}");
+        }
+    }
+    drop(state_guard);
+
+    tracing::debug!("tiling: standalone AX observer system shut down");
+}
+
 /// Adds an observer for a new application by PID.
 ///
 /// Call this when a new application is launched.
@@ -380,5 +403,14 @@ mod tests {
         assert!(should_observe_app("com.apple.Safari", "Safari"));
         assert!(should_observe_app("com.google.Chrome", "Google Chrome"));
         assert!(should_observe_app("", "SomeApp"));
+    }
+
+    #[test]
+    fn test_shutdown_is_idempotent() {
+        // System is not initialized in unit tests; both calls must be no-ops.
+        shutdown();
+        assert!(!INITIALIZED.load(Ordering::SeqCst));
+        shutdown();
+        assert!(!INITIALIZED.load(Ordering::SeqCst));
     }
 }

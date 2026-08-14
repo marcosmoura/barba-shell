@@ -55,18 +55,41 @@ pub struct AppMonitorAdapter {
     /// Reference to the event processor.
     processor: Arc<EventProcessor>,
 
+    /// Generation this adapter belongs to (from `init::current_generation()`).
+    generation: u64,
+
     /// Whether the adapter is initialized (observer registered).
     initialized: AtomicBool,
+
+    /// Whether callbacks should be forwarded.
+    active: AtomicBool,
+
+    /// Retained `NSWorkspace` observer object (`*mut Object` as `usize`).
+    /// Only touched on the main thread.
+    observer: std::sync::Mutex<Option<usize>>,
+
+    /// Retained workspace notification center (`*mut Object` as `usize`).
+    notification_center: std::sync::Mutex<Option<usize>>,
 }
 
 impl AppMonitorAdapter {
     /// Creates a new adapter with the given event processor.
     #[must_use]
-    pub const fn new(processor: Arc<EventProcessor>) -> Self {
+    pub fn new(processor: Arc<EventProcessor>) -> Self {
         Self {
             processor,
+            generation: crate::modules::tiling::init::current_generation(),
             initialized: AtomicBool::new(false),
+            active: AtomicBool::new(false),
+            observer: std::sync::Mutex::new(None),
+            notification_center: std::sync::Mutex::new(None),
         }
+    }
+
+    /// Whether this adapter's callbacks may currently be forwarded.
+    fn gate_open(&self) -> bool {
+        self.active.load(Ordering::SeqCst)
+            && self.generation == crate::modules::tiling::init::current_generation()
     }
 
     /// Initializes the adapter by registering with `NSNotificationCenter`.
@@ -74,6 +97,10 @@ impl AppMonitorAdapter {
     /// # Returns
     ///
     /// `true` if initialization succeeded, `false` if already initialized or failed.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an observer-retention mutex is poisoned.
     ///
     /// # Safety
     ///
@@ -128,8 +155,13 @@ impl AppMonitorAdapter {
                 name: terminate_notification
                 object: std::ptr::null::<Object>()
             ];
+
+            // Retain the observer and notification center for shutdown removal.
+            *self.observer.lock().unwrap() = Some(observer as usize);
+            *self.notification_center.lock().unwrap() = Some(notification_center as usize);
         }
 
+        self.active.store(true, Ordering::SeqCst);
         tracing::debug!("AppMonitorAdapter initialized");
         true
     }
@@ -138,8 +170,61 @@ impl AppMonitorAdapter {
     #[must_use]
     pub fn is_initialized(&self) -> bool { self.initialized.load(Ordering::SeqCst) }
 
+    /// Removes the `NSWorkspace` observer and resets the adapter.
+    ///
+    /// Must be called on the main thread. Idempotent.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an observer-retention mutex is poisoned.
+    pub fn shutdown(&self) {
+        self.active.store(false, Ordering::SeqCst);
+        uninstall_adapter();
+        if !self.initialized.swap(false, Ordering::SeqCst) {
+            return;
+        }
+
+        let observer = *self.observer.lock().unwrap();
+        let notification_center = *self.notification_center.lock().unwrap();
+
+        if let (Some(observer), Some(notification_center)) = (observer, notification_center) {
+            unsafe {
+                let observer: *mut Object = observer as *mut Object;
+                let notification_center: *mut Object = notification_center as *mut Object;
+
+                let launch = nsstring("NSWorkspaceDidLaunchApplicationNotification");
+                let _: () = msg_send![
+                    notification_center,
+                    removeObserver: observer
+                    name: launch
+                    object: std::ptr::null::<Object>()
+                ];
+
+                let terminate = nsstring("NSWorkspaceDidTerminateApplicationNotification");
+                let _: () = msg_send![
+                    notification_center,
+                    removeObserver: observer
+                    name: terminate
+                    object: std::ptr::null::<Object>()
+                ];
+
+                let _: () = msg_send![observer, release];
+            }
+        }
+
+        *self.observer.lock().unwrap() = None;
+        *self.notification_center.lock().unwrap() = None;
+
+        uninstall_adapter();
+        tracing::debug!("AppMonitorAdapter shut down");
+    }
+
     /// Handles an app launch event.
     fn on_app_launched(&self, pid: i32, bundle_id: Option<String>, name: Option<String>) {
+        if !self.gate_open() {
+            return;
+        }
+
         let bundle_id = bundle_id.unwrap_or_default();
         let name = name.unwrap_or_default();
 
@@ -157,6 +242,10 @@ impl AppMonitorAdapter {
 
     /// Handles an app termination event.
     fn on_app_terminated(&self, pid: i32, bundle_id: Option<&str>, name: Option<&str>) {
+        if !self.gate_open() {
+            return;
+        }
+
         tracing::debug!("App terminated: pid={pid}, bundle={bundle_id:?}, name={name:?}");
 
         // Remove the AX observer for this app (must happen on main thread)
@@ -327,6 +416,9 @@ mod tests {
     use super::*;
     use crate::modules::tiling::actor::StateActor;
 
+    /// Serializes tests that install into / clear the global adapter slot.
+    static TEST_SLOT_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
     #[tokio::test]
     async fn test_adapter_creation() {
         let (handle, _stopped) = StateActor::spawn();
@@ -340,6 +432,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_global_adapter_install() {
+        let _guard = TEST_SLOT_LOCK.lock();
         let (handle, _stopped) = StateActor::spawn();
         let processor = Arc::new(EventProcessor::new(handle.clone()));
         let adapter = Arc::new(AppMonitorAdapter::new(processor));
@@ -359,5 +452,41 @@ mod tests {
         assert_eq!(pid, 0);
         assert!(bundle_id.is_none());
         assert!(name.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_gate_requires_active() {
+        let (handle, _stopped) = StateActor::spawn();
+        let processor = Arc::new(EventProcessor::new(handle.clone()));
+        let adapter = AppMonitorAdapter::new(processor);
+
+        assert!(!adapter.gate_open(), "inactive adapter must not forward");
+        adapter.active.store(true, Ordering::SeqCst);
+        assert!(adapter.gate_open(), "active+current generation forwards");
+        adapter.active.store(false, Ordering::SeqCst);
+        assert!(!adapter.gate_open());
+
+        handle.shutdown().unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_is_idempotent_and_deactivates() {
+        let _guard = TEST_SLOT_LOCK.lock();
+        let (handle, _stopped) = StateActor::spawn();
+        let processor = Arc::new(EventProcessor::new(handle.clone()));
+        let adapter = Arc::new(AppMonitorAdapter::new(processor));
+
+        install_adapter(Arc::clone(&adapter));
+        adapter.active.store(true, Ordering::SeqCst);
+
+        adapter.shutdown();
+        assert!(!adapter.is_initialized());
+        assert!(!adapter.gate_open());
+        assert!(get_installed_adapter().is_none(), "shutdown uninstalls adapter");
+
+        adapter.shutdown(); // second call is a no-op
+        assert!(!adapter.is_initialized());
+
+        handle.shutdown().unwrap();
     }
 }

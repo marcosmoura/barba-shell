@@ -78,6 +78,9 @@ pub struct AXObserverAdapter {
     /// Reference to the event processor.
     processor: Arc<EventProcessor>,
 
+    /// Generation this adapter belongs to (from `init::current_generation()`).
+    generation: u64,
+
     /// Whether the adapter is active (receiving events).
     active: AtomicBool,
 }
@@ -89,6 +92,7 @@ impl AXObserverAdapter {
     pub fn new(processor: Arc<EventProcessor>) -> Self {
         Self {
             processor,
+            generation: crate::modules::tiling::init::current_generation(),
             active: AtomicBool::new(false),
         }
     }
@@ -103,11 +107,25 @@ impl AXObserverAdapter {
     #[must_use]
     pub fn is_active(&self) -> bool { self.active.load(Ordering::SeqCst) }
 
+    /// Whether this adapter's callbacks may currently be forwarded.
+    fn gate_open(&self) -> bool {
+        self.active.load(Ordering::SeqCst)
+            && self.generation == crate::modules::tiling::init::current_generation()
+    }
+
+    /// Deactivates the adapter and uninstalls it from the global callback
+    /// dispatch slot. Idempotent.
+    pub fn shutdown(&self) {
+        self.deactivate();
+        uninstall_adapter();
+        tracing::debug!("AXObserverAdapter shut down");
+    }
+
     /// Handles a window event from the `AXObserver` system.
     ///
     /// This is the main entry point called from the observer callback.
     pub fn handle_event(&self, event: WindowEvent) {
-        if !self.is_active() {
+        if !self.gate_open() {
             tracing::trace!("Ignoring event {:?} - adapter not active", event.event_type);
             return;
         }
@@ -765,6 +783,9 @@ mod tests {
     use super::*;
     use crate::modules::tiling::actor::StateActor;
 
+    /// Serializes tests that install into / clear the global adapter slot.
+    static TEST_SLOT_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
     #[tokio::test]
     async fn test_adapter_creation() {
         let (handle, _stopped) = StateActor::spawn();
@@ -782,6 +803,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_global_adapter_install() {
+        let _guard = TEST_SLOT_LOCK.lock();
         let (handle, _stopped) = StateActor::spawn();
         let processor = Arc::new(EventProcessor::new(handle.clone()));
         let adapter = Arc::new(AXObserverAdapter::new(processor));
@@ -799,6 +821,24 @@ mod tests {
     fn test_get_window_id_null_element() {
         let result = get_window_id(std::ptr::null_mut());
         assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_deactivates_and_uninstalls() {
+        let _guard = TEST_SLOT_LOCK.lock();
+        let (handle, _stopped) = StateActor::spawn();
+        let processor = Arc::new(EventProcessor::new(handle.clone()));
+        let adapter = Arc::new(AXObserverAdapter::new(processor));
+
+        install_adapter(Arc::clone(&adapter));
+        adapter.activate();
+
+        adapter.shutdown();
+        assert!(!adapter.is_active());
+        assert!(!adapter.gate_open());
+        assert!(get_installed_adapter().is_none());
+
+        handle.shutdown().unwrap();
     }
 
     #[test]

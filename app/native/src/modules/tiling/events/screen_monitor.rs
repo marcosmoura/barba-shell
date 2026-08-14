@@ -77,6 +77,10 @@ unsafe extern "C" {
         callback: unsafe extern "C" fn(u32, u32, *mut c_void),
         user_info: *mut c_void,
     ) -> i32;
+    fn CGDisplayRemoveReconfigurationCallback(
+        callback: unsafe extern "C" fn(u32, u32, *mut c_void),
+        user_info: *mut c_void,
+    ) -> i32;
 }
 
 // ============================================================================
@@ -88,23 +92,55 @@ pub struct ScreenMonitorAdapter {
     /// Reference to the event processor.
     processor: Arc<EventProcessor>,
 
+    /// Generation this adapter belongs to (from `init::current_generation()`).
+    generation: u64,
+
     /// Whether the adapter is initialized (callback registered).
     initialized: AtomicBool,
 
     /// Whether we're currently processing a screen change.
     /// Prevents recursive callbacks during our own screen refresh operations.
     processing: AtomicBool,
+
+    /// Whether callbacks should be forwarded.
+    active: AtomicBool,
 }
 
 impl ScreenMonitorAdapter {
     /// Creates a new adapter with the given event processor.
     #[must_use]
-    pub const fn new(processor: Arc<EventProcessor>) -> Self {
+    pub fn new(processor: Arc<EventProcessor>) -> Self {
         Self {
             processor,
+            generation: crate::modules::tiling::init::current_generation(),
             initialized: AtomicBool::new(false),
             processing: AtomicBool::new(false),
+            active: AtomicBool::new(false),
         }
+    }
+
+    /// Whether this adapter's callbacks may currently be forwarded.
+    fn gate_open(&self) -> bool {
+        self.active.load(Ordering::SeqCst)
+            && self.generation == crate::modules::tiling::init::current_generation()
+    }
+
+    /// Removes the CoreGraphics reconfiguration callback and invalidates any
+    /// in-flight delayed worker by bumping the gate. Idempotent.
+    pub fn shutdown(&self) {
+        self.active.store(false, Ordering::SeqCst);
+        uninstall_adapter();
+        if !self.initialized.swap(false, Ordering::SeqCst) {
+            return;
+        }
+        unsafe {
+            CGDisplayRemoveReconfigurationCallback(
+                display_reconfiguration_callback,
+                std::ptr::null_mut(),
+            );
+        }
+        self.processing.store(false, Ordering::SeqCst);
+        tracing::debug!("ScreenMonitorAdapter shut down");
     }
 
     /// Initializes the adapter by registering with CoreGraphics.
@@ -132,6 +168,7 @@ impl ScreenMonitorAdapter {
             return false;
         }
 
+        self.active.store(true, Ordering::SeqCst);
         // Register current screens with the processor
         self.register_all_screens();
 
@@ -169,24 +206,29 @@ impl ScreenMonitorAdapter {
     /// CoreGraphics callback). We detect screens here and pass them to the
     /// processor to avoid calling macOS APIs from the async actor task.
     fn on_screens_changed(&self) {
-        tracing::debug!("Screens changed, updating registrations");
+        self.set_processing(true);
 
-        // Get current displays
-        let current_displays: std::collections::HashSet<_> =
-            get_all_display_ids().into_iter().collect();
-
-        // Get registered screens from processor
-        // Note: We don't have direct access to registered screens, so we'll
-        // just re-register all current screens (register_screen handles duplicates)
-        for display_id in &current_displays {
-            let refresh_rate = get_display_refresh_rate(*display_id);
-            self.processor.register_screen(*display_id, refresh_rate);
+        if !self.gate_open() {
+            self.set_processing(false);
+            return;
         }
 
-        // Detect screens on main thread and send to actor
-        // This callback runs on the main thread, so NSScreen APIs work here
-        let screens = crate::modules::tiling::actor::handlers::get_screens_from_macos();
+        let screens = crate::platform::thread::dispatch_on_main_sync(|| {
+            crate::modules::tiling::actor::handlers::get_screens_from_macos()
+        });
+
+        // Re-check after the main-thread hop: a pause may have torn us down.
+        if !self.gate_open() {
+            self.set_processing(false);
+            return;
+        }
+
+        for display_id in get_all_display_ids() {
+            let refresh_rate = get_display_refresh_rate(display_id);
+            self.processor.register_screen(display_id, refresh_rate);
+        }
         self.processor.on_set_screens(screens);
+        self.set_processing(false);
     }
 }
 
@@ -336,6 +378,9 @@ mod tests {
     use super::*;
     use crate::modules::tiling::actor::StateActor;
 
+    /// Serializes tests that install into / clear the global adapter slot.
+    static TEST_SLOT_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
     #[tokio::test]
     async fn test_adapter_creation() {
         let (handle, _stopped) = StateActor::spawn();
@@ -365,6 +410,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_global_adapter_install() {
+        let _guard = TEST_SLOT_LOCK.lock();
         let (handle, _stopped) = StateActor::spawn();
         let processor = Arc::new(EventProcessor::new(handle.clone()));
         let adapter = Arc::new(ScreenMonitorAdapter::new(processor));
@@ -394,5 +440,23 @@ mod tests {
         assert_eq!(cg_flags::kCGDisplayAddFlag, 0x10);
         assert_eq!(cg_flags::kCGDisplayRemoveFlag, 0x20);
         assert_eq!(cg_flags::kCGDisplayBeginConfigurationFlag, 0x01);
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_clears_initialized_and_uninstalls() {
+        let _guard = TEST_SLOT_LOCK.lock();
+        let (handle, _stopped) = StateActor::spawn();
+        let processor = Arc::new(EventProcessor::new(handle.clone()));
+        let adapter = Arc::new(ScreenMonitorAdapter::new(processor));
+
+        install_adapter(Arc::clone(&adapter));
+
+        adapter.shutdown();
+        assert!(!adapter.is_initialized());
+        assert!(!adapter.is_processing());
+        assert!(!adapter.gate_open());
+        assert!(get_installed_adapter().is_none());
+
+        handle.shutdown().unwrap();
     }
 }

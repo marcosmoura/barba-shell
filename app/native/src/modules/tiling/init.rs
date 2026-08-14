@@ -240,6 +240,10 @@ pub fn get_subscriber_handle() -> Option<EffectSubscriberHandle> {
 #[must_use]
 pub fn is_initialized() -> bool { *LIFECYCLE.lock() == LifecycleState::Running }
 
+/// Returns the current runtime generation counter value.
+#[must_use]
+pub fn current_generation() -> u64 { NEXT_GENERATION.load(Ordering::Relaxed) }
+
 /// Returns whether tiling is enabled in config.
 #[must_use]
 pub fn is_enabled() -> bool { get_config().tiling.is_enabled() }

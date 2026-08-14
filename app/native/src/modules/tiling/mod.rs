@@ -43,6 +43,7 @@ pub mod commands;
 pub mod effects;
 pub mod events;
 pub mod ffi;
+pub mod identity;
 pub mod init;
 pub mod layout;
 pub mod rules;

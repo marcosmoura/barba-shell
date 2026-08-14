@@ -156,6 +156,19 @@ static RUNTIME: Mutex<RuntimeSlot> = Mutex::new(RuntimeSlot::Empty);
 static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 const RUNTIME_STOP_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// Test seam: overrides `RUNTIME_STOP_TIMEOUT` so timeout paths do not block
+/// real seconds in unit tests.
+static STOP_TIMEOUT_OVERRIDE: Mutex<Option<Duration>> = Mutex::new(None);
+
+fn stop_timeout() -> Duration {
+    (*STOP_TIMEOUT_OVERRIDE.lock()).unwrap_or(RUNTIME_STOP_TIMEOUT)
+}
+
+#[cfg(test)]
+fn set_stop_timeout(override_value: Option<Duration>) {
+    *STOP_TIMEOUT_OVERRIDE.lock() = override_value;
+}
+
 /// Stored Tauri app handle for emitting events.
 static APP_HANDLE: Mutex<Option<tauri::AppHandle>> = Mutex::new(None);
 
@@ -295,6 +308,33 @@ pub fn init(app_handle: tauri::AppHandle) -> bool {
 pub fn shutdown() {
     if let Err(e) = pause_runtime() {
         tracing::error!("tiling: shutdown failed: {e}");
+    }
+}
+
+/// Resumes a paused tiling runtime via the same fresh-start path as `start`.
+///
+/// Never reuses retained resources from a prior generation.
+///
+/// # Errors
+///
+/// Returns an error when the lifecycle is not `Stopped` or any fatal startup
+/// stage fails.
+pub fn resume(app_handle: tauri::AppHandle) -> Result<(), String> { start_runtime(app_handle) }
+
+impl From<TilingRuntime> for PartialRuntime {
+    fn from(runtime: TilingRuntime) -> Self {
+        Self {
+            generation: runtime.generation,
+            actor: Some(runtime.actor),
+            actor_stopped: Some(runtime.actor_stopped),
+            processor: Some(runtime.processor),
+            subscriber: Some(runtime.subscriber),
+            subscriber_stopped: Some(runtime.subscriber_stopped),
+            app_monitor: Some(runtime.app_monitor),
+            screen_monitor: Some(runtime.screen_monitor),
+            ax_adapter: Some(runtime.ax_adapter),
+            teardown: runtime.teardown,
+        }
     }
 }
 
@@ -476,14 +516,34 @@ fn build_runtime(factory: &RuntimeFactory, generation: u64) -> Result<TilingRunt
     // Optional stages: failure logs degraded mode but still permits Running.
     if let Err(e) = factory.setup_mouse_monitor() {
         tracing::warn!("{e}");
+    } else {
+        super::events::mouse_monitor::set_active(true);
     }
     if let Err(e) = factory.setup_borders() {
         tracing::warn!("{e}");
+    } else {
+        super::borders::resume();
     }
 
     factory.enumerate_initial_state(actor, processor)?;
 
     TilingRuntime::try_from(partial)
+}
+
+/// Guards fresh starts against a quarantined runtime or an in-progress
+/// transition. `resume` and `start` must reject these states.
+fn ensure_can_start() -> Result<(), String> {
+    let lifecycle = *LIFECYCLE.lock();
+    if lifecycle != LifecycleState::Stopped {
+        return Err(format!("tiling: cannot start while lifecycle is {lifecycle:?}"));
+    }
+    if matches!(&*RUNTIME.lock(), RuntimeSlot::Quarantined(_)) {
+        return Err(
+            "tiling: previous runtime is quarantined; only pause/shutdown may retry teardown"
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 /// Starts a fresh runtime generation and publishes `RuntimeSlot::Running`.
@@ -499,11 +559,10 @@ fn build_runtime(factory: &RuntimeFactory, generation: u64) -> Result<TilingRunt
 pub fn start_runtime(app_handle: tauri::AppHandle) -> Result<(), String> {
     store_app_handle(app_handle);
 
+    ensure_can_start()?;
+
     {
         let mut lifecycle = LIFECYCLE.lock();
-        if *lifecycle != LifecycleState::Stopped {
-            return Err(format!("tiling: cannot start while {lifecycle:?}"));
-        }
         *lifecycle = LifecycleState::Starting;
     }
 
@@ -524,55 +583,161 @@ pub fn start_runtime(app_handle: tauri::AppHandle) -> Result<(), String> {
     }
 }
 
-/// Stops the published runtime and publishes `Empty`/`Stopped`.
+/// Tears down the running tiling runtime in strict, idempotent order.
 ///
-/// Ordered teardown, quarantine/retry, and main-thread observer unregister are
-/// owned by the pause task (15D); this step waits on the subscriber/actor
-/// latches so a 15B-only tree is still shippable.
-#[allow(clippy::unnecessary_wraps)] // 15D replaces this with the quarantine/retry version that returns Err
-fn pause_runtime() -> Result<(), String> {
-    {
-        let mut lifecycle = LIFECYCLE.lock();
-        if *lifecycle != LifecycleState::Running {
-            return Ok(());
-        }
-        *lifecycle = LifecycleState::Stopping;
-    }
-
-    let runtime = {
-        let mut slot = RUNTIME.lock();
-        let taken = std::mem::replace(&mut *slot, RuntimeSlot::Empty);
-        drop(slot);
-        match taken {
-            RuntimeSlot::Running(rt) => rt,
-            RuntimeSlot::Empty => {
-                *LIFECYCLE.lock() = LifecycleState::Stopped;
-                return Ok(());
+/// Stages:
+/// 1. `restore_stache_hidden_apps()` before any actor teardown (idempotent;
+///    returns an empty summary when no running handle exists).
+/// 2. On the main thread, shutdown/gate/unregister app, screen, AX, and
+///    standalone observers. All main-thread work completes before any wait.
+/// 3. `EventProcessor::stop_and_wait` and routing-map clear.
+/// 4. Cancel drag/animations; pause borders and the mouse tap.
+/// 5. Subscriber shutdown + completion-latch wait.
+/// 6. Actor shutdown + completion-latch wait.
+/// 7. Drop all taken handles/Arcs.
+/// 8. Clear tabs, AX caches, and transient animation/border state.
+/// 9. Publish `RuntimeSlot::Empty` + `LifecycleState::Stopped`.
+///
+/// On timeout/failure the entire runtime (with per-stage progress) is
+/// reinserted as `RuntimeSlot::Quarantined` and lifecycle stays `Stopping`;
+/// a later call retries only the unfinished stages.
+///
+/// # Errors
+///
+/// Returns an error when the lifecycle is not running/stopping, or when a
+/// teardown stage times out (the runtime is then quarantined for retry).
+#[allow(clippy::too_many_lines)] // one block per ordered teardown stage, by design
+pub fn pause_runtime() -> Result<(), String> {
+    let retry = {
+        let lifecycle = LIFECYCLE.lock();
+        let state = *lifecycle;
+        drop(lifecycle);
+        match state {
+            LifecycleState::Stopping => true,
+            LifecycleState::Running => {
+                *LIFECYCLE.lock() = LifecycleState::Stopping;
+                false
             }
-            RuntimeSlot::Quarantined(partial) => {
-                *RUNTIME.lock() = RuntimeSlot::Quarantined(partial);
-                *LIFECYCLE.lock() = LifecycleState::Stopped;
-                return Ok(());
+            LifecycleState::Stopped | LifecycleState::Starting => {
+                return Err("tiling: pause called while not running".to_string());
             }
         }
     };
 
-    runtime.processor.stop();
+    let mut runtime = {
+        let mut slot = RUNTIME.lock();
+        let taken = std::mem::replace(&mut *slot, RuntimeSlot::Empty);
+        drop(slot);
+        match taken {
+            RuntimeSlot::Empty if retry => {
+                *LIFECYCLE.lock() = LifecycleState::Stopped;
+                return Ok(());
+            }
+            RuntimeSlot::Empty => {
+                return Err("tiling: no runtime to pause".to_string());
+            }
+            RuntimeSlot::Running(r) if !retry => PartialRuntime::from(r),
+            RuntimeSlot::Quarantined(p) if retry => p,
+            RuntimeSlot::Running(_) => {
+                return Err("tiling: runtime is running during a teardown retry".to_string());
+            }
+            RuntimeSlot::Quarantined(_) => {
+                return Err("tiling: runtime already quarantined".to_string());
+            }
+        }
+    };
 
-    runtime.subscriber.shutdown();
-    if !runtime.subscriber_stopped.wait_timeout(RUNTIME_STOP_TIMEOUT) {
-        tracing::warn!("tiling: subscriber did not stop within {RUNTIME_STOP_TIMEOUT:?}");
+    if !runtime.teardown.visibility_restored {
+        let summary = super::visibility::restore_stache_hidden_apps();
+        tracing::info!(
+            "tiling: restored {} of {} hidden apps",
+            summary.restored,
+            summary.attempted
+        );
+        runtime.teardown.visibility_restored = true;
     }
 
-    let _ = runtime.actor.shutdown();
-    if !runtime.actor_stopped.wait_timeout(RUNTIME_STOP_TIMEOUT) {
-        tracing::warn!("tiling: actor did not stop within {RUNTIME_STOP_TIMEOUT:?}");
+    if !runtime.teardown.main_thread_sources_removed {
+        let app_monitor = runtime.app_monitor.clone();
+        let screen_monitor = runtime.screen_monitor.clone();
+        let ax_adapter = runtime.ax_adapter.clone();
+        crate::platform::thread::dispatch_on_main_sync(move || {
+            if let Some(m) = app_monitor {
+                m.shutdown();
+            }
+            if let Some(s) = screen_monitor {
+                s.shutdown();
+            }
+            if let Some(a) = ax_adapter {
+                a.shutdown();
+            }
+            super::events::observer::shutdown();
+        });
+        runtime.teardown.main_thread_sources_removed = true;
     }
 
-    let generation = runtime.generation;
-    drop(runtime);
+    if !runtime.teardown.processor_stopped {
+        if let Some(processor) = &runtime.processor
+            && !processor.stop_and_wait(stop_timeout())
+        {
+            *RUNTIME.lock() = RuntimeSlot::Quarantined(runtime);
+            return Err("tiling: processor failed to stop within timeout".to_string());
+        }
+        runtime.teardown.processor_stopped = true;
+    }
+
+    if !runtime.teardown.transient_services_paused {
+        super::events::drag_state::cancel_operation();
+        super::events::mouse_monitor::set_active(false);
+        super::effects::animation::cancel_animation();
+        super::effects::animation::reset_transient_state();
+        super::borders::pause();
+        runtime.teardown.transient_services_paused = true;
+    }
+
+    if !runtime.teardown.subscriber_stopped {
+        if let Some(subscriber) = &runtime.subscriber {
+            subscriber.shutdown();
+        }
+        if let Some(latch) = &runtime.subscriber_stopped
+            && !latch.wait_timeout(stop_timeout())
+        {
+            *RUNTIME.lock() = RuntimeSlot::Quarantined(runtime);
+            return Err("tiling: effect subscriber did not stop within timeout".to_string());
+        }
+        runtime.teardown.subscriber_stopped = true;
+    }
+
+    if !runtime.teardown.actor_stopped {
+        if let Some(actor) = &runtime.actor {
+            let _ = actor.send(StateMessage::Shutdown);
+        }
+        if let Some(latch) = &runtime.actor_stopped
+            && !latch.wait_timeout(stop_timeout())
+        {
+            *RUNTIME.lock() = RuntimeSlot::Quarantined(runtime);
+            return Err("tiling: state actor did not stop within timeout".to_string());
+        }
+        runtime.teardown.actor_stopped = true;
+    }
+
+    runtime.actor = None;
+    runtime.actor_stopped = None;
+    runtime.processor = None;
+    runtime.subscriber = None;
+    runtime.subscriber_stopped = None;
+    runtime.app_monitor = None;
+    runtime.screen_monitor = None;
+    runtime.ax_adapter = None;
+
+    if !runtime.teardown.caches_cleared {
+        super::tabs::clear_all_tabs();
+        super::effects::get_window_cache().clear();
+        runtime.teardown.caches_cleared = true;
+    }
+
     *LIFECYCLE.lock() = LifecycleState::Stopped;
-    tracing::info!("tiling: runtime {generation} stopped");
+    tracing::info!("tiling: runtime paused (generation {})", runtime.generation);
     Ok(())
 }
 

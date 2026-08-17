@@ -109,6 +109,7 @@
     ],
     "macOS": {
       "minimumSystemVersion": "14.0",
+      "signingIdentity": "Stache App",
       "infoPlist": "Info.plist",
       "files": {
         "lib": "resources/lib",

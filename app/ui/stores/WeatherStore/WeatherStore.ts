@@ -11,10 +11,14 @@ const REFETCH_INTERVAL = 20 * 60 * 1000; // 20 minutes
  * Hook-based Weather Store using React Query for data fetching.
  */
 export function useWeatherStore() {
+  // The config contains the Visual Crossing API key, so it must not be synced
+  // across windows (which persists it in the shared store) nor included in
+  // derived query keys (which leaks it into cache/store IDs).
   const { data: config } = useTauriSuspense<WeatherConfig>({
     queryKey: ['weatherConfig'],
     command: 'get_weather_config',
     staleTime: Infinity,
+    syncAcrossWindows: false,
   });
 
   const { data: location } = useTauri<LocationData>({
@@ -25,8 +29,11 @@ export function useWeatherStore() {
     enabled: !!config,
   });
 
+  // Intentionally exclude the full config from the key: it contains the
+  // Visual Crossing API key, which must not leak into query/store IDs.
+  // eslint-disable-next-line @tanstack/query/exhaustive-deps -- see above
   const { data: weather, isLoading } = useTauri({
-    queryKey: ['weather', location, config],
+    queryKey: ['weather', location, config?.provider, config?.defaultLocation],
     queryFn: async () => {
       if (!config || !location) {
         throw new Error('Config or location not available');

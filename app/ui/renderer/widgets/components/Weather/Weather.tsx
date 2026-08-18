@@ -167,7 +167,7 @@ function RainForecast({ forecast, nextPrecipitation }: RainForecastProps) {
         <>
           <div className={styles.rainForecastChart}>
             {forecast.map((hour) => (
-              <div key={hour.time} className={styles.rainForecastBar}>
+              <div key={hour.id} className={styles.rainForecastBar}>
                 <div className={styles.rainBar}>
                   <div
                     className={styles.rainBarFill}

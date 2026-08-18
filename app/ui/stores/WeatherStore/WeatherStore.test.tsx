@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { render } from 'vitest-browser-react';
 
+import { useCrossWindowSync } from '@/hooks/useCrossWindowSync';
 import {
   createFetchMock,
   createQueryClientWrapper,
@@ -156,6 +157,32 @@ describe('useWeatherStore', () => {
 
       expect(mockInvoke).toHaveBeenCalledWith('get_weather_config', undefined);
       expect(screen.getByTestId('location')).toHaveTextContent('Tokyo, Japan');
+    });
+
+    test('does not leak the API key into query keys or cross-window sync', async () => {
+      const useCrossWindowSyncMock = vi.mocked(useCrossWindowSync);
+
+      const { screen } = await renderWeatherTest(({ weather }) => (
+        <div data-testid="loaded">{weather ? 'yes' : 'no'}</div>
+      ));
+
+      await vi.waitFor(async () => {
+        await expect.element(screen.getByTestId('loaded')).toBeVisible();
+      });
+
+      const syncCalls = useCrossWindowSyncMock.mock.calls;
+      expect(syncCalls.length).toBeGreaterThan(0);
+
+      for (const [options] of syncCalls) {
+        expect(JSON.stringify(options.queryKey)).not.toContain('test-api-key-12345');
+      }
+
+      const configSyncCall = syncCalls.find(
+        ([options]) => JSON.stringify(options.queryKey) === '["weatherConfig"]',
+      );
+      expect(configSyncCall).toBeDefined();
+      // The config contains the API key, so it must not be shared across windows.
+      expect(configSyncCall?.[0].syncAcrossWindows).toBe(false);
     });
   });
 

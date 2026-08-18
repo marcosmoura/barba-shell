@@ -121,6 +121,7 @@ export interface WeatherStat {
 }
 
 export interface HourlyRainData {
+  id: string;
   hour: string;
   time: string;
   precipProb: number;
@@ -154,9 +155,8 @@ function getPrecipColor(precipProb: number): string {
   return colors.sky;
 }
 
-function formatHour(datetime: string): { hour: string; time: string } {
-  const [hourStr] = datetime.split(':');
-  const hour = parseInt(hourStr, 10);
+function formatHour(date: Date): { hour: string; time: string } {
+  const hour = date.getHours();
   const period = hour >= 12 ? 'PM' : 'AM';
   const displayHour = hour % 12 || 12;
   return {
@@ -272,28 +272,35 @@ export function useWeatherWidget() {
         id: 'moonPhase',
         label: 'Moon Phase',
         value: moonphase,
-        displayValue: Math.round(moonphase * 100).toString(),
+        displayValue: Number.isFinite(moonphase) ? Math.round(moonphase * 100).toString() : 'N/A',
         unit: '%',
-        status: getMoonPhaseLabel(moonphase),
+        status: getMoonPhaseLabel(Number.isFinite(moonphase) ? moonphase : 0),
         color: colors.lavender,
-        percentage: moonphase * 100,
+        percentage: Number.isFinite(moonphase) ? moonphase * 100 : 0,
       },
     ];
 
-    // Process hourly rain forecast (next 12 hours from current time)
-    const currentHour = new Date().getHours();
-    const hourlyData = weather.days?.[0]?.hours ?? [];
-
-    const hourlyRainForecast: HourlyRainData[] = hourlyData
-      .filter((hour) => {
-        const hourNum = parseInt(hour.datetime.split(':')[0], 10);
-        return hourNum >= currentHour;
-      })
+    // Providers use either ISO timestamps or a day plus a time-only value.
+    // Normalize both formats before selecting the next twelve forecast hours.
+    const currentHour = new Date();
+    currentHour.setMinutes(0, 0, 0);
+    const hourlyRainForecast: HourlyRainData[] = (weather.days ?? [])
+      .flatMap((day) =>
+        day.hours.map((hour) => ({
+          hour,
+          date: new Date(
+            hour.datetime.includes('T') ? hour.datetime : `${day.datetime}T${hour.datetime}`,
+          ),
+        })),
+      )
+      .filter(({ date }) => Number.isFinite(date.getTime()) && date >= currentHour)
+      .sort((a, b) => a.date.getTime() - b.date.getTime())
       .slice(0, 12)
-      .map((hour) => {
-        const { hour: displayHour, time } = formatHour(hour.datetime);
+      .map(({ hour, date }) => {
+        const { hour: displayHour, time } = formatHour(date);
         const precipProb = hour.precipprob ?? 0;
         return {
+          id: date.toISOString(),
           hour: displayHour,
           time,
           precipProb,

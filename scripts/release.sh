@@ -10,10 +10,11 @@ set -euo pipefail
 #
 # What happens:
 # 1. Dependencies are installed with pnpm (locked).
-# 2. The Tauri bundle is produced (release by default, override via BUNDLE_PROFILE).
-# 3. The CLI binary is built with cargo.
-# 4. The Rust binaries are installed with `cargo install --path`.
-# 5. The resulting .app bundle is copied into /Applications (sudo only if needed).
+# 2. Tests, coverage, lint, and a security audit are run (failures abort).
+# 3. The Tauri bundle is produced (release by default, override via BUNDLE_PROFILE).
+# 4. The CLI binary is built with cargo.
+# 5. The Rust binaries are installed with `cargo install --path`.
+# 6. The resulting .app bundle is copied into /Applications (sudo only if needed).
 ###############################################################################
 
 APP_NAME="Stache"
@@ -204,60 +205,9 @@ EOF
   if security find-identity -v -p codesigning 2>/dev/null | grep -q "${SIGNING_IDENTITY}"; then
     log "Certificate '${SIGNING_IDENTITY}' created successfully."
   else
-    log "Warning: Certificate creation may have failed. Checking..."
+    log "Certificate creation failed. Checking identities..."
     security find-identity -v -p codesigning 2>/dev/null || true
-  fi
-}
-
-sign_app() {
-  local app_path="$1"
-
-  # Check if signing identity exists
-  if ! security find-identity -v -p codesigning 2>/dev/null | grep -q "${SIGNING_IDENTITY}"; then
-    log "No code signing identity '${SIGNING_IDENTITY}' found. App will use ad-hoc signature."
-    log "Note: Accessibility permissions will need to be re-granted after each build."
-    return 0
-  fi
-
-  log "Signing app with identity: ${SIGNING_IDENTITY}"
-
-  # Unlock keychain to allow codesign access
-  security unlock-keychain -p "" ~/Library/Keychains/login.keychain-db 2>/dev/null || true
-
-  # Ensure all files are writable (codesign needs write access)
-  chmod -R u+w "${app_path}"
-
-  # Sign all nested executables in MacOS folder first
-  for file in "${app_path}/Contents/MacOS"/*; do
-    if [[ -f "${file}" && -x "${file}" ]]; then
-      codesign --force --sign "${SIGNING_IDENTITY}" --timestamp=none "${file}" || {
-        log "Warning: Failed to sign ${file}"
-      }
-    fi
-  done
-
-  # Sign dylibs if any
-  find "${app_path}/Contents" -type f -name "*.dylib" 2>/dev/null | while read -r file; do
-    codesign --force --sign "${SIGNING_IDENTITY}" --timestamp=none "${file}" 2>/dev/null || true
-  done
-
-  # Sign frameworks if any
-  if [[ -d "${app_path}/Contents/Frameworks" ]]; then
-    for fw in "${app_path}/Contents/Frameworks"/*.framework; do
-      if [[ -d "${fw}" ]]; then
-        codesign --force --deep --sign "${SIGNING_IDENTITY}" --timestamp=none "${fw}" 2>/dev/null || true
-      fi
-    done
-  fi
-
-  # Sign the main app bundle
-  codesign --force --sign "${SIGNING_IDENTITY}" --timestamp=none "${app_path}"
-
-  # Verify
-  if codesign --verify --deep --strict "${app_path}" 2>/dev/null; then
-    log "App successfully signed and verified."
-  else
-    log "Warning: App signature verification failed. Accessibility permissions may need re-granting."
+    fail "Required code signing identity '${SIGNING_IDENTITY}' is unavailable."
   fi
 }
 
@@ -289,12 +239,25 @@ main() {
   if ((SKIP_TESTS == 0)); then
     progress "Running tests"
     pnpm run test || fail "Tests failed. Aborting release."
+
+    progress "Running coverage"
+    pnpm run test:ui:coverage || fail "Coverage failed. Aborting release."
   else
     log "Skipping tests (--skip-tests)"
   fi
 
+  progress "Linting"
+  pnpm run lint || fail "Lint failed. Aborting release."
+
+  progress "Auditing dependencies"
+  pnpm audit --prod || fail "JavaScript security audit failed. Aborting release."
+  pnpm run tauri:audit || fail "Security audit failed. Aborting release."
+
   progress "Formatting code"
   pnpm run format
+
+  progress "Ensuring code signing certificate exists"
+  ensure_signing_certificate
 
   progress "Building Tauri bundle (profile=${BUNDLE_PROFILE})"
   tauri_build
@@ -303,12 +266,6 @@ main() {
   cargo install --path "${TAURI_DIR}" --force
 
   discover_bundle
-
-  progress "Ensuring code signing certificate exists"
-  ensure_signing_certificate
-
-  progress "Signing application for consistent permissions"
-  sign_app "${BUNDLE_PATH}"
 
   progress "Copying $(basename "${BUNDLE_PATH}") into ${APPLICATIONS_DIR}"
   run_with_privilege rm -rf "${INSTALL_PATH}"

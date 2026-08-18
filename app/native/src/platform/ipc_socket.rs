@@ -27,13 +27,28 @@
 //! {"data": [...]}
 //! {"error": "Tiling not initialized"}
 //! ```
+//!
+//! # Control Commands
+//!
+//! The same socket also carries CLI control commands (workspace focus, layout,
+//! window operations, reload). Commands are JSON objects with a `type` field
+//! that does not collide with the query names above:
+//!
+//! ```json
+//! {"type": "tilingFocusWorkspace", "workspace": "coding"}
+//! ```
+//!
+//! The socket is restricted to the current user via `0600` permissions, and the
+//! server bounds concurrent connections, applies I/O timeouts, and caps the
+//! maximum request size so a hostile same-UID process cannot exhaust resources.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -50,6 +65,18 @@ const MAX_RETRIES: u32 = 3;
 
 /// Delay between retry attempts in milliseconds.
 const RETRY_DELAY_MS: u64 = 100;
+
+/// Maximum number of concurrently served connections.
+///
+/// Threads are bounded: once this many connections are being handled, further
+/// connections are queued in the kernel accept backlog until a slot frees.
+const MAX_CONCURRENT_CONNECTIONS: usize = 8;
+
+/// Maximum request line size in bytes.
+///
+/// Queries and commands are tiny JSON objects; 64 KiB is far beyond any
+/// legitimate request and prevents a peer from forcing unbounded buffering.
+const MAX_REQUEST_SIZE: usize = 64 * 1024;
 
 /// Whether the server is running.
 static SERVER_RUNNING: AtomicBool = AtomicBool::new(false);
@@ -143,6 +170,48 @@ impl IpcResponse {
     pub fn error(message: impl Into<String>) -> Self { Self::Error { error: message.into() } }
 }
 
+/// Control commands sent from the CLI to the App over the socket.
+///
+/// These were historically posted over `NSDistributedNotificationCenter`,
+/// which any process in the user session can observe or spoof. They now travel
+/// exclusively over the `0600` user-restricted socket.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum IpcCommand {
+    /// Reload/restart the desktop app.
+    Reload,
+    /// Focus a workspace by name.
+    TilingFocusWorkspace { workspace: String },
+    /// Change layout of the focused workspace.
+    TilingSetLayout { layout: String },
+    /// Focus a window by direction or ID.
+    TilingWindowFocus { target: String },
+    /// Swap focused window with a neighbor.
+    TilingWindowSwap { direction: String },
+    /// Resize the focused window.
+    TilingWindowResize { dimension: String, amount: i32 },
+    /// Apply a floating preset to the focused window.
+    TilingWindowPreset { preset: String },
+    /// Send the focused window to a workspace.
+    TilingWindowSendToWorkspace { workspace: String },
+    /// Send the focused window to a screen.
+    TilingWindowSendToScreen { screen: String },
+    /// Balance the focused workspace.
+    TilingWorkspaceBalance,
+    /// Send the focused workspace to a screen.
+    TilingWorkspaceSendToScreen { screen: String },
+}
+
+/// A message on the IPC socket: either a read-only query or a control command.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum IpcMessage {
+    /// A read-only state query.
+    Query(IpcQuery),
+    /// A control command.
+    Command(IpcCommand),
+}
+
 // ============================================================================
 // Socket Path
 // ============================================================================
@@ -171,13 +240,13 @@ fn remove_socket() {
 /// Starts the IPC socket server.
 ///
 /// This should be called once during app initialization.
-/// The server runs in a background thread and handles incoming queries.
+/// The server runs in a background thread and handles incoming messages.
 ///
 /// # Arguments
 ///
-/// * `handler` - A function that processes queries and returns responses.
+/// * `handler` - A function that processes queries and commands and returns responses.
 pub fn init<F>(handler: F)
-where F: Fn(IpcQuery) -> IpcResponse + Send + Sync + 'static {
+where F: Fn(IpcMessage) -> IpcResponse + Send + Sync + 'static {
     if SERVER_RUNNING.swap(true, Ordering::SeqCst) {
         tracing::debug!("ipc server already running");
         return;
@@ -222,54 +291,136 @@ where F: Fn(IpcQuery) -> IpcResponse + Send + Sync + 'static {
     thread::Builder::new()
         .name("ipc-server".to_string())
         .spawn(move || {
-            server_loop(listener, handler);
+            server_loop(listener, &SERVER_RUNNING, handler);
         })
         .expect("Failed to spawn IPC server thread");
 }
 
+/// Bounded semaphore that caps concurrent IPC connections.
+///
+/// Implemented with std primitives (`std::sync::Semaphore` is unavailable on
+/// the pinned toolchain). `acquire` blocks the accept loop so excess
+/// connections queue in the kernel backlog instead of spawning threads.
+struct ConnectionLimiter {
+    available: Mutex<usize>,
+    condvar: Condvar,
+}
+
+impl ConnectionLimiter {
+    const fn new(limit: usize) -> Self {
+        Self {
+            available: Mutex::new(limit),
+            condvar: Condvar::new(),
+        }
+    }
+
+    /// Blocks until a connection slot is available.
+    fn acquire(&self) {
+        let mut available = self.available.lock().unwrap_or_else(PoisonError::into_inner);
+        while *available == 0 {
+            available = self.condvar.wait(available).unwrap_or_else(PoisonError::into_inner);
+        }
+        *available -= 1;
+    }
+
+    /// Releases a connection slot.
+    fn release(&self) {
+        let mut available = self.available.lock().unwrap_or_else(PoisonError::into_inner);
+        *available += 1;
+        self.condvar.notify_one();
+        drop(available);
+    }
+}
+
 /// Main server loop that accepts connections.
+///
+/// Concurrency is bounded by [`ConnectionLimiter`]: at most
+/// [`MAX_CONCURRENT_CONNECTIONS`] connections are handled at once. Excess
+/// connections queue in the kernel accept backlog, which prevents an
+/// unbounded thread-per-connection resource exhaustion.
 #[allow(clippy::needless_pass_by_value)] // Ownership needed - moved into thread
-fn server_loop<F>(listener: UnixListener, handler: Arc<F>)
-where F: Fn(IpcQuery) -> IpcResponse + Send + Sync + 'static {
+fn server_loop<F>(listener: UnixListener, running: &'static AtomicBool, handler: Arc<F>)
+where F: Fn(IpcMessage) -> IpcResponse + Send + Sync + 'static {
+    let limiter = Arc::new(ConnectionLimiter::new(MAX_CONCURRENT_CONNECTIONS));
+
     for stream in listener.incoming() {
-        if !SERVER_RUNNING.load(Ordering::SeqCst) {
+        if !running.load(Ordering::SeqCst) {
             break;
         }
 
-        match stream {
-            Ok(stream) => {
-                let handler = handler.clone();
-                // Handle each connection in a separate thread
-                thread::spawn(move || {
-                    handle_connection(stream, handler.as_ref());
-                });
-            }
+        let stream = match stream {
+            Ok(stream) => stream,
             Err(e) => {
                 tracing::warn!(error = %e, "ipc connection error");
+                continue;
             }
-        }
+        };
+
+        // Blocking acquire provides backpressure: never more than
+        // MAX_CONCURRENT_CONNECTIONS handler threads.
+        limiter.acquire();
+
+        let handler = handler.clone();
+        let limiter = limiter.clone();
+        thread::Builder::new()
+            .name("ipc-conn".to_string())
+            .spawn(move || {
+                handle_connection(stream, handler.as_ref());
+                limiter.release();
+            })
+            .expect("Failed to spawn IPC connection thread");
     }
 }
 
 /// Handles a single client connection.
+///
+/// Applies a read/write timeout and caps the request size so a misbehaving
+/// peer cannot hold a connection open indefinitely or force unbounded reads.
 #[allow(clippy::needless_pass_by_value)] // Ownership needed - stream is consumed
 fn handle_connection<F>(stream: UnixStream, handler: &F)
-where F: Fn(IpcQuery) -> IpcResponse {
-    // Set read timeout
-    let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(DEFAULT_TIMEOUT_MS)));
+where F: Fn(IpcMessage) -> IpcResponse {
+    let timeout = Duration::from_millis(DEFAULT_TIMEOUT_MS);
+    let _ = stream.set_read_timeout(Some(timeout));
+    let _ = stream.set_write_timeout(Some(timeout));
 
     let mut reader = BufReader::new(stream.try_clone().expect("Failed to clone stream"));
-    let mut line = String::new();
+    let deadline = Instant::now() + timeout;
+    let mut line = Vec::with_capacity(256);
 
-    // Read query line
-    if reader.read_line(&mut line).is_err() {
-        return;
-    }
+    // Reapply the remaining time before each byte. A peer that periodically
+    // sends one byte must still finish its request within the total deadline.
+    let read_result = loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "request deadline",
+            ));
+        }
+        let _ = reader.get_ref().set_read_timeout(Some(remaining));
 
-    // Parse query
-    let response = match serde_json::from_str::<IpcQuery>(line.trim()) {
-        Ok(query) => handler(query),
-        Err(e) => IpcResponse::error(format!("Invalid query: {e}")),
+        let mut byte = [0_u8; 1];
+        match reader.read(&mut byte) {
+            Ok(0) => break Ok(()),
+            Ok(_) if byte[0] == b'\n' => break Ok(()),
+            Ok(_) => {
+                line.push(byte[0]);
+                if line.len() > MAX_REQUEST_SIZE {
+                    break Ok(());
+                }
+            }
+            Err(err) => break Err(err),
+        }
+    };
+
+    let response = match read_result {
+        Err(_) => return,
+        Ok(()) if line.is_empty() => IpcResponse::error("Empty request"),
+        Ok(()) if line.len() > MAX_REQUEST_SIZE => IpcResponse::error("Request too large"),
+        Ok(()) => match serde_json::from_slice::<IpcMessage>(&line) {
+            Ok(message) => handler(message),
+            Err(e) => IpcResponse::error(format!("Invalid request: {e}")),
+        },
     };
 
     // Send response
@@ -336,10 +487,32 @@ impl std::error::Error for IpcError {}
 /// The response from the app, or an error if the app is not running.
 #[allow(clippy::needless_pass_by_value)] // Simpler API for callers
 pub fn send_query(query: IpcQuery) -> Result<IpcResponse, IpcError> {
+    send_message(IpcMessage::Query(query))
+}
+
+/// Sends a control command to the running app.
+///
+/// # Arguments
+///
+/// * `command` - The command to send.
+///
+/// # Returns
+///
+/// The ack/error response from the app, or an error if the app is not running.
+#[allow(clippy::needless_pass_by_value)] // Simpler API for callers
+pub fn send_command(command: IpcCommand) -> Result<IpcResponse, IpcError> {
+    send_message(IpcMessage::Command(command))
+}
+
+/// Sends a message to the running app and returns the response.
+///
+/// Automatically retries on transient connection failures (up to 3 attempts).
+#[allow(clippy::needless_pass_by_value)] // Simpler API for callers
+fn send_message(message: IpcMessage) -> Result<IpcResponse, IpcError> {
     let mut last_error = IpcError::AppNotRunning;
 
     for attempt in 0..MAX_RETRIES {
-        match send_query_once(&query) {
+        match send_message_once(&message) {
             Ok(response) => return Ok(response),
             Err(e) => {
                 last_error = e;
@@ -352,7 +525,7 @@ pub fn send_query(query: IpcQuery) -> Result<IpcResponse, IpcError> {
 
                 // Wait before retrying (except on last attempt)
                 if attempt < MAX_RETRIES - 1 {
-                    std::thread::sleep(std::time::Duration::from_millis(RETRY_DELAY_MS));
+                    std::thread::sleep(Duration::from_millis(RETRY_DELAY_MS));
                 }
             }
         }
@@ -361,8 +534,8 @@ pub fn send_query(query: IpcQuery) -> Result<IpcResponse, IpcError> {
     Err(last_error)
 }
 
-/// Sends a query once without retrying.
-fn send_query_once(query: &IpcQuery) -> Result<IpcResponse, IpcError> {
+/// Sends a message once without retrying.
+fn send_message_once(message: &IpcMessage) -> Result<IpcResponse, IpcError> {
     let socket_path = get_socket_path();
 
     // Check if socket exists
@@ -383,15 +556,15 @@ fn send_query_once(query: &IpcQuery) -> Result<IpcResponse, IpcError> {
     })?;
 
     // Set timeouts
-    let timeout = std::time::Duration::from_millis(DEFAULT_TIMEOUT_MS);
+    let timeout = Duration::from_millis(DEFAULT_TIMEOUT_MS);
     stream.set_read_timeout(Some(timeout)).map_err(IpcError::Io)?;
     stream.set_write_timeout(Some(timeout)).map_err(IpcError::Io)?;
 
-    // Send query
-    let query_json = serde_json::to_string(query)
-        .map_err(|e| IpcError::InvalidResponse(format!("Failed to serialize query: {e}")))?;
+    // Send message
+    let message_json = serde_json::to_string(message)
+        .map_err(|e| IpcError::InvalidResponse(format!("Failed to serialize message: {e}")))?;
 
-    writeln!(stream, "{query_json}").map_err(|e| {
+    writeln!(stream, "{message_json}").map_err(|e| {
         // Write errors often mean the connection dropped
         if e.kind() == std::io::ErrorKind::BrokenPipe {
             IpcError::AppNotRunning
@@ -425,7 +598,54 @@ pub fn is_app_running() -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::net::UnixStream;
+    use std::path::Path;
+    use std::sync::atomic::AtomicUsize;
+
     use super::*;
+
+    /// Test server handle that keeps the socket's temp dir alive.
+    struct TestServer {
+        path: PathBuf,
+        running: &'static AtomicBool,
+        handle: thread::JoinHandle<()>,
+        _dir: tempfile::TempDir,
+    }
+
+    /// Spawns a test server on a throwaway socket path.
+    fn spawn_test_server<F>(handler: F) -> TestServer
+    where F: Fn(IpcMessage) -> IpcResponse + Send + Sync + 'static {
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("test.sock");
+        let listener = UnixListener::bind(&socket_path).unwrap();
+        let running: &'static AtomicBool = Box::leak(Box::new(AtomicBool::new(true)));
+        let handler = Arc::new(handler);
+        let handle = thread::spawn(move || server_loop(listener, running, handler));
+        TestServer {
+            path: socket_path,
+            running,
+            handle,
+            _dir: dir,
+        }
+    }
+
+    /// Stops a test server and joins its accept-loop thread.
+    fn stop_test_server(server: TestServer) {
+        server.running.store(false, Ordering::SeqCst);
+        let _ = UnixStream::connect(&server.path);
+        server.handle.join().expect("test server thread panicked");
+    }
+
+    /// Sends a raw line to a socket and returns the response line.
+    fn send_raw(socket_path: &Path, payload: &str) -> String {
+        let mut stream = UnixStream::connect(socket_path).unwrap();
+        stream.set_read_timeout(Some(Duration::from_millis(5000))).unwrap();
+        writeln!(stream, "{payload}").unwrap();
+        let mut reader = BufReader::new(stream);
+        let mut response = String::new();
+        reader.read_line(&mut response).unwrap();
+        response
+    }
 
     #[test]
     fn test_socket_path() {
@@ -461,6 +681,131 @@ mod tests {
         let response = IpcResponse::error("Not found");
         let json = serde_json::to_string(&response).unwrap();
         assert_eq!(json, r#"{"error":"Not found"}"#);
+    }
+
+    #[test]
+    fn test_ipc_command_serialization() {
+        let command = IpcCommand::TilingWindowResize {
+            dimension: "width".to_string(),
+            amount: 40,
+        };
+        let json = serde_json::to_string(&command).unwrap();
+        assert_eq!(
+            json,
+            r#"{"type":"tilingWindowResize","dimension":"width","amount":40}"#
+        );
+
+        let command = IpcCommand::Reload;
+        let json = serde_json::to_string(&command).unwrap();
+        assert_eq!(json, r#"{"type":"reload"}"#);
+
+        let command = IpcCommand::TilingWorkspaceBalance;
+        let json = serde_json::to_string(&command).unwrap();
+        assert_eq!(json, r#"{"type":"tilingWorkspaceBalance"}"#);
+    }
+
+    #[test]
+    fn test_ipc_message_query_and_command_round_trip() {
+        let query_json = serde_json::to_string(&IpcMessage::Query(IpcQuery::Ping)).unwrap();
+        assert_eq!(query_json, r#"{"type":"ping"}"#);
+        assert!(matches!(
+            serde_json::from_str::<IpcMessage>(&query_json).unwrap(),
+            IpcMessage::Query(IpcQuery::Ping)
+        ));
+
+        let command_json = serde_json::to_string(&IpcMessage::Command(IpcCommand::Reload)).unwrap();
+        assert_eq!(command_json, r#"{"type":"reload"}"#);
+        assert!(matches!(
+            serde_json::from_str::<IpcMessage>(&command_json).unwrap(),
+            IpcMessage::Command(IpcCommand::Reload)
+        ));
+    }
+
+    #[test]
+    fn test_query_round_trip_over_socket() {
+        let server = spawn_test_server(|msg| match msg {
+            IpcMessage::Query(IpcQuery::Ping) => IpcResponse::success("pong"),
+            _ => IpcResponse::error("unexpected message"),
+        });
+
+        let response = send_raw(&server.path, r#"{"type":"ping"}"#);
+        assert_eq!(response.trim(), r#"{"data":"pong"}"#);
+
+        stop_test_server(server);
+    }
+
+    #[test]
+    fn test_command_round_trip_over_socket() {
+        let server = spawn_test_server(|msg| match msg {
+            IpcMessage::Command(IpcCommand::TilingWorkspaceBalance) => IpcResponse::success(true),
+            _ => IpcResponse::error("unexpected message"),
+        });
+
+        let response = send_raw(&server.path, r#"{"type":"tilingWorkspaceBalance"}"#);
+        assert_eq!(response.trim(), r#"{"data":true}"#);
+
+        stop_test_server(server);
+    }
+
+    #[test]
+    fn test_oversized_request_rejected() {
+        let server = spawn_test_server(|_| IpcResponse::success("should not be reached"));
+
+        let oversized = "A".repeat(MAX_REQUEST_SIZE + 1);
+        let response = send_raw(&server.path, &oversized);
+        assert!(
+            response.contains("Request too large"),
+            "expected size rejection, got: {response}"
+        );
+
+        stop_test_server(server);
+    }
+
+    #[test]
+    fn test_invalid_request_rejected() {
+        let server = spawn_test_server(|_| IpcResponse::success("should not be reached"));
+
+        let response = send_raw(&server.path, "not json at all");
+        assert!(
+            response.contains("Invalid request"),
+            "expected parse rejection, got: {response}"
+        );
+
+        stop_test_server(server);
+    }
+
+    #[test]
+    fn test_concurrent_connections_bounded() {
+        let in_flight_h = Arc::new(AtomicUsize::new(0));
+        let max_seen = Arc::new(AtomicUsize::new(0));
+        let max_seen_h = Arc::clone(&max_seen);
+        let server = spawn_test_server(move |_| {
+            let now = in_flight_h.fetch_add(1, Ordering::SeqCst) + 1;
+            max_seen_h.fetch_max(now, Ordering::SeqCst);
+            thread::sleep(Duration::from_millis(50));
+            in_flight_h.fetch_sub(1, Ordering::SeqCst);
+            IpcResponse::success(true)
+        });
+
+        let clients: Vec<_> = (0..MAX_CONCURRENT_CONNECTIONS + 2)
+            .map(|_| {
+                let path = server.path.clone();
+                thread::spawn(move || send_raw(&path, r#"{"type":"ping"}"#))
+            })
+            .collect();
+
+        for client in clients {
+            let response = client.join().expect("client thread panicked");
+            assert_eq!(response.trim(), r#"{"data":true}"#);
+        }
+
+        assert!(
+            max_seen.load(Ordering::SeqCst) <= MAX_CONCURRENT_CONNECTIONS,
+            "server exceeded the connection bound: {}",
+            max_seen.load(Ordering::SeqCst)
+        );
+
+        stop_test_server(server);
     }
 
     #[test]

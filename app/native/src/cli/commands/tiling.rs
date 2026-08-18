@@ -12,8 +12,7 @@ use tabled::{Table, Tabled};
 use super::types::{CliLayoutType, Direction};
 use crate::cli::output;
 use crate::error::StacheError;
-use crate::platform::ipc::{self, StacheNotification};
-use crate::platform::ipc_socket::{self, IpcError, IpcQuery, IpcResponse};
+use crate::platform::ipc_socket::{self, IpcCommand, IpcError, IpcQuery, IpcResponse};
 use crate::tiling;
 
 /// Tiling window manager subcommands.
@@ -746,21 +745,21 @@ fn execute_window(args: &TilingWindowArgs) -> Result<(), StacheError> {
 
     // 1. Focus (changes which window we're operating on)
     if let Some(target) = &args.focus {
-        ipc::send_notification(&StacheNotification::TilingWindowFocus(target.clone()));
+        send_tiling_command(IpcCommand::TilingWindowFocus { target: target.clone() })?;
         has_operation = true;
     }
 
     // 2. Swap position with another window
     if let Some(direction) = &args.swap {
-        ipc::send_notification(&StacheNotification::TilingWindowSwap(
-            format!("{direction:?}").to_lowercase(),
-        ));
+        send_tiling_command(IpcCommand::TilingWindowSwap {
+            direction: format!("{direction:?}").to_lowercase(),
+        })?;
         has_operation = true;
     }
 
     // 3. Apply floating preset
     if let Some(name) = &args.preset {
-        ipc::send_notification(&StacheNotification::TilingWindowPreset(name.clone()));
+        send_tiling_command(IpcCommand::TilingWindowPreset { preset: name.clone() })?;
         has_operation = true;
     }
 
@@ -782,10 +781,10 @@ fn execute_window(args: &TilingWindowArgs) -> Result<(), StacheError> {
                         "Invalid resize amount '{amount}'. Must be an integer."
                     ))
                 })?;
-                ipc::send_notification(&StacheNotification::TilingWindowResize {
+                send_tiling_command(IpcCommand::TilingWindowResize {
                     dimension: dimension.to_lowercase(),
                     amount: amount_i32,
-                });
+                })?;
             }
         }
         has_operation = true;
@@ -793,15 +792,15 @@ fn execute_window(args: &TilingWindowArgs) -> Result<(), StacheError> {
 
     // 5. Send to screen
     if let Some(screen) = &args.send_to_screen {
-        ipc::send_notification(&StacheNotification::TilingWindowSendToScreen(screen.clone()));
+        send_tiling_command(IpcCommand::TilingWindowSendToScreen { screen: screen.clone() })?;
         has_operation = true;
     }
 
     // 6. Send to workspace
     if let Some(workspace) = &args.send_to_workspace {
-        ipc::send_notification(&StacheNotification::TilingWindowSendToWorkspace(
-            workspace.clone(),
-        ));
+        send_tiling_command(IpcCommand::TilingWindowSendToWorkspace {
+            workspace: workspace.clone(),
+        })?;
         has_operation = true;
     }
 
@@ -824,25 +823,27 @@ fn execute_workspace(args: &TilingWorkspaceArgs) -> Result<(), StacheError> {
 
     // 1. Focus workspace (switch to it first)
     if let Some(workspace) = &args.focus {
-        ipc::send_notification(&StacheNotification::TilingFocusWorkspace(workspace.clone()));
+        send_tiling_command(IpcCommand::TilingFocusWorkspace { workspace: workspace.clone() })?;
         has_operation = true;
     }
 
     // 2. Change layout
     if let Some(layout) = &args.layout {
-        ipc::send_notification(&StacheNotification::TilingSetLayout(layout.as_str().to_string()));
+        send_tiling_command(IpcCommand::TilingSetLayout {
+            layout: layout.as_str().to_string(),
+        })?;
         has_operation = true;
     }
 
     // 3. Balance windows
     if args.balance {
-        ipc::send_notification(&StacheNotification::TilingWorkspaceBalance);
+        send_tiling_command(IpcCommand::TilingWorkspaceBalance)?;
         has_operation = true;
     }
 
     // 4. Send to screen
     if let Some(screen) = &args.send_to_screen {
-        ipc::send_notification(&StacheNotification::TilingWorkspaceSendToScreen(screen.clone()));
+        send_tiling_command(IpcCommand::TilingWorkspaceSendToScreen { screen: screen.clone() })?;
         has_operation = true;
     }
 
@@ -852,6 +853,18 @@ fn execute_workspace(args: &TilingWorkspaceArgs) -> Result<(), StacheError> {
         Err(StacheError::InvalidArguments(
             "No workspace operation specified. Use --help for available options.".to_string(),
         ))
+    }
+}
+
+/// Sends a control command to the desktop app over the IPC socket.
+///
+/// Control commands were migrated off `NSDistributedNotificationCenter` (which
+/// any process in the user session can spoof) onto the `0600` user-restricted
+/// socket. Fails if the desktop app is not running.
+fn send_tiling_command(command: IpcCommand) -> Result<(), StacheError> {
+    match ipc_socket::send_command(command).map_err(|e| StacheError::IpcError(e.to_string()))? {
+        ipc_socket::IpcResponse::Success { .. } => Ok(()),
+        ipc_socket::IpcResponse::Error { error } => Err(StacheError::IpcError(error)),
     }
 }
 

@@ -1,5 +1,5 @@
 pub mod components;
-mod ipc_listener;
+pub(crate) mod ipc_listener;
 mod menubar;
 mod screen;
 mod watcher;

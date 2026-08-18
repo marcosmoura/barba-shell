@@ -4,23 +4,25 @@
 //! the CLI and desktop app using macOS's distributed notification system.
 //!
 //! The notification center allows different processes to communicate without
-//! requiring a shared file or socket. This is ideal for CLI -> desktop app
-//! communication where the CLI needs to notify the running app about events.
+//! requiring a shared file or socket.
 //!
 //! # Security considerations
 //!
 //! `NSDistributedNotificationCenter` broadcasts notifications to **all** processes
-//! on the same user session. Any local process can:
+//! in the same user session. Any local process can:
 //!
 //! - **Observe** notifications: read workspace names, layout changes, etc.
 //! - **Post** notifications: send arbitrary commands (focus, swap, resize, etc.)
 //!
-//! This is acceptable for a single-user desktop app where all processes run under
-//! the same UID. However, be aware that a malicious local process could inject
-//! tiling commands. Sensitive operations should not rely solely on this channel.
+//! Control commands (tiling operations, reload) therefore **no longer travel over
+//! this channel**. They were migrated to the Unix Domain Socket IPC in
+//! [`super::ipc_socket`], which restricts access to the owning user via `0600`
+//! filesystem permissions and bounds concurrency, timeouts, and request sizes.
 //!
-//! For bidirectional queries with responses, use the Unix Domain Socket IPC
-//! in [`super::ipc_socket`], which restricts access via filesystem permissions.
+//! This channel is retained **only for benign events** (`WindowFocusChanged`,
+//! `WorkspaceChanged`) that external user tooling may post for the UI, and that
+//! merely refresh frontend state. `send_notification` must not be used for
+//! privileged operations.
 
 use std::sync::OnceLock;
 
@@ -113,27 +115,21 @@ impl StacheNotification {
         }
     }
 
-    /// Returns all possible notification name strings.
-    fn all_notification_names() -> Vec<String> {
-        let variants = [
+    /// Returns the names the desktop app observes over the distributed
+    /// notification channel.
+    ///
+    /// Only benign, frontend-refresh events are observed. Control commands
+    /// (tiling operations, reload) travel over the `0600` IPC socket instead
+    /// because distributed notifications can be spoofed by any process in the
+    /// user session.
+    fn observed_notification_names() -> Vec<String> {
+        [
             Self::WindowFocusChanged,
             Self::WorkspaceChanged(String::new()),
-            Self::Reload,
-            Self::TilingFocusWorkspace(String::new()),
-            Self::TilingSetLayout(String::new()),
-            Self::TilingWindowFocus(String::new()),
-            Self::TilingWindowSwap(String::new()),
-            Self::TilingWindowResize {
-                dimension: String::new(),
-                amount: 0,
-            },
-            Self::TilingWindowPreset(String::new()),
-            Self::TilingWindowSendToWorkspace(String::new()),
-            Self::TilingWindowSendToScreen(String::new()),
-            Self::TilingWorkspaceBalance,
-            Self::TilingWorkspaceSendToScreen(String::new()),
-        ];
-        variants.iter().map(Self::notification_name).collect()
+        ]
+        .iter()
+        .map(Self::notification_name)
+        .collect()
     }
 
     /// Parses a notification from its name and user info.
@@ -212,6 +208,11 @@ impl StacheNotification {
 /// This function posts a distributed notification that can be received by
 /// any process listening for Stache notifications.
 ///
+/// **Security note:** only benign events (`WindowFocusChanged`,
+/// `WorkspaceChanged`) should ever be posted through this channel. Any process
+/// in the user session can observe or spoof distributed notifications, so
+/// control commands must use [`crate::platform::ipc_socket::send_command`].
+///
 /// # Arguments
 ///
 /// * `notification` - The notification to send.
@@ -219,6 +220,7 @@ impl StacheNotification {
 /// # Returns
 ///
 /// `true` if the notification was sent successfully, `false` otherwise.
+#[allow(dead_code)] // Retained as the benign-event posting API for external tooling.
 pub fn send_notification(notification: &StacheNotification) -> bool {
     // SAFETY: We are calling well-defined Objective-C APIs via FFI:
     // - NSDistributedNotificationCenter is thread-safe and can be called from any thread
@@ -320,7 +322,7 @@ pub fn start_notification_listener() {
         // Create observer object
         let observer = create_notification_observer();
 
-        let notifications = StacheNotification::all_notification_names();
+        let notifications = StacheNotification::observed_notification_names();
 
         for notification_name in &notifications {
             let name = nsstring(notification_name);

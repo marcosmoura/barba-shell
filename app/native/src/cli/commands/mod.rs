@@ -15,7 +15,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::{Generator, Shell, generate};
 
 use crate::error::StacheError;
-use crate::platform::ipc::{self, StacheNotification};
+use crate::platform::ipc_socket::{self, IpcCommand, IpcError};
 use crate::{config, schema};
 
 pub mod audio;
@@ -151,14 +151,12 @@ impl Cli {
             Commands::Tiling(cmd) => tiling::execute(cmd),
             Commands::Config(cmd) => config_cmd::execute(cmd),
 
-            Commands::Reload => {
-                if !ipc::send_notification(&StacheNotification::Reload) {
-                    return Err(StacheError::IpcError(
-                        "Failed to send reload notification to Stache app".to_string(),
-                    ));
-                }
-                Ok(())
-            }
+            Commands::Reload => match ipc_socket::send_command(IpcCommand::Reload) {
+                Ok(_) | Err(IpcError::InvalidResponse(_)) => Ok(()),
+                Err(error) => Err(StacheError::IpcError(format!(
+                    "Failed to send reload command to Stache app: {error}"
+                ))),
+            },
 
             Commands::Schema => {
                 let schema_output = schema::print_schema();

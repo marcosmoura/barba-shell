@@ -43,13 +43,18 @@ fn load_base_modules(app: &App) {
     // Start watching the config file for changes
     config::watch_config_file(app.handle().clone());
 
-    // Start IPC socket server for CLI queries
-    platform::ipc_socket::init(|query| {
-        tiling::init::handle_ipc_query(&query).unwrap_or_else(|| {
-            platform::ipc_socket::IpcResponse::error(
-                "Tiling not initialized or runtime unavailable",
-            )
-        })
+    // Start IPC socket server for CLI queries and control commands
+    let app_handle = app.handle().clone();
+    platform::ipc_socket::init(move |message| match message {
+        platform::ipc_socket::IpcMessage::Query(query) => tiling::init::handle_ipc_query(&query)
+            .unwrap_or_else(|| {
+                platform::ipc_socket::IpcResponse::error(
+                    "Tiling not initialized or runtime unavailable",
+                )
+            }),
+        platform::ipc_socket::IpcMessage::Command(command) => {
+            modules::bar::ipc_listener::handle_command(&app_handle, command)
+        }
     });
 
     // Initialize system tray
@@ -177,7 +182,6 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|_app, _args, _| {
             // Single instance plugin ensures only one instance runs
         }))
-        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_zustand::init())
         .manage(bar::components::keepawake::KeepAwakeController::default())
         .plugin(tauri_plugin_shell::init())

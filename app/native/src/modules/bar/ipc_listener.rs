@@ -1,17 +1,26 @@
 //! IPC listener for CLI notifications.
 //!
-//! This module listens for distributed notifications from CLI commands
-//! and translates them into Tauri events that the frontend can handle.
+//! This module translates incoming CLI messages into app actions:
+//!
+//! - **Control commands** (tiling operations, reload) arrive over the `0600`
+//!   user-restricted IPC socket ([`crate::platform::ipc_socket`]).
+//! - **Benign events** (`WindowFocusChanged`, `WorkspaceChanged`) arrive over
+//!   `NSDistributedNotificationCenter` and only refresh frontend state.
+
+use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Runtime};
+use uuid::Uuid;
 
 use crate::events;
 use crate::modules::tiling;
+use crate::modules::tiling::actor::{QueryResult, StateActorHandle, StateMessage, StateQuery};
 use crate::platform::ipc::{self, StacheNotification};
+use crate::platform::ipc_socket::{IpcCommand, IpcResponse};
 
 /// Initializes the IPC listener for CLI notifications.
 ///
-/// This sets up observers for distributed notifications from CLI commands
+/// This sets up observers for distributed notifications from external tooling
 /// and translates them into Tauri events.
 ///
 /// # Arguments
@@ -25,6 +34,130 @@ pub fn init<R: Runtime>(app_handle: AppHandle<R>) {
 
     // Start listening for notifications
     ipc::start_notification_listener();
+}
+
+/// Dispatches a control command received over the IPC socket.
+///
+/// Returns an acknowledgement only after the actor has accepted the command.
+pub fn handle_command<R: Runtime>(app_handle: &AppHandle<R>, command: IpcCommand) -> IpcResponse {
+    if command == IpcCommand::Reload {
+        handle_notification(app_handle, StacheNotification::Reload);
+        return IpcResponse::success(serde_json::json!({ "queued": true }));
+    }
+
+    match execute_tiling_command(command) {
+        Ok(()) => IpcResponse::success(serde_json::json!({ "queued": true })),
+        Err(error) => IpcResponse::error(error),
+    }
+}
+
+fn get_tiling_handle() -> Result<StateActorHandle, String> {
+    if !tiling::init::is_initialized() {
+        return Err("Tiling is not initialized".to_string());
+    }
+
+    tiling::init::get_handle().ok_or_else(|| "Tiling handle is unavailable".to_string())
+}
+
+fn query_tiling(handle: &StateActorHandle, query: StateQuery) -> Result<QueryResult, String> {
+    let runtime =
+        build_tiling_runtime().ok_or_else(|| "Failed to create tiling runtime".to_string())?;
+    runtime
+        .block_on(handle.query_timeout(query, Duration::from_secs(5)))
+        .map_err(|error| error.to_string())
+}
+
+fn focused_workspace_id(handle: &StateActorHandle) -> Result<Uuid, String> {
+    query_tiling(handle, StateQuery::GetFocusedWorkspace)?
+        .into_workspace()
+        .flatten()
+        .map(|workspace| workspace.id)
+        .ok_or_else(|| "No focused workspace".to_string())
+}
+
+fn execute_tiling_command(command: IpcCommand) -> Result<(), String> {
+    let handle = get_tiling_handle()?;
+
+    match command {
+        IpcCommand::Reload => unreachable!("reload is handled before tiling dispatch"),
+        IpcCommand::TilingFocusWorkspace { workspace } => {
+            handle.switch_workspace(&workspace).map_err(|error| error.to_string())
+        }
+        IpcCommand::TilingSetLayout { layout } => {
+            let layout = serde_json::from_value(serde_json::json!(layout))
+                .map_err(|error| format!("Invalid layout: {error}"))?;
+            handle
+                .set_layout(focused_workspace_id(&handle)?, layout)
+                .map_err(|error| error.to_string())
+        }
+        IpcCommand::TilingWindowFocus { target } => {
+            let direction = tiling::actor::FocusDirection::parse(&target)
+                .ok_or_else(|| format!("Invalid focus direction: {target}"))?;
+            handle.focus_window(direction).map_err(|error| error.to_string())
+        }
+        IpcCommand::TilingWindowSwap { direction } => {
+            let direction = tiling::actor::FocusDirection::parse(&direction)
+                .ok_or_else(|| format!("Invalid swap direction: {direction}"))?;
+            handle.swap_window_in_direction(direction).map_err(|error| error.to_string())
+        }
+        IpcCommand::TilingWindowResize { dimension, amount } => handle
+            .resize_focused_window(&dimension, amount)
+            .map_err(|error| error.to_string()),
+        IpcCommand::TilingWindowPreset { preset } => {
+            handle.apply_preset(&preset).map_err(|error| error.to_string())
+        }
+        IpcCommand::TilingWindowSendToWorkspace { workspace } => {
+            let workspace_id =
+                query_tiling(&handle, StateQuery::GetWorkspaceByName { name: workspace })?
+                    .into_workspace()
+                    .flatten()
+                    .map(|workspace| workspace.id)
+                    .ok_or_else(|| "Workspace not found".to_string())?;
+            let window_id = query_tiling(&handle, StateQuery::GetFocusedWindow)?
+                .into_window()
+                .flatten()
+                .map(|window| window.id)
+                .ok_or_else(|| "No focused window".to_string())?;
+            handle
+                .send(StateMessage::MoveWindowToWorkspace { window_id, workspace_id })
+                .map_err(|error| error.to_string())
+        }
+        IpcCommand::TilingWindowSendToScreen { screen } => {
+            handle.send_window_to_screen(&screen).map_err(|error| error.to_string())
+        }
+        IpcCommand::TilingWorkspaceBalance => handle
+            .balance_workspace(focused_workspace_id(&handle)?)
+            .map_err(|error| error.to_string()),
+        IpcCommand::TilingWorkspaceSendToScreen { screen } => {
+            handle.send_workspace_to_screen(&screen).map_err(|error| error.to_string())
+        }
+    }
+}
+
+impl From<IpcCommand> for StacheNotification {
+    fn from(command: IpcCommand) -> Self {
+        match command {
+            IpcCommand::Reload => Self::Reload,
+            IpcCommand::TilingFocusWorkspace { workspace } => Self::TilingFocusWorkspace(workspace),
+            IpcCommand::TilingSetLayout { layout } => Self::TilingSetLayout(layout),
+            IpcCommand::TilingWindowFocus { target } => Self::TilingWindowFocus(target),
+            IpcCommand::TilingWindowSwap { direction } => Self::TilingWindowSwap(direction),
+            IpcCommand::TilingWindowResize { dimension, amount } => {
+                Self::TilingWindowResize { dimension, amount }
+            }
+            IpcCommand::TilingWindowPreset { preset } => Self::TilingWindowPreset(preset),
+            IpcCommand::TilingWindowSendToWorkspace { workspace } => {
+                Self::TilingWindowSendToWorkspace(workspace)
+            }
+            IpcCommand::TilingWindowSendToScreen { screen } => {
+                Self::TilingWindowSendToScreen(screen)
+            }
+            IpcCommand::TilingWorkspaceBalance => Self::TilingWorkspaceBalance,
+            IpcCommand::TilingWorkspaceSendToScreen { screen } => {
+                Self::TilingWorkspaceSendToScreen(screen)
+            }
+        }
+    }
 }
 
 fn build_tiling_runtime() -> Option<tokio::runtime::Runtime> {
@@ -354,6 +487,8 @@ fn handle_notification<R: Runtime>(app_handle: &AppHandle<R>, notification: Stac
 #[cfg(test)]
 mod tests {
     use crate::events;
+    use crate::platform::ipc::StacheNotification;
+    use crate::platform::ipc_socket::IpcCommand;
 
     #[test]
     fn test_tiling_runtime_can_be_created() {
@@ -369,6 +504,34 @@ mod tests {
         assert_eq!(
             events::spaces::WORKSPACE_CHANGED,
             "stache://spaces/workspace-changed"
+        );
+    }
+
+    #[test]
+    fn test_commands_map_to_notifications() {
+        assert_eq!(
+            StacheNotification::from(IpcCommand::Reload),
+            StacheNotification::Reload
+        );
+        assert_eq!(
+            StacheNotification::from(IpcCommand::TilingFocusWorkspace {
+                workspace: "coding".to_string(),
+            }),
+            StacheNotification::TilingFocusWorkspace("coding".to_string())
+        );
+        assert_eq!(
+            StacheNotification::from(IpcCommand::TilingWindowResize {
+                dimension: "width".to_string(),
+                amount: 40,
+            }),
+            StacheNotification::TilingWindowResize {
+                dimension: "width".to_string(),
+                amount: 40,
+            }
+        );
+        assert_eq!(
+            StacheNotification::from(IpcCommand::TilingWorkspaceBalance),
+            StacheNotification::TilingWorkspaceBalance
         );
     }
 }

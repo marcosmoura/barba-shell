@@ -48,12 +48,12 @@ mod tests {
     use smallvec::smallvec;
     use uuid::Uuid;
 
-    use super::*;
     use crate::modules::tiling::actor::StateActor;
     use crate::modules::tiling::identity::{AppIdentity, LaunchDateBits, WindowTarget};
     use crate::modules::tiling::state::{TilingState, Window, Workspace};
     use crate::modules::tiling::visibility::VisibilityRegistry;
 
+    #[allow(clippy::cast_precision_loss)] // test-only identity construction
     fn test_identity(pid: i32, v: u64) -> AppIdentity {
         AppIdentity {
             pid,

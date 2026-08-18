@@ -467,7 +467,7 @@ mod tests {
     }
 
     /// Restart commit wins before Exit claim; later Exit claim fails as too
-    /// late and cannot override RESTART_COMMITTED.
+    /// late and cannot override `RESTART_COMMITTED`.
     #[test]
     fn restart_commit_wins_before_exit_claim() {
         let state = AtomicU8::new(ARBITER_NONE);
@@ -483,7 +483,7 @@ mod tests {
     }
 
     /// Exactly one of multiple concurrent Exit callers can override
-    /// RESTART_PENDING.  Uses a barrier so both threads race to the CAS.
+    /// `RESTART_PENDING`.  Uses a barrier so both threads race to the CAS.
     #[test]
     fn concurrent_exit_override_restart() {
         use std::sync::Barrier;
@@ -510,8 +510,8 @@ mod tests {
         assert_eq!(state.load(Ordering::Acquire), ARBITER_EXIT_PENDING);
     }
 
-    /// Failed Restart dispatch release cannot clear EXIT_PENDING after
-    /// Exit already overrode RESTART_PENDING.
+    /// Failed Restart dispatch release cannot clear `EXIT_PENDING` after
+    /// Exit already overrode `RESTART_PENDING`.
     #[test]
     fn failed_restart_dispatch_cannot_clear_exit_pending() {
         let state = AtomicU8::new(ARBITER_NONE);
@@ -526,7 +526,7 @@ mod tests {
         assert!(is_current_on(&state, ShutdownAction::Exit));
     }
 
-    /// Failed Exit dispatch release cannot clear NATURAL_EXIT.
+    /// Failed Exit dispatch release cannot clear `NATURAL_EXIT`.
     #[test]
     fn failed_exit_release_cannot_clear_natural_exit() {
         // Simulate NATURAL_EXIT being set by establish_exit_precedence
@@ -538,8 +538,8 @@ mod tests {
         assert_eq!(state.load(Ordering::Acquire), ARBITER_NATURAL_EXIT);
     }
 
-    /// NATURAL_EXIT suppresses both pending Restart and pending Exit:
-    /// is_current returns false, commit fails, new claims rejected.
+    /// `NATURAL_EXIT` suppresses both pending Restart and pending Exit:
+    /// `is_current` returns false, commit fails, new claims rejected.
     #[test]
     fn natural_exit_suppresses_pending_actions() {
         let state = AtomicU8::new(ARBITER_NONE);
@@ -584,8 +584,8 @@ mod tests {
         assert!(!try_claim_restart_on(&state2));
     }
 
-    /// Commit fails when NATURAL_EXIT has been established (e.g.
-    /// RunEvent::Exit ran before a queued closure could commit).
+    /// Commit fails when `NATURAL_EXIT` has been established (e.g.
+    /// `RunEvent::Exit` ran before a queued closure could commit).
     #[test]
     fn commit_fails_after_natural_exit() {
         let state = AtomicU8::new(ARBITER_NONE);

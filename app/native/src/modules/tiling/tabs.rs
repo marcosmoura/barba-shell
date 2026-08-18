@@ -526,6 +526,7 @@ mod tests {
     use super::*;
     use crate::modules::tiling::identity::{AppIdentity, LaunchDateBits};
 
+    #[allow(clippy::cast_precision_loss)] // test-only identity construction
     fn identity(pid: i32, v: u64) -> AppIdentity {
         AppIdentity {
             pid,

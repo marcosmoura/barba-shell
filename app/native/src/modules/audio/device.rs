@@ -204,9 +204,7 @@ fn matches_pattern(device: &AudioDevice, pattern: &str, strategy: MatchStrategy)
         MatchStrategy::Exact => device_name_lower == pattern_lower,
         MatchStrategy::Contains => device_name_lower.contains(&pattern_lower),
         MatchStrategy::StartsWith => device_name_lower.starts_with(&pattern_lower),
-        MatchStrategy::Regex => {
-            Regex::new(pattern).ok().is_some_and(|re| re.is_match(&device.name))
-        }
+        MatchStrategy::Regex => Regex::new(pattern).is_ok_and(|re| re.is_match(&device.name)),
     }
 }
 

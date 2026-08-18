@@ -7,7 +7,7 @@
 //!
 //! ```text
 //! ┌─────────────────────────────────────────────────────────────────────────┐
-//! │                         init()                                           │
+//! │                         init()                                          │
 //! │  1. Create StateActor + Handle                                          │
 //! │  2. Create EventProcessor (with screen refresh rate batching)           │
 //! │  3. Create EffectSubscriber + Executor                                  │
@@ -1951,7 +1951,7 @@ mod tests {
         let latch = CompletionLatch::new();
         let latch_for_thread = latch.clone();
         let thread = std::thread::spawn(move || {
-            latch_for_thread.wait_timeout(Duration::from_secs(1));
+            let _ = latch_for_thread.wait_timeout(Duration::from_secs(1));
         });
         std::thread::sleep(Duration::from_millis(10));
         latch.mark_complete();

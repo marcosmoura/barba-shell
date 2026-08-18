@@ -545,6 +545,6 @@ mod tests {
         assert_eq!(removed.observer.0, 0xAAA as *mut c_void);
         assert!(state.identity_to_observer.contains_key(&b));
         assert!(state.observers.contains_key(&0xBBB));
-        assert!(state.observers.get(&0xAAA).is_none());
+        assert!(!state.observers.contains_key(&0xAAA));
     }
 }

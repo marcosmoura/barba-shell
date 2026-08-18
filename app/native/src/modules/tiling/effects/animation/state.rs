@@ -78,7 +78,7 @@ pub fn cancel_animation() { WAITING_COMMANDS.fetch_add(1, Ordering::Relaxed); }
 ///
 /// IMPORTANT: This MUST be called after every `cancel_animation()` call.
 pub fn begin_animation() {
-    let _ = WAITING_COMMANDS.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+    let _ = WAITING_COMMANDS.try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
         Some(current.saturating_sub(1))
     });
 }
@@ -173,6 +173,7 @@ pub fn reset_transient_state() {
 }
 
 #[cfg(test)]
+#[allow(clippy::redundant_pub_crate)] // re-exported crate-wide for cross-module test sync
 pub(crate) static TEST_ANIMATION_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 
 #[cfg(test)]

@@ -16,6 +16,9 @@ nursery = { level = "warn", priority = -1 }
 cargo = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 multiple_crate_versions = "allow"
+# These new nightly diagnostics have invalid automatic fixes for generic test values.
+assert_is_empty = "allow"
+suboptimal_flops = "allow"
 
 [workspace.lints.rust]
 unexpected_cfgs = { level = "allow", check-cfg = [

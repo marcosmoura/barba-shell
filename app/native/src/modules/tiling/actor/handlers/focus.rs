@@ -322,19 +322,19 @@ pub fn find_window_in_direction(
         // Calculate distance
         let dx = center_x - from_center_x;
         let dy = center_y - from_center_y;
-        let distance = dx * dx + dy * dy;
+        let distance = dy.mul_add(dy, dx * dx);
 
         // Apply alignment penalty (prefer windows aligned with direction)
         let weighted_distance = match direction {
             FocusDirection::Up | FocusDirection::Down => {
                 // Prefer vertically aligned windows
                 let alignment_penalty = dx.abs() * 2.0;
-                distance + alignment_penalty * alignment_penalty
+                alignment_penalty.mul_add(alignment_penalty, distance)
             }
             FocusDirection::Left | FocusDirection::Right => {
                 // Prefer horizontally aligned windows
                 let alignment_penalty = dy.abs() * 2.0;
-                distance + alignment_penalty * alignment_penalty
+                alignment_penalty.mul_add(alignment_penalty, distance)
             }
             _ => distance,
         };

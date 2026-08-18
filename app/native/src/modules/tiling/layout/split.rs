@@ -165,7 +165,10 @@ fn layout_horizontal_with_ratios(
         let ratio_width = (next_ratio - prev_ratio) * available_width;
 
         // Calculate x position (account for previous windows + gaps)
-        let x = (i as f64).mul_add(gaps.inner_h, screen_frame.x + prev_ratio * available_width);
+        let x = (i as f64).mul_add(
+            gaps.inner_h,
+            f64::mul_add(prev_ratio, available_width, screen_frame.x),
+        );
 
         let frame = Rect::new(x, screen_frame.y, ratio_width, screen_frame.height);
         result.push((id, frame));
@@ -198,7 +201,10 @@ fn layout_vertical_with_ratios(
         let ratio_height = (next_ratio - prev_ratio) * available_height;
 
         // Calculate y position (account for previous windows + gaps)
-        let y = (i as f64).mul_add(gaps.inner_v, screen_frame.y + prev_ratio * available_height);
+        let y = (i as f64).mul_add(
+            gaps.inner_v,
+            f64::mul_add(prev_ratio, available_height, screen_frame.y),
+        );
 
         let frame = Rect::new(screen_frame.x, y, screen_frame.width, ratio_height);
         result.push((id, frame));

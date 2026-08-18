@@ -228,11 +228,11 @@ impl VisibilityRegistry {
 }
 
 #[cfg(test)]
-
 mod registry_tests {
     use super::*;
     use crate::modules::tiling::identity::LaunchDateBits;
 
+    #[allow(clippy::cast_precision_loss)] // test-only identity construction
     fn bits(v: u64) -> LaunchDateBits {
         LaunchDateBits::from_time_interval_since_reference_date(v as f64).unwrap()
     }
@@ -272,6 +272,7 @@ mod registry_tests {
         assert!(reg.is_empty(), "late insert after seal is a no-op");
     }
 
+    #[allow(clippy::cast_sign_loss)] // test uses small positive pids as launch dates
     #[test]
     fn registry_thread_safety() {
         use std::sync::Arc;
@@ -342,6 +343,7 @@ mod restoration_tests {
         hidden: bool,
     }
 
+    #[allow(clippy::cast_precision_loss)] // test-only identity construction
     fn bits(v: u64) -> LaunchDateBits {
         LaunchDateBits::from_time_interval_since_reference_date(v as f64).unwrap()
     }
@@ -502,6 +504,7 @@ mod restoration_tests {
         });
         assert_eq!(summary.attempted, 2);
         assert_eq!(summary.restored, 2);
+        assert_eq!(restored.len(), 2);
         assert!(registry.is_empty());
     }
 

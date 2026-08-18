@@ -76,9 +76,8 @@ mod tests {
                 "test-watcher",
                 std::time::Duration::from_millis(100),
                 |sender| {
-                    let tx = sender.clone();
                     std::thread::spawn(move || {
-                        let _ = tx.send(());
+                        let _ = sender.send(());
                     });
                     Ok(())
                 },

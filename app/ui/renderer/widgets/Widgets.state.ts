@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useSuspenseQuery } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
@@ -38,6 +38,14 @@ export function useWidgets() {
   const [isAnimatingIn, setIsAnimatingIn] = useState(false);
 
   const contentRef = useRef<HTMLDivElement>(null);
+  const closeGenerationRef = useRef(0);
+
+  useEffect(
+    () => () => {
+      closeGenerationRef.current += 1;
+    },
+    [],
+  );
 
   const { data: barPosition } = useSuspenseQuery({
     queryKey: ['widgets-frame'],
@@ -85,6 +93,8 @@ export function useWidgets() {
         return;
       }
 
+      // Bump the generation so any in-flight close is cancelled.
+      const openGeneration = ++closeGenerationRef.current;
       const window = getCurrentWindow();
 
       // Set state to render the widget
@@ -93,6 +103,11 @@ export function useWidgets() {
 
       // Show window (ResizeObserver will handle proper sizing)
       await window.show();
+
+      // A close started while showing — don't trigger the enter animation.
+      if (openGeneration !== closeGenerationRef.current) {
+        return;
+      }
 
       // Trigger enter animation
       setIsAnimatingIn(true);
@@ -109,6 +124,7 @@ export function useWidgets() {
     }
 
     const window = getCurrentWindow();
+    const closeGeneration = ++closeGenerationRef.current;
 
     // Trigger exit animation
     setIsAnimatingIn(false);
@@ -116,13 +132,21 @@ export function useWidgets() {
     // Wait for animation to complete before hiding
     await new Promise((resolve) => setTimeout(resolve, transition.duration * 1000));
 
-    updateWindowFrame({ width: 0, height: 0 });
+    if (closeGeneration !== closeGenerationRef.current) {
+      return;
+    }
 
     // Hide window and reset state
     await window.hide();
+
+    // A new open may have started while hiding — don't clobber its state.
+    if (closeGeneration !== closeGenerationRef.current) {
+      return;
+    }
+
     setActiveWidget(null);
     setTriggerRect(null);
-  }, [barPosition, updateWindowFrame]);
+  }, [barPosition]);
 
   /**
    * Handles the toggle_widgets event from the bar.
@@ -140,17 +164,28 @@ export function useWidgets() {
 
   /**
    * ResizeObserver callback - updates window frame when content size changes.
+   *
+   * The callback is held in a ref so the debounced wrapper keeps a stable
+   * identity and always reads the latest window frame state.
    */
-  const handleContentResize = useDebounceCallback((size: { width?: number; height?: number }) => {
+  const updateWindowFrameRef = useRef(updateWindowFrame);
+
+  useEffect(() => {
+    updateWindowFrameRef.current = updateWindowFrame;
+  });
+
+  const handleContentResize = useCallback((size: { width?: number; height?: number }) => {
     if (size.width && size.height) {
-      updateWindowFrame({ width: size.width, height: size.height });
+      updateWindowFrameRef.current({ width: size.width, height: size.height });
     }
-  }, 4.17);
+  }, []);
+
+  const debouncedHandleContentResize = useDebounceCallback(handleContentResize, 4.17);
 
   useResizeObserver({
     ref: contentRef as React.RefObject<HTMLElement>,
     box: 'border-box',
-    onResize: handleContentResize,
+    onResize: debouncedHandleContentResize,
   });
 
   useTauriEvent<WidgetConfig>(WidgetsEvents.TOGGLE, handleToggle, 'widgets');

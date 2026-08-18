@@ -397,8 +397,15 @@ pub fn on_window_focused(state: &mut TilingState, window_id: u32) -> VisibilityD
         }
     }
 
-    // Notify subscriber that focus changed
-    if let Some(handle) = get_subscriber_handle() {
+    // Notify the subscriber about the focused workspace's layout so its
+    // border cache is populated before the focus change. Direct AX focus
+    // does not emit a visibility notification, so without this the border
+    // layout lookup would fall back to `Floating`.
+    if let Some(handle) = get_subscriber_handle()
+        && let Some(ws) = state.get_workspace(window.workspace_id)
+    {
+        handle.notify_focus_changed_with_layout(window.workspace_id, ws.layout);
+    } else if let Some(handle) = get_subscriber_handle() {
         handle.notify_focus_changed();
     }
 

@@ -147,6 +147,35 @@ impl SubscriberState {
             self.floating_windows.remove(&window_id);
         }
     }
+
+    /// Prunes cached state for a closed window.
+    ///
+    /// Removes the window's floating state (stale flags would otherwise be
+    /// inherited by a reused window ID) and clears a stale focused-window
+    /// target so no border refresh targets the destroyed window.
+    fn remove_window(&mut self, window_id: u32) {
+        self.floating_windows.remove(&window_id);
+        if self.focused_window.is_some_and(|target| target.window_id == window_id) {
+            self.focused_window = None;
+        }
+    }
+
+    /// Returns whether the focused window matches `target`.
+    ///
+    /// A notification about a window that is not focused yet (a focus-change
+    /// notification may still be queued) must not refresh the active border.
+    fn focuses_window(&self, target: &WindowTarget) -> bool {
+        self.focused_window.as_ref() == Some(target)
+    }
+
+    /// Returns whether the focused workspace matches `workspace_id`.
+    ///
+    /// A layout notification for a workspace that is not focused yet (a
+    /// focus-change notification may still be queued) must not refresh the
+    /// active border.
+    fn focuses_workspace(&self, workspace_id: Uuid) -> bool {
+        self.focused_workspace_id == Some(workspace_id)
+    }
 }
 
 // ============================================================================
@@ -162,8 +191,10 @@ pub enum SubscriberNotification {
         user_triggered: bool,
     },
 
-    /// Focus state changed.
-    FocusChanged,
+    /// Focus state changed, optionally including the focused workspace layout.
+    FocusChanged {
+        workspace_layout: Option<(Uuid, LayoutType)>,
+    },
 
     /// Workspace visibility changed.
     VisibilityChanged { workspace_id: Uuid, visible: bool },
@@ -179,6 +210,9 @@ pub enum SubscriberNotification {
         workspace_id: Uuid,
         layout: LayoutType,
     },
+
+    /// Window was destroyed (prune cached per-window state).
+    WindowDestroyed { window_id: u32 },
 
     /// Shutdown the subscriber.
     Shutdown,
@@ -225,8 +259,21 @@ impl EffectSubscriberHandle {
     }
 
     /// Notifies the subscriber that focus changed.
-    pub fn notify_focus_changed(&self) {
-        if let Err(e) = self.notification_tx.try_send(SubscriberNotification::FocusChanged) {
+    pub fn notify_focus_changed(&self) { self.notify_focus_changed_inner(None); }
+
+    /// Notifies the subscriber about a focus change and its workspace layout.
+    ///
+    /// Carrying both values in one message ensures a full queue cannot leave a
+    /// focus update using an out-of-date border layout cache.
+    pub fn notify_focus_changed_with_layout(&self, workspace_id: Uuid, layout: LayoutType) {
+        self.notify_focus_changed_inner(Some((workspace_id, layout)));
+    }
+
+    fn notify_focus_changed_inner(&self, workspace_layout: Option<(Uuid, LayoutType)>) {
+        if let Err(e) = self
+            .notification_tx
+            .try_send(SubscriberNotification::FocusChanged { workspace_layout })
+        {
             tracing::warn!("tiling: dropped FocusChanged notification: {e}");
         }
     }
@@ -264,6 +311,21 @@ impl EffectSubscriberHandle {
         {
             tracing::warn!(
                 "tiling: dropped WorkspaceLayoutChanged notification for workspace {workspace_id}: {e}"
+            );
+        }
+    }
+
+    /// Notifies the subscriber that a window was destroyed.
+    ///
+    /// The subscriber prunes cached per-window state (e.g. floating state)
+    /// so a reused window ID does not inherit stale flags.
+    pub fn notify_window_destroyed(&self, window_id: u32) {
+        if let Err(e) = self
+            .notification_tx
+            .try_send(SubscriberNotification::WindowDestroyed { window_id })
+        {
+            tracing::warn!(
+                "tiling: dropped WindowDestroyed notification for window {window_id}: {e}"
             );
         }
     }
@@ -331,7 +393,7 @@ impl EffectSubscriber {
         self.initialize().await;
 
         // Apply initial border colors based on focused workspace layout
-        self.apply_initial_border_colors().await;
+        self.apply_initial_border_colors();
 
         while let Some(notification) = self.notification_rx.recv().await {
             match notification {
@@ -373,7 +435,12 @@ impl EffectSubscriber {
                 self.handle_layout_changed(workspace_id, user_triggered).await
             }
 
-            SubscriberNotification::FocusChanged => self.handle_focus_changed().await,
+            SubscriberNotification::FocusChanged { workspace_layout } => {
+                if let Some((workspace_id, layout)) = workspace_layout {
+                    self.state.update_workspace_layout(workspace_id, layout);
+                }
+                self.handle_focus_changed().await
+            }
 
             SubscriberNotification::VisibilityChanged { workspace_id, visible } => {
                 self.handle_visibility_changed(workspace_id, visible).await
@@ -381,12 +448,35 @@ impl EffectSubscriber {
 
             SubscriberNotification::FloatingChanged { target, floating } => {
                 self.handle_floating_changed(target, floating);
-                self.refresh_active_border(self.state.focused_window).await
+                // The focused window's border depends on its floating state.
+                // Skip the refresh when `target` is not the focused window
+                // yet: the focus-change notification that makes it current
+                // may still be queued, and refreshing now would use a stale
+                // focused-window target.
+                if self.state.focuses_window(&target) {
+                    self.refresh_active_border(self.state.focused_window)
+                } else {
+                    Vec::new()
+                }
             }
 
             SubscriberNotification::WorkspaceLayoutChanged { workspace_id, layout } => {
                 self.handle_workspace_layout_changed(workspace_id, layout);
-                self.refresh_active_border(self.state.focused_window).await
+                // The focused window's border depends on its workspace's
+                // layout. Skip the refresh when the changed workspace is not
+                // the focused one: the focus change that makes it current may
+                // still be queued, and refreshing now would use stale focus
+                // state.
+                if self.state.focuses_workspace(workspace_id) {
+                    self.refresh_active_border(self.state.focused_window)
+                } else {
+                    Vec::new()
+                }
+            }
+
+            SubscriberNotification::WindowDestroyed { window_id } => {
+                self.state.remove_window(window_id);
+                Vec::new()
             }
 
             SubscriberNotification::Shutdown => Vec::new(),
@@ -476,7 +566,7 @@ impl EffectSubscriber {
 
         // Generate the active-border refresh effect (the executor validates
         // the exact target and invokes the border helper).
-        self.refresh_active_border(focused_window).await
+        self.refresh_active_border(focused_window)
     }
 
     /// Handles a visibility change notification.
@@ -665,8 +755,8 @@ impl EffectSubscriber {
     ///
     /// This should be called after `initialize()` to set up `JankyBorders`
     /// with the correct active color for the current state.
-    async fn apply_initial_border_colors(&self) {
-        let effects = self.refresh_active_border(self.state.focused_window).await;
+    fn apply_initial_border_colors(&self) {
+        let effects = self.refresh_active_border(self.state.focused_window);
         if !effects.is_empty() {
             let _ = self.executor.execute_batch(effects);
         }
@@ -676,29 +766,22 @@ impl EffectSubscriber {
     ///
     /// The executor validates the exact target before invoking the border
     /// helper; the subscriber never calls `borders::on_focus_changed` directly.
-    async fn refresh_active_border(
-        &self,
-        focused_window: Option<WindowTarget>,
-    ) -> Vec<TilingEffect> {
+    fn refresh_active_border(&self, focused_window: Option<WindowTarget>) -> Vec<TilingEffect> {
         let Some(target) = focused_window else {
             return Vec::new();
         };
 
-        let mut layout = LayoutType::Floating;
-        let mut is_window_floating = false;
-
-        if let Ok(QueryResult::Workspace(Some(workspace))) =
-            self.actor_handle.query(StateQuery::GetFocusedWorkspace).await
-        {
-            layout = workspace.layout;
-        }
-
-        // Check if the focused window itself is floating
-        if let Ok(QueryResult::Window(Some(window))) =
-            self.actor_handle.query(StateQuery::GetWindow { id: target.window_id }).await
-        {
-            is_window_floating = window.is_floating;
-        }
+        // These are maintained by the notifications that precede focus
+        // changes (the actor notifies the focused workspace's layout before
+        // the focus change, and window creations/toggles update the floating
+        // set). Avoid two more actor queries here: they can sit behind a
+        // geometry burst and make the visible focus response lag noticeably.
+        let layout = self
+            .state
+            .focused_workspace_id
+            .and_then(|id| self.state.workspace_layouts.get(&id).copied())
+            .unwrap_or(LayoutType::Floating);
+        let is_window_floating = self.state.floating_windows.contains(&target.window_id);
 
         vec![TilingEffect::RefreshActiveBorder {
             target,
@@ -800,6 +883,121 @@ mod tests {
     }
 
     #[test]
+    fn test_subscriber_state_remove_window_prunes_floating_and_focus() {
+        let mut state = SubscriberState::new();
+        state.set_window_floating(1, true);
+        state.set_window_floating(2, true);
+        state.focused_window = Some(t(1));
+
+        state.remove_window(1);
+
+        assert!(
+            !state.is_floating(1),
+            "closed window's floating flag must be pruned"
+        );
+        assert!(state.is_floating(2), "other windows must be unaffected");
+        assert_eq!(
+            state.focused_window, None,
+            "a closed focused window must not remain the refresh target"
+        );
+    }
+
+    #[test]
+    fn test_subscriber_state_focus_guards_match_only_current_focus() {
+        let mut state = SubscriberState::new();
+        let ws_id = Uuid::now_v7();
+        state.focused_window = Some(t(1));
+        state.focused_workspace_id = Some(ws_id);
+
+        assert!(state.focuses_window(&t(1)));
+        assert!(!state.focuses_window(&t(2)));
+        assert!(state.focuses_workspace(ws_id));
+        assert!(!state.focuses_workspace(Uuid::now_v7()));
+    }
+
+    fn test_subscriber(ws_id: Uuid, target: WindowTarget) -> EffectSubscriber {
+        let (tx, _rx) = mpsc::channel(16);
+        let actor_handle = StateActorHandle::new(tx);
+        let (mut subscriber, _handle, _latch) =
+            EffectSubscriber::new(actor_handle, EffectExecutor::new());
+        subscriber.state.focused_workspace_id = Some(ws_id);
+        subscriber.state.workspace_layouts.insert(ws_id, LayoutType::Dwindle);
+        subscriber.state.focused_window = Some(target);
+        subscriber
+    }
+
+    #[test]
+    fn refresh_active_border_uses_cached_workspace_layout_on_direct_focus() {
+        // Regression: after a direct AX focus (which emits no visibility
+        // notification), the actor notifies the focused workspace's layout
+        // BEFORE the focus change. The border refresh must pick up that
+        // cached layout instead of defaulting to Floating.
+        let ws_id = Uuid::now_v7();
+        let target = t(7);
+        let subscriber = test_subscriber(ws_id, target);
+
+        let effects = subscriber.refresh_active_border(Some(target));
+        assert_eq!(effects.len(), 1);
+        match &effects[0] {
+            TilingEffect::RefreshActiveBorder {
+                target: effect_target,
+                layout,
+                is_window_floating,
+            } => {
+                assert_eq!(*effect_target, target);
+                assert_eq!(*layout, LayoutType::Dwindle);
+                assert!(!is_window_floating);
+            }
+            _ => panic!("expected RefreshActiveBorder effect"),
+        }
+    }
+
+    #[test]
+    fn refresh_active_border_detects_floating_window_from_cache() {
+        let ws_id = Uuid::now_v7();
+        let target = t(7);
+        let mut subscriber = test_subscriber(ws_id, target);
+        subscriber.state.floating_windows.insert(target.window_id);
+
+        let effects = subscriber.refresh_active_border(Some(target));
+        match &effects[0] {
+            TilingEffect::RefreshActiveBorder { is_window_floating, .. } => {
+                assert!(is_window_floating);
+            }
+            _ => panic!("expected RefreshActiveBorder effect"),
+        }
+    }
+
+    #[test]
+    fn refresh_active_border_falls_back_to_floating_when_layout_unknown() {
+        // Fail-safe: an unknown focused workspace layout defaults to
+        // Floating. The actor now notifies the workspace layout before any
+        // focus change, so this only protects against startup races.
+        let target = t(7);
+        let (tx, _rx) = mpsc::channel(16);
+        let actor_handle = StateActorHandle::new(tx);
+        let (mut subscriber, _handle, _latch) =
+            EffectSubscriber::new(actor_handle, EffectExecutor::new());
+        subscriber.state.focused_workspace_id = Some(Uuid::now_v7());
+        subscriber.state.focused_window = Some(target);
+
+        let effects = subscriber.refresh_active_border(Some(target));
+        match &effects[0] {
+            TilingEffect::RefreshActiveBorder { layout, .. } => {
+                assert_eq!(*layout, LayoutType::Floating);
+            }
+            _ => panic!("expected RefreshActiveBorder effect"),
+        }
+    }
+
+    #[test]
+    fn refresh_active_border_no_effects_without_focus() {
+        let ws_id = Uuid::now_v7();
+        let subscriber = test_subscriber(ws_id, t(7));
+        assert!(subscriber.refresh_active_border(None).is_empty());
+    }
+
+    #[test]
     fn test_subscriber_handle_send() {
         let (tx, mut rx) = mpsc::channel(10);
         let handle = EffectSubscriberHandle { notification_tx: tx };
@@ -812,6 +1010,22 @@ mod tests {
             SubscriberNotification::LayoutChanged { workspace_id, user_triggered } => {
                 assert_eq!(workspace_id, ws_id);
                 assert!(user_triggered);
+            }
+            _ => panic!("Wrong notification type"),
+        }
+    }
+
+    #[test]
+    fn test_subscriber_handle_window_destroyed_notification() {
+        let (tx, mut rx) = mpsc::channel(10);
+        let handle = EffectSubscriberHandle { notification_tx: tx };
+
+        handle.notify_window_destroyed(42);
+
+        let notification = rx.try_recv().unwrap();
+        match notification {
+            SubscriberNotification::WindowDestroyed { window_id } => {
+                assert_eq!(window_id, 42);
             }
             _ => panic!("Wrong notification type"),
         }

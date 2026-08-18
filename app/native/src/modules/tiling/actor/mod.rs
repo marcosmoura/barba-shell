@@ -171,11 +171,13 @@ impl StateActor {
                     tracing::debug!(
                         "tiling: window {window_id} was in workspace {ws_id}, notifying subscriber"
                     );
-                    // Notify subscriber to recompute layout for the affected workspace
+                    // Notify subscriber to prune per-window cache state and
+                    // recompute layout for the affected workspace
                     if let Some(handle) = get_subscriber_handle() {
                         tracing::debug!(
                             "tiling: sending layout_changed notification to subscriber for workspace {ws_id}"
                         );
+                        handle.notify_window_destroyed(window_id);
                         handle.notify_layout_changed(ws_id, false);
                     } else {
                         tracing::warn!(
@@ -940,8 +942,12 @@ impl StateActor {
         }
 
         let mut affected_workspaces: HashSet<Uuid> = HashSet::new();
+        let subscriber_handle = crate::modules::tiling::init::get_subscriber_handle();
         for wid in &window_ids {
             invalidate_window(WindowTarget { identity, window_id: *wid });
+            if let Some(handle) = &subscriber_handle {
+                handle.notify_window_destroyed(*wid);
+            }
             self.state.remove_window_from_focus_history(*wid);
             if let Some(ws_id) = self.state.get_window(*wid).map(|w| w.workspace_id) {
                 affected_workspaces.insert(ws_id);
@@ -967,7 +973,7 @@ impl StateActor {
         for wid in &window_ids {
             self.state.remove_window(*wid);
         }
-        if let Some(handle) = crate::modules::tiling::init::get_subscriber_handle() {
+        if let Some(handle) = subscriber_handle {
             for ws_id in &affected_workspaces {
                 handle.notify_layout_changed(*ws_id, false);
             }
@@ -986,6 +992,7 @@ mod tests {
     use crate::modules::tiling::identity::{AppIdentity, LaunchDateBits};
     use crate::modules::tiling::state::{Window, Workspace};
 
+    #[allow(clippy::cast_precision_loss)] // test-only identity construction
     fn test_identity(pid: i32, v: u64) -> AppIdentity {
         AppIdentity {
             pid,

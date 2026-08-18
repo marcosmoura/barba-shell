@@ -115,7 +115,6 @@
   "bundle": {
     "active": true,
     "targets": ["app"],
-    "externalBin": ["binaries/media-control"],
     "icon": [
       "icons/32x32.png",
       "icons/64x64.png",

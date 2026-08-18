@@ -145,9 +145,61 @@ fn image_format_from_mime(mime: &str) -> Option<ImageFormat> {
     }
 }
 
+/// Maximum size of the base64-encoded artwork string.
+///
+/// Artwork comes from the `media-control` sidecar and can be player-controlled;
+/// the cap bounds memory usage before any base64 decoding happens.
+const MAX_ARTWORK_ENCODED_BYTES: usize = 16 * 1024 * 1024;
+
+/// Maximum decoded artwork size in bytes.
+const MAX_ARTWORK_DECODED_BYTES: usize = 12 * 1024 * 1024;
+
+/// Maximum artwork dimension in pixels (either axis).
+///
+/// The full image is decoded to extract the artwork, so decompression bombs
+/// (tiny files that expand to enormous bitmaps) are rejected via the header
+/// dimensions *before* the expensive pixel decode.
+const MAX_ARTWORK_DIMENSION: u32 = 8192;
+
+/// Maximum decoded pixel count, bounding an RGBA allocation to roughly 64 MiB.
+const MAX_ARTWORK_PIXELS: u64 = 16 * 1024 * 1024;
+
+/// Decodes artwork only if it is within the size and dimension limits.
+///
+/// Returns `None` for anything that is not a supported image, exceeds the
+/// payload caps, or is a decompression bomb.
+fn decode_and_check_artwork(art: &str, image_format: ImageFormat) -> Option<image::DynamicImage> {
+    if art.len() > MAX_ARTWORK_ENCODED_BYTES {
+        return None;
+    }
+
+    let mut buffer = Vec::with_capacity(4096);
+    if STANDARD.decode_vec(art, &mut buffer).is_err() {
+        return None;
+    }
+    if buffer.len() > MAX_ARTWORK_DECODED_BYTES {
+        return None;
+    }
+
+    // Read only the header dimensions; this avoids decoding full pixel data
+    // for images that exceed the dimension cap.
+    let cursor = std::io::Cursor::new(&buffer);
+    let reader = image::ImageReader::with_format(cursor, image_format);
+    let Ok((width, height)) = reader.into_dimensions() else {
+        return None;
+    };
+    if width > MAX_ARTWORK_DIMENSION
+        || height > MAX_ARTWORK_DIMENSION
+        || u64::from(width) * u64::from(height) > MAX_ARTWORK_PIXELS
+    {
+        return None;
+    }
+
+    image::load_from_memory_with_format(&buffer, image_format).ok()
+}
+
 fn save_artwork(state: &Map<String, Value>) -> io::Result<Option<String>> {
     static CACHE_DIR_CREATED: OnceLock<()> = OnceLock::new();
-    static DECODE_BUFFER: OnceLock<std::sync::Mutex<Vec<u8>>> = OnceLock::new();
 
     let Some(Value::String(art)) = state.get("artworkData") else {
         return Ok(None);
@@ -172,19 +224,9 @@ fn save_artwork(state: &Map<String, Value>) -> io::Result<Option<String>> {
         }
     }
 
-    let decode_buffer =
-        DECODE_BUFFER.get_or_init(|| std::sync::Mutex::new(Vec::with_capacity(4096)));
-    let mut buffer = decode_buffer.lock().unwrap_or_else(PoisonError::into_inner);
-    buffer.clear();
-
-    if STANDARD.decode_vec(art, &mut buffer).is_err() {
-        return Ok(None);
-    }
-
-    let Ok(img) = image::load_from_memory_with_format(&buffer, image_format) else {
+    let Some(img) = decode_and_check_artwork(art, image_format) else {
         return Ok(None);
     };
-    drop(buffer);
 
     let (enc_bytes, _ext) = resize_artwork(&img)?;
     let base64_encoded = STANDARD.encode(enc_bytes);
@@ -299,14 +341,17 @@ fn process_stream_output(line: &str, state: &mut Map<String, Value>, window: &We
 
 #[allow(clippy::needless_pass_by_value)]
 fn start_streaming(app: AppHandle, window: WebviewWindow) {
-    let args = ["stream", "--no-diff"];
-    let sidecar = match app.shell().sidecar("media-control") {
-        Ok(cmd) => cmd.args(args),
-        Err(err) => {
-            tracing::error!(error = %err, "failed to create media-control sidecar");
-            return;
-        }
+    let Some((adapter, framework, test_client)) = media_control_paths() else {
+        tracing::error!("failed to resolve media-control resources");
+        return;
     };
+    let sidecar = app
+        .shell()
+        .command("/usr/bin/perl")
+        .arg(adapter)
+        .arg(framework)
+        .arg(test_client)
+        .args(["stream", "--no-diff"]);
     let spawn_result = sidecar.spawn();
     let Ok((mut rx, child)) = spawn_result else {
         if let Err(err) = spawn_result {
@@ -349,6 +394,29 @@ fn start_streaming(app: AppHandle, window: WebviewWindow) {
     let _ = child.kill();
 }
 
+fn media_control_paths() -> Option<(std::path::PathBuf, std::path::PathBuf, std::path::PathBuf)> {
+    #[cfg(debug_assertions)]
+    {
+        let resources = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("resources");
+        let paths = (
+            resources.join("lib/media-control/mediaremote-adapter.pl"),
+            resources.join("Frameworks/MediaRemoteAdapter.framework"),
+            resources.join("lib/media-control/MediaRemoteAdapterTestClient"),
+        );
+        if paths.0.is_file() && paths.1.is_dir() && paths.2.is_file() {
+            return Some(paths);
+        }
+    }
+
+    let contents = std::env::current_exe().ok()?.parent()?.parent()?.to_path_buf();
+    let paths = (
+        contents.join("lib/media-control/mediaremote-adapter.pl"),
+        contents.join("Frameworks/MediaRemoteAdapter.framework"),
+        contents.join("lib/media-control/MediaRemoteAdapterTestClient"),
+    );
+    (paths.0.is_file() && paths.1.is_dir() && paths.2.is_file()).then_some(paths)
+}
+
 /// Initialize the media component.
 ///
 /// Spawns a background thread that streams media control events and processes
@@ -361,14 +429,24 @@ pub fn init(window: &WebviewWindow) {
 
 #[cfg(test)]
 mod tests {
+    use base64::Engine as _;
     use image::ImageFormat;
     use serde_json::{Map, Value, json};
 
     use super::{
-        UNKNOWN, calculate_state_hash, cleanup_string_for_filename, get_cache_dir, get_cache_path,
-        get_current_media_info, image_format_from_mime, parse_json, parse_output,
-        set_last_media_payload,
+        MAX_ARTWORK_DECODED_BYTES, MAX_ARTWORK_DIMENSION, MAX_ARTWORK_ENCODED_BYTES, STANDARD,
+        UNKNOWN, calculate_state_hash, cleanup_string_for_filename, decode_and_check_artwork,
+        get_cache_dir, get_cache_path, get_current_media_info, image_format_from_mime, parse_json,
+        parse_output, set_last_media_payload,
     };
+
+    fn encode_png(width: u32, height: u32) -> String {
+        let img = image::DynamicImage::new_rgba8(width, height);
+        let mut png = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        STANDARD.encode(&png)
+    }
 
     #[test]
     fn test_cleanup_string_for_filename() {
@@ -874,6 +952,75 @@ mod tests {
         let dir1 = get_cache_dir();
         let dir2 = get_cache_dir();
         assert_eq!(dir1, dir2);
+    }
+
+    // ========================================================================
+    // decode_and_check_artwork guards
+    // ========================================================================
+
+    #[test]
+    fn test_artwork_valid_png_decodes() {
+        let art = encode_png(8, 8);
+        let decoded = decode_and_check_artwork(&art, ImageFormat::Png);
+        assert!(decoded.is_some());
+        let decoded = decoded.unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (8, 8));
+    }
+
+    #[test]
+    fn test_artwork_invalid_base64_rejected() {
+        assert!(decode_and_check_artwork("not base64!", ImageFormat::Png).is_none());
+    }
+
+    #[test]
+    fn test_artwork_oversized_encoded_rejected() {
+        let oversized = "A".repeat(MAX_ARTWORK_ENCODED_BYTES + 1);
+        assert!(decode_and_check_artwork(&oversized, ImageFormat::Png).is_none());
+    }
+
+    #[test]
+    fn test_artwork_oversized_decoded_rejected() {
+        // 0xFF repeats decode to non-zero bytes without valid image structure;
+        // oversized payload is rejected on decoded length, not on image validity.
+        let art = STANDARD.encode(vec![0xFF; MAX_ARTWORK_DECODED_BYTES + 1]);
+        assert!(decode_and_check_artwork(&art, ImageFormat::Png).is_none());
+    }
+
+    #[test]
+    fn test_artwork_oversized_dimensions_rejected() {
+        // Patch the IHDR width field of a valid 1x1 PNG to a huge value so the
+        // header reports a decompression-bomb dimension without needing pixels.
+        let img = image::DynamicImage::new_rgba8(1, 1);
+        let mut png = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        png[16..20].copy_from_slice(&(MAX_ARTWORK_DIMENSION + 1).to_be_bytes());
+        let art = STANDARD.encode(&png);
+        assert!(decode_and_check_artwork(&art, ImageFormat::Png).is_none());
+    }
+
+    #[test]
+    fn test_artwork_height_limit_rejected() {
+        let img = image::DynamicImage::new_rgba8(1, 1);
+        let mut png = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        png[20..24].copy_from_slice(&(MAX_ARTWORK_DIMENSION + 1).to_be_bytes());
+        let art = STANDARD.encode(&png);
+        assert!(decode_and_check_artwork(&art, ImageFormat::Png).is_none());
+    }
+
+    #[test]
+    fn test_artwork_pixel_limit_rejected() {
+        let img = image::DynamicImage::new_rgba8(1, 1);
+        let mut png = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let dimension = 4097_u32;
+        png[16..20].copy_from_slice(&dimension.to_be_bytes());
+        png[20..24].copy_from_slice(&dimension.to_be_bytes());
+        let art = STANDARD.encode(&png);
+        assert!(decode_and_check_artwork(&art, ImageFormat::Png).is_none());
     }
 
     #[test]

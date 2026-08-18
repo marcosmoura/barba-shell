@@ -92,7 +92,24 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": {
+        "default-src": "'self'",
+        "connect-src": [
+          "ipc:",
+          "http://ipc.localhost",
+          "https://api.open-meteo.com",
+          "https://geocoding-api.open-meteo.com",
+          "https://weather.visualcrossing.com",
+          "https://ipapi.co",
+          "https://ipinfo.io"
+        ],
+        "img-src": ["'self'", "data:", "blob:"],
+        "style-src": ["'self'", "'unsafe-inline'"],
+        "font-src": ["'self'", "data:"],
+        "object-src": "'none'",
+        "base-uri": "'none'",
+        "frame-src": "'none'"
+      }
     }
   },
   "bundle": {

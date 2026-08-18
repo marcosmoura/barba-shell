@@ -15,7 +15,7 @@
 use std::ffi::CString;
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{OnceLock, mpsc};
 use std::time::{Duration, Instant};
 
@@ -41,14 +41,9 @@ const JANKY_BORDERS_SERVICE: &str = "git.felix.borders";
 /// Low-rate animation avoids flooding `JankyBorders`' FIFO Mach queue.
 const BORDER_ANIMATION_FPS: u64 = 8;
 const BORDER_ANIMATION_FRAME_DURATION_MS: u64 = 1_000 / BORDER_ANIMATION_FPS;
-const BORDER_FOCUS_PRIORITY_PAUSE_MS: u64 = 150;
 
 const fn animation_frame_duration() -> Duration {
     Duration::from_millis(BORDER_ANIMATION_FRAME_DURATION_MS)
-}
-
-const fn focus_priority_pause_duration() -> Duration {
-    Duration::from_millis(BORDER_FOCUS_PRIORITY_PAUSE_MS)
 }
 
 // ============================================================================
@@ -71,10 +66,22 @@ fn get_mach_port() -> &'static Mutex<Option<u32>> { MACH_PORT.get_or_init(|| Mut
 // Animation Runner (single background thread with command queue)
 // ============================================================================
 
+/// Monotonic epoch bumped on every border update so the animation runner can
+/// drop frames belonging to superseded updates (their base command already
+/// replaced the border state).
+static ANIMATION_EPOCH: AtomicU64 = AtomicU64::new(0);
+
+/// Serializes the focus command with animation frames so a frame that passed
+/// its epoch check cannot overwrite a newly focused border.
+static BORDER_SEND_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn get_border_send_lock() -> &'static Mutex<()> { BORDER_SEND_LOCK.get_or_init(|| Mutex::new(())) }
+
 /// Commands sent to the animation runner thread.
 enum AnimationCommand {
     Update {
-        args: Vec<String>,
+        /// Epoch at queue time; stale if it differs from `ANIMATION_EPOCH`.
+        epoch: u64,
         animation: Option<(GradientConfig, BorderAnimationConfig)>,
     },
 }
@@ -118,7 +125,7 @@ fn animation_runner(rx: mpsc::Receiver<AnimationCommand>) {
     }
 }
 
-/// Handles a single `Update` — sends the base config and runs the animation.
+/// Handles a single `Update` — drives the animation for the queued command.
 /// Returns `Some(command)` if `run_animation` consumed a newer command
 /// from the channel without it being processed by the outer loop.
 fn process_update(
@@ -130,14 +137,10 @@ fn process_update(
         return None;
     }
 
-    let AnimationCommand::Update { args, animation } = cmd;
-    *get_last_command().lock() = String::new();
-    if !send_command(&args) {
-        tracing::warn!("tiling: FAILED to send border command");
-    }
+    let AnimationCommand::Update { epoch, animation } = cmd;
 
     if let Some((gradient, config)) = animation {
-        run_animation(rx, &gradient, &config)
+        run_animation(rx, &gradient, &config, epoch)
     } else {
         None
     }
@@ -149,6 +152,7 @@ fn run_animation(
     rx: &mpsc::Receiver<AnimationCommand>,
     gradient: &GradientConfig,
     animation: &BorderAnimationConfig,
+    epoch: u64,
 ) -> Option<AnimationCommand> {
     let Ok(from) = parse_hex_color(&gradient.from) else {
         return None;
@@ -165,10 +169,6 @@ fn run_animation(
     let mut forward = true;
     let mut start = Instant::now();
 
-    if let Some(cmd) = wait_for_focus_priority_pause(rx) {
-        return Some(cmd);
-    }
-
     loop {
         let raw_progress = (start.elapsed().as_secs_f64() / duration.as_secs_f64()).min(1.0);
         let eased = apply_easing(raw_progress, easing);
@@ -177,6 +177,11 @@ fn run_animation(
         let active_color = animated_gradient_color(&from, &to, angle, progress);
         if let Some(cmd) = take_queued_animation_command(rx) {
             return Some(cmd);
+        }
+        let _send_lock = get_border_send_lock().lock();
+        if ANIMATION_EPOCH.load(Ordering::SeqCst) != epoch {
+            tracing::trace!("tiling: dropping stale border animation frames (epoch {epoch})");
+            return None;
         }
         let _ = send_animation_frame(&[format!("active_color={active_color}")]);
 
@@ -202,12 +207,6 @@ fn wait_for_animation_command(
         Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
         Err(err @ mpsc::RecvTimeoutError::Disconnected) => Err(err),
     }
-}
-
-fn wait_for_focus_priority_pause(
-    rx: &mpsc::Receiver<AnimationCommand>,
-) -> Option<AnimationCommand> {
-    wait_for_animation_command(rx, focus_priority_pause_duration()).ok().flatten()
 }
 
 fn take_queued_animation_command(
@@ -546,21 +545,10 @@ fn send_animation_frame_with(
     args: &[String],
     mut send_mach_fn: impl FnMut(&[String]) -> bool,
 ) -> bool {
-    let key = command_key(args);
-
-    {
-        let last = get_last_command().lock();
-        if *last == key {
-            return true;
-        }
-    }
-
-    if send_mach_fn(args) {
-        *get_last_command().lock() = key;
-        return true;
-    }
-
-    false
+    // Animation frames must not replace the base configuration in the command
+    // cache. That configuration is what lets repeated focus changes skip a
+    // needless JankyBorders reconfiguration.
+    send_mach_fn(args)
 }
 
 /// Builds the blacklist string for `JankyBorders`.
@@ -681,15 +669,19 @@ static PAUSED: AtomicBool = AtomicBool::new(false);
 /// stale borders linger on screen.
 pub fn pause() {
     PAUSED.store(true, Ordering::SeqCst);
-    *get_last_command().lock() = String::new();
 
     let args = vec![
         "width=0".to_string(),
         "active_color=0x00000000".to_string(),
         "inactive_color=0x00000000".to_string(),
     ];
-    if !send_command(&args) {
-        tracing::debug!("tiling: borders pause hide command not sent (borders unavailable)");
+    {
+        let _send_lock = get_border_send_lock().lock();
+        ANIMATION_EPOCH.fetch_add(1, Ordering::SeqCst);
+        *get_last_command().lock() = String::new();
+        if !send_command(&args) {
+            tracing::debug!("tiling: borders pause hide command not sent (borders unavailable)");
+        }
     }
 
     tracing::debug!("tiling: borders paused");
@@ -705,6 +697,35 @@ pub fn resume() {
 /// Returns whether the border system is paused.
 #[must_use]
 pub fn is_paused() -> bool { PAUSED.load(Ordering::SeqCst) }
+
+/// Prepares a focus-change border update under the send lock.
+///
+/// Returns `Some(epoch)` when the base command was sent (the animation for
+/// that epoch may run). Returns `None` when the command was deduplicated
+/// against the cache or the send failed; in both cases no animation should
+/// be queued.
+///
+/// On a failed send the cache is cleared: an interrupted animation can leave
+/// the active color mid-gradient, so the cached command no longer reflects
+/// the borders state and the next focus change (even with identical
+/// arguments) must retry the base command.
+fn prepare_focus_command(args: &[String], send: impl FnOnce(&[String]) -> bool) -> Option<u64> {
+    let _send_lock = get_border_send_lock().lock();
+    if *get_last_command().lock() == command_key(args) {
+        return None;
+    }
+
+    // Invalidate any existing animation before the base command so no stale
+    // frame can overwrite the new configuration.
+    let epoch = ANIMATION_EPOCH.fetch_add(1, Ordering::SeqCst) + 1;
+    if !send(args) {
+        tracing::warn!("tiling: FAILED to send border command");
+        *get_last_command().lock() = String::new();
+        return None;
+    }
+    *get_last_command().lock() = command_key(args);
+    Some(epoch)
+}
 
 /// Updates borders based on workspace layout.
 ///
@@ -763,10 +784,17 @@ pub fn on_focus_changed(layout: LayoutType, is_window_floating: bool) {
 
     let animation = animated_gradient_parts(active_config).map(|(g, a)| (g.clone(), a.clone()));
 
+    // JankyBorders tracks the active window itself. Avoid reconfiguring it
+    // when a focus change stays in the same border state; that work delays its
+    // native focus render and is especially costly while a gradient animates.
+    let Some(epoch) = prepare_focus_command(&args, send_command) else {
+        return;
+    };
+
     init_animation_runner();
 
     let tx = get_animation_tx().lock().as_ref().cloned();
-    let command = AnimationCommand::Update { args, animation };
+    let command = AnimationCommand::Update { epoch, animation };
 
     let Some(tx) = tx else {
         tracing::warn!("tiling: border animation runner not available");
@@ -782,8 +810,12 @@ pub fn on_focus_changed(layout: LayoutType, is_window_floating: bool) {
 ///
 /// Call this when configuration is reloaded.
 pub fn refresh() {
-    // Clear cache to force re-send
-    *get_last_command().lock() = String::new();
+    {
+        // Stop an existing animation before applying reloaded settings.
+        let _send_lock = get_border_send_lock().lock();
+        ANIMATION_EPOCH.fetch_add(1, Ordering::SeqCst);
+        *get_last_command().lock() = String::new();
+    }
 
     // Re-initialize
     let _ = init();
@@ -796,6 +828,10 @@ pub fn refresh() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Serializes tests that mutate the shared border globals
+    /// (`LAST_COMMAND`, `ANIMATION_EPOCH`), which run in parallel by default.
+    static BORDER_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_rgba_to_hex() {
@@ -934,6 +970,7 @@ mod tests {
 
     #[test]
     fn test_failed_commands_are_not_cached() {
+        let _test_lock = BORDER_TEST_LOCK.lock();
         let args = vec!["active_color=0xFFFF0000".to_string()];
         let expected_key = command_key(&args);
         *get_last_command().lock() = String::new();
@@ -950,12 +987,69 @@ mod tests {
     }
 
     #[test]
+    fn test_focus_command_dedup_skips_send_and_keeps_cache() {
+        let _test_lock = BORDER_TEST_LOCK.lock();
+        let args = vec!["active_color=0xFFFF0000".to_string()];
+        let key = command_key(&args);
+        *get_last_command().lock() = key.clone();
+
+        let mut send_called = false;
+        let epoch = prepare_focus_command(&args, |_| {
+            send_called = true;
+            true
+        });
+
+        assert_eq!(epoch, None);
+        assert!(!send_called, "deduplicated command must not be sent");
+        assert_eq!(*get_last_command().lock(), key);
+    }
+
+    #[test]
+    fn test_focus_command_send_failure_clears_cache_for_retry() {
+        let _test_lock = BORDER_TEST_LOCK.lock();
+        let args = vec!["active_color=0xFFFF0000".to_string()];
+        let key = command_key(&args);
+        *get_last_command().lock() = "active_color=0x00000000".to_string();
+        let epoch_before = ANIMATION_EPOCH.load(Ordering::SeqCst);
+
+        // Failed send: no epoch is returned, and the stale cache is cleared
+        // so a later identical focus change retries the base command.
+        let epoch = prepare_focus_command(&args, |_| false);
+        assert_eq!(epoch, None);
+        assert_eq!(*get_last_command().lock(), "");
+        assert!(
+            ANIMATION_EPOCH.load(Ordering::SeqCst) > epoch_before,
+            "failed update must still invalidate a running animation"
+        );
+
+        // Retry with identical arguments must re-attempt the send.
+        let epoch = prepare_focus_command(&args, |_| true);
+        assert!(epoch.is_some(), "retry after failure must send again");
+        assert_eq!(*get_last_command().lock(), key);
+    }
+
+    #[test]
+    fn test_focus_command_success_caches_and_bumps_epoch() {
+        let _test_lock = BORDER_TEST_LOCK.lock();
+        let args = vec!["active_color=0xFFFF0000".to_string()];
+        let key = command_key(&args);
+        *get_last_command().lock() = String::new();
+        let epoch_before = ANIMATION_EPOCH.load(Ordering::SeqCst);
+
+        let epoch = prepare_focus_command(&args, |_| true);
+
+        assert!(epoch.is_some_and(|e| e > epoch_before));
+        assert_eq!(*get_last_command().lock(), key);
+    }
+
+    #[test]
     fn test_mach_send_options_apply_timeout() {
         assert_eq!(MACH_SEND_OPTIONS, MACH_SEND_MSG | MACH_SEND_TIMEOUT);
     }
 
     #[test]
     fn test_animation_frame_failure_is_dropped_without_caching() {
+        let _test_lock = BORDER_TEST_LOCK.lock();
         let args = vec!["active_color=0xFFFF0000".to_string()];
         let expected_key = command_key(&args);
         *get_last_command().lock() = String::new();
@@ -969,18 +1063,14 @@ mod tests {
     #[test]
     fn test_animation_wait_returns_queued_command_before_next_frame() {
         let (tx, rx) = mpsc::channel();
-        tx.send(AnimationCommand::Update {
-            args: vec!["active_color=0xFFFF0000".to_string()],
-            animation: None,
-        })
-        .unwrap();
+        tx.send(AnimationCommand::Update { epoch: 0, animation: None }).unwrap();
 
         let command = wait_for_animation_command(&rx, Duration::from_secs(1))
             .expect("channel should stay connected")
             .expect("queued command should be returned");
 
-        let AnimationCommand::Update { args, animation } = command;
-        assert_eq!(args, vec!["active_color=0xFFFF0000".to_string()]);
+        let AnimationCommand::Update { epoch, animation } = command;
+        assert_eq!(epoch, 0);
         assert!(animation.is_none());
     }
 
@@ -991,46 +1081,21 @@ mod tests {
     }
 
     #[test]
-    fn test_focus_priority_pause_duration_is_short() {
-        assert_eq!(focus_priority_pause_duration(), Duration::from_millis(150));
-    }
-
-    #[test]
-    fn test_focus_priority_pause_returns_queued_command() {
-        let (tx, rx) = mpsc::channel();
-        tx.send(AnimationCommand::Update {
-            args: vec!["active_color=0xFFFF0000".to_string()],
-            animation: None,
-        })
-        .unwrap();
-
-        let command =
-            wait_for_focus_priority_pause(&rx).expect("queued command should interrupt pause");
-
-        let AnimationCommand::Update { args, animation } = command;
-        assert_eq!(args, vec!["active_color=0xFFFF0000".to_string()]);
-        assert!(animation.is_none());
-    }
-
-    #[test]
     fn test_take_queued_animation_command_returns_pending_update() {
         let (tx, rx) = mpsc::channel();
-        tx.send(AnimationCommand::Update {
-            args: vec!["active_color=0xFFFF0000".to_string()],
-            animation: None,
-        })
-        .unwrap();
+        tx.send(AnimationCommand::Update { epoch: 0, animation: None }).unwrap();
 
         let command =
             take_queued_animation_command(&rx).expect("queued command should be returned");
 
-        let AnimationCommand::Update { args, animation } = command;
-        assert_eq!(args, vec!["active_color=0xFFFF0000".to_string()]);
+        let AnimationCommand::Update { epoch, animation } = command;
+        assert_eq!(epoch, 0);
         assert!(animation.is_none());
     }
 
     #[test]
     fn test_pause_and_resume_flags() {
+        let _test_lock = BORDER_TEST_LOCK.lock();
         resume(); // ensure clean initial state
         assert!(!is_paused());
 

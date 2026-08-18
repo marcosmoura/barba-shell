@@ -23,24 +23,11 @@ const hmr = {
 
 export default defineConfig({
   root: UI_DIR,
-  envDir: __dirname,
+  envDir: import.meta.dirname,
   envPrefix: ['VITE_', 'API_'],
   plugins: [
     wyw({
       include: [`${UI_DIR}/**/*.styles.ts`],
-      babelOptions: {
-        plugins: [
-          [
-            'module-resolver',
-            {
-              alias: {
-                '@': path.resolve(__dirname, UI_DIR),
-              },
-              extensions: ['.ts', '.tsx'],
-            },
-          ],
-        ],
-      },
       importOverrides: {
         './app/ui/design-system/index.ts': { unknown: 'allow' },
         './app/ui/design-system/colors.ts': { unknown: 'allow' },
@@ -54,7 +41,7 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, UI_DIR),
+      '@': path.resolve(import.meta.dirname, UI_DIR),
     },
     conditions: ['module', 'production'],
   },
@@ -68,6 +55,7 @@ export default defineConfig({
       '@tauri-store/zustand',
       'react-dom',
       'react',
+      'usehooks-ts',
       'vitest-browser-react',
       'zustand',
       'zustand/middleware/immer',
@@ -89,14 +77,14 @@ export default defineConfig({
     minify: 'oxc',
     cssMinify: 'lightningcss',
     assetsInlineLimit: 4096,
-    sourcemap: 'hidden',
+    sourcemap: false,
     modulePreload: { polyfill: false },
     reportCompressedSize: true,
     chunkSizeWarningLimit: 300,
-    outDir: path.resolve(__dirname, `${UI_DIR}/dist`),
+    outDir: path.resolve(import.meta.dirname, `${UI_DIR}/dist`),
     rolldownOptions: {
       output: {
-        advancedChunks: {
+        codeSplitting: {
           groups: [
             {
               name: 'react',
@@ -135,7 +123,7 @@ export default defineConfig({
   },
   test: {
     css: true,
-    root: path.resolve(__dirname, UI_DIR),
+    root: path.resolve(import.meta.dirname, UI_DIR),
     setupFiles: ['./tests/setup.ts'],
     include: ['./**/*.test.{ts,tsx}'],
     isolate: true,
@@ -148,7 +136,7 @@ export default defineConfig({
         './**/*.styles.ts',
         './**/*.state.ts',
         './main.tsx',
-        './test/**',
+        './tests/**',
         './vite-env.d.ts',
       ],
       thresholds: {

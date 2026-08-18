@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { DAY_HEIGHT, DAY_ROW_GAP } from './Calendar.constants';
 import type { AnimationDirection, CalendarDay } from './Calendar.types';
@@ -10,7 +10,17 @@ export function calculateMonthHeight(weeks: number): number {
 export function useCalendar() {
   const [currentDate, setCurrentDate] = useState(() => new Date());
   const [animationDirection, setAnimationDirection] = useState<AnimationDirection>('right');
-  const today = useMemo(() => new Date(), []);
+  const [today, setToday] = useState(() => new Date());
+
+  // Keep the "today" highlight fresh across midnight while the window stays open.
+  useEffect(() => {
+    const now = new Date();
+    const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    const msUntilMidnight = nextMidnight.getTime() - now.getTime();
+    const timer = setTimeout(() => setToday(new Date()), msUntilMidnight);
+
+    return () => clearTimeout(timer);
+  }, [today]);
 
   const monthYearLabel = useMemo(() => {
     return currentDate.toLocaleDateString('en-US', {

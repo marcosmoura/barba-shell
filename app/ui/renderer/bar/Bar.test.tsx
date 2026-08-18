@@ -22,6 +22,31 @@ vi.mock('@tauri-apps/api/event', async (importOriginal) => {
 
 const mockInvoke = vi.mocked(invoke);
 
+const installDefaultInvokeMock = () => {
+  mockInvoke.mockImplementation((command: string) => {
+    switch (command) {
+      case 'is_tiling_enabled':
+        return Promise.resolve(true);
+      case 'get_tiling_workspaces':
+        return Promise.resolve([{ name: 'terminal' }, { name: 'coding' }]);
+      case 'get_tiling_focused_workspace':
+        return Promise.resolve('terminal');
+      case 'get_tiling_current_workspace_windows':
+        return Promise.resolve([{ appName: 'Ghostty', id: 100, title: 'Ghostty' }]);
+      case 'get_tiling_focused_window':
+        return Promise.resolve({ appName: 'Ghostty', id: 100, title: 'Ghostty' });
+      case 'get_weather_config':
+        return Promise.resolve({
+          provider: 'auto',
+          visualCrossingApiKey: '',
+          defaultLocation: 'Berlin, Germany',
+        });
+      default:
+        return Promise.resolve(null);
+    }
+  });
+};
+
 const setupQueryClient = (overrides?: { menuHidden?: boolean }) => {
   const queryClient = createTestQueryClient();
   queryClient.setQueryData(['tiling_workspace_data'], {
@@ -45,27 +70,37 @@ const setupQueryClient = (overrides?: { menuHidden?: boolean }) => {
 describe('Bar Component', () => {
   beforeEach(() => {
     mockInvoke.mockReset();
+    installDefaultInvokeMock();
+  });
+
+  test('recovers from a transient query error via the retry fallback', async () => {
     mockInvoke.mockImplementation((command: string) => {
-      switch (command) {
-        case 'is_tiling_enabled':
-          return Promise.resolve(true);
-        case 'get_tiling_workspaces':
-          return Promise.resolve([{ name: 'terminal' }, { name: 'coding' }]);
-        case 'get_tiling_focused_workspace':
-          return Promise.resolve('terminal');
-        case 'get_tiling_current_workspace_windows':
-          return Promise.resolve([{ appName: 'Ghostty', id: 100, title: 'Ghostty' }]);
-        case 'get_tiling_focused_window':
-          return Promise.resolve({ appName: 'Ghostty', id: 100, title: 'Ghostty' });
-        case 'get_weather_config':
-          return Promise.resolve({
-            provider: 'auto',
-            visualCrossingApiKey: '',
-            defaultLocation: 'Berlin, Germany',
-          });
-        default:
-          return Promise.resolve(null);
+      if (command === 'get_cpu_info') {
+        return Promise.reject(new Error('transient cpu error'));
       }
+
+      if (command === 'get_weather_config') {
+        return Promise.resolve({
+          provider: 'auto',
+          visualCrossingApiKey: '',
+          defaultLocation: 'Berlin, Germany',
+        });
+      }
+
+      return null;
+    });
+
+    const screen = await render(<Bar />);
+
+    await expect.element(screen.getByText('Something went wrong')).toBeVisible();
+
+    // The transient failure clears up — retry must restore the bar.
+    installDefaultInvokeMock();
+
+    await screen.getByRole('button', { name: 'Retry' }).click();
+
+    await vi.waitFor(async () => {
+      await expect.element(screen.getByTestId('status-container')).toBeVisible();
     });
   });
 

@@ -4,6 +4,7 @@ import { ErrorBoundary } from 'react-error-boundary';
 import { cx } from '@linaria/core';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
+import { QueryErrorFallback } from '@/components/QueryErrorFallback';
 import { queryClientDefaults } from '@/utils/queryClientDefaults';
 
 import { useBar } from './Bar.state';
@@ -31,7 +32,12 @@ const BarContent = memo(function BarContent() {
 export function Bar() {
   return (
     <QueryClientProvider client={queryClient}>
-      <ErrorBoundary fallback={null}>
+      <ErrorBoundary
+        fallback={<QueryErrorFallback />}
+        onReset={() => {
+          queryClient.resetQueries();
+        }}
+      >
         <Suspense fallback={null}>
           <BarContent />
         </Suspense>

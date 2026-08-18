@@ -4,6 +4,7 @@ import { ErrorBoundary } from 'react-error-boundary';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { motion } from 'motion/react';
 
+import { QueryErrorFallback } from '@/components/QueryErrorFallback';
 import { queryClientDefaults } from '@/utils/queryClientDefaults';
 import { resolveModule } from '@/utils/resolveModule';
 
@@ -39,7 +40,12 @@ const WidgetsContent = memo(function WidgetsContent() {
 export function Widgets() {
   return (
     <QueryClientProvider client={queryClient}>
-      <ErrorBoundary fallback={null}>
+      <ErrorBoundary
+        fallback={<QueryErrorFallback />}
+        onReset={() => {
+          queryClient.resetQueries();
+        }}
+      >
         <Suspense fallback={null}>
           <WidgetsContent />
         </Suspense>

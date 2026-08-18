@@ -25,6 +25,4 @@ export const barHidden = css`
   transform: translateY(100%) translateZ(0);
 
   opacity: 0;
-
-  transition-duration: 0ms;
 `;

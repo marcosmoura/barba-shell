@@ -297,13 +297,19 @@ pub async fn get_tiling_focused_window() -> Result<Option<WindowInfo>, StacheErr
 
 /// Switches to a workspace by name.
 ///
+/// The command reports success only after the actor has processed the switch
+/// and confirmed the named workspace is focused. The frontend
+/// `WORKSPACE_CHANGED` event is emitted by the actor itself once the
+/// transition takes effect, so no duplicate (premature) event is sent here.
+///
 /// # Errors
 ///
-/// Returns an error if the workspace is not found or the tiling manager is not available.
+/// Returns an error if the workspace is not found, the switch did not take
+/// effect, or the tiling manager is not available.
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)] // Tauri commands require owned values
-pub async fn focus_tiling_workspace(app: AppHandle, name: String) -> Result<(), StacheError> {
-    use tiling::actor::StateMessage;
+pub async fn focus_tiling_workspace(name: String) -> Result<(), StacheError> {
+    use tiling::actor::{QueryResult, StateMessage, StateQuery};
 
     let name = name.trim().to_string();
     if name.is_empty() {
@@ -315,17 +321,34 @@ pub async fn focus_tiling_workspace(app: AppHandle, name: String) -> Result<(), 
     let handle = tiling::init::get_handle()
         .ok_or_else(|| StacheError::TilingError("Tiling not initialized".to_string()))?;
 
-    let _ = handle.send(StateMessage::SwitchWorkspace { name: name.clone() });
+    // Dispatch the switch and wait for the actor to enqueue it. Messages on
+    // the actor channel are FIFO, so the follow-up query below observes the
+    // post-transition state.
+    handle
+        .send_async(StateMessage::SwitchWorkspace { name: name.clone() })
+        .await
+        .map_err(|e| {
+            StacheError::TilingError(format!("Failed to dispatch workspace switch: {e}"))
+        })?;
 
-    // Emit workspace changed event
-    let _ = app.emit(
-        events::tiling::WORKSPACE_CHANGED,
-        serde_json::json!({
-            "workspace": name,
-        }),
-    );
+    // Only report success once the actor confirms the named workspace is
+    // now the focused workspace.
+    let result = handle
+        .query(StateQuery::GetFocusedWorkspace)
+        .await
+        .map_err(|e| StacheError::TilingError(e.to_string()))?;
 
-    Ok(())
+    match result {
+        QueryResult::Workspace(Some(ws)) if ws.name == name => Ok(()),
+        QueryResult::Workspace(Some(ws)) => Err(StacheError::TilingError(format!(
+            "Workspace '{name}' did not become focused (focused: '{}')",
+            ws.name
+        ))),
+        QueryResult::Workspace(None) => {
+            Err(StacheError::TilingError(format!("Workspace '{name}' not found")))
+        }
+        _ => Err(StacheError::TilingError("Unexpected query result".to_string())),
+    }
 }
 
 /// Focuses a window by its ID.

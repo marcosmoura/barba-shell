@@ -9,7 +9,7 @@ import { useBattery } from './Battery.state';
 export function Battery(): ReactNode {
   const { onClick, percentage, label, icon, color, ref } = useBattery();
 
-  if (!percentage) {
+  if (percentage == null) {
     return null;
   }
 

@@ -43,6 +43,27 @@ const APPLICATION_REFRESH_NOTIFICATION_NAMES: [&str; 3] = [
 ];
 static MENU_BAR_REFRESH_SIGNAL: OnceLock<Sender<()>> = OnceLock::new();
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct NSPoint {
+    x: f64,
+    y: f64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct NSSize {
+    width: f64,
+    height: f64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct NSRect {
+    origin: NSPoint,
+    size: NSSize,
+}
+
 fn emit_menubar_visibility_event(
     app_handle: &AppHandle,
     window_label: &str,
@@ -66,9 +87,9 @@ pub fn start_menu_bar_visibility_watcher(window: &WebviewWindow) {
 }
 
 fn register_menu_bar_visibility_observer(app_handle: AppHandle, window_label: String) {
+    let (nsmenu, hover) = query_menu_bar_signals(app_handle.clone(), window_label.clone());
     let initial_state =
-        resolve_menu_bar_visible(query_nsmenu_visible(), query_menu_bar_visible, None)
-            .unwrap_or(false);
+        resolve_menu_bar_visible(nsmenu, hover, query_menu_bar_visible, None).unwrap_or(false);
     MENU_BAR_VISIBLE.store(initial_state, Ordering::Release);
 
     if let Err(e) = emit_menubar_visibility_event(&app_handle, &window_label, initial_state) {
@@ -101,12 +122,10 @@ fn refresh_menu_bar_visibility(
     window_label: &str,
     last_visible: &mut bool,
 ) {
-    let visible = resolve_menu_bar_visible(
-        query_nsmenu_visible(),
-        query_menu_bar_visible,
-        Some(*last_visible),
-    )
-    .unwrap_or(*last_visible);
+    let (nsmenu, hover) = query_menu_bar_signals(app_handle.clone(), window_label.to_string());
+    let visible =
+        resolve_menu_bar_visible(nsmenu, hover, query_menu_bar_visible, Some(*last_visible))
+            .unwrap_or(*last_visible);
     if visible != *last_visible {
         *last_visible = visible;
         MENU_BAR_VISIBLE.store(visible, Ordering::Release);
@@ -323,20 +342,31 @@ fn query_menu_bar_visible() -> Result<bool, String> {
 }
 
 /// Select the best-available menu-bar visibility, falling back from the
-/// primary `NSMenu` query to the `CGWindowList` heuristic, then to prior state.
-/// The `cg` fallback is lazily evaluated — it is only called when the primary
-/// `NSMenu` result is `None`. Returns `None` only when all sources fail and
-/// there is no prior state.
+/// primary `NSMenu` query and the pointer-hover signal to the `CGWindowList`
+/// heuristic, then to prior state.
+///
+/// The bar is reported visible when either the `NSMenu` query says the menu
+/// bar is shown or the pointer is inside the menu bar row — the latter covers
+/// auto-hide reveal, where on recent macOS the pointer enters the row before
+/// the system marks the menu bar visible. It is reported hidden only when both
+/// signals agree the menu bar is not visible. The `cg` fallback is lazily
+/// evaluated — it is only called when neither signal can determine visibility.
+/// Returns `None` only when all sources fail and there is no prior state.
 ///
 /// Infrastructure dispatch failure (e.g. the main thread dying) will still
 /// panic. This function only handles recoverable failures: a missing `ObjC`
 /// class or a thrown exception during the message send.
 fn resolve_menu_bar_visible(
     nsmenu: Option<bool>,
+    hover: Option<bool>,
     cg: impl FnOnce() -> Result<bool, String>,
     prior: Option<bool>,
 ) -> Option<bool> {
-    nsmenu.or_else(|| cg().ok()).or(prior)
+    match (nsmenu, hover) {
+        (Some(true), _) | (_, Some(true)) => Some(true),
+        (Some(false), Some(false)) => Some(false),
+        _ => cg().ok().or(prior),
+    }
 }
 
 /// Convert a raw `Result<BOOL, E>` (from an `ObjC` message send) into an
@@ -350,20 +380,83 @@ fn nsmenu_bool_to_option<E: std::fmt::Debug>(result: Result<BOOL, E>) -> Option<
     }
 }
 
-/// Query system menu bar visibility via the documented `+[NSMenu menuBarVisible]`
-/// class method. The query is dispatched to the macOS main thread because `AppKit`
-/// calls must execute there. Returns `None` if the `NSMenu` class is unavailable
-/// or the Objective‑C message throws an exception.
-fn query_nsmenu_visible() -> Option<bool> {
-    crate::platform::thread::dispatch_on_main_sync(|| {
-        // SAFETY: Class::get returns None if the class is not registered.
-        // send_message on the class is safe because we are on the main thread,
-        // required by AppKit. With the "exception" feature enabled, ObjC
-        // exceptions are caught and returned as Err(MessageError).
-        let cls = Class::get("NSMenu")?;
-        let result: Result<BOOL, _> = unsafe { cls.send_message(sel!(menuBarVisible), ()) };
-        nsmenu_bool_to_option(result)
+/// Queries both `AppKit` visibility signals in one main-thread dispatch,
+/// resolving the bar window's target screen frame first.
+fn query_menu_bar_signals(
+    app_handle: AppHandle,
+    window_label: String,
+) -> (Option<bool>, Option<bool>) {
+    crate::platform::thread::dispatch_on_main_sync(move || {
+        let frame = resolve_bar_screen_frame(&app_handle, &window_label);
+        (
+            query_nsmenu_visible_on_main(),
+            frame.and_then(|frame| query_mouse_in_menu_bar_on_main(&frame)),
+        )
     })
+}
+
+/// Resolves the `AppKit` frame of the screen hosting the bar window, falling
+/// back to the main screen when the window has no screen yet.
+///
+/// Must be called on the macOS main thread (`AppKit`).
+fn resolve_bar_screen_frame(app_handle: &AppHandle, window_label: &str) -> Option<NSRect> {
+    unsafe {
+        let window = app_handle.get_webview_window(window_label)?;
+        let ns_window = window.ns_window().ok()?;
+        let screen: *mut Object = msg_send![ns_window.cast::<Object>(), screen];
+        if !screen.is_null() {
+            return Some(msg_send![screen, frame]);
+        }
+        let main_screen: *mut Object = msg_send![class!(NSScreen), mainScreen];
+        if main_screen.is_null() {
+            return None;
+        }
+        Some(msg_send![main_screen, frame])
+    }
+}
+
+fn query_nsmenu_visible_on_main() -> Option<bool> {
+    // SAFETY: Class::get returns None if the class is not registered.
+    // send_message on the class is safe because we are on the main thread,
+    // required by AppKit. With the "exception" feature enabled, ObjC
+    // exceptions are caught and returned as Err(MessageError).
+    let cls = Class::get("NSMenu")?;
+    let result: Result<BOOL, _> = unsafe { cls.send_message(sel!(menuBarVisible), ()) };
+    nsmenu_bool_to_option(result)
+}
+
+/// Returns whether a pointer at `mouse` lies within the menu bar row at the
+/// top of the screen with `frame` and the given menu bar height.
+const fn mouse_in_menu_bar_row(mouse: NSPoint, frame: NSRect, menu_bar_height: f64) -> bool {
+    let top = frame.origin.y + frame.size.height;
+    mouse.y >= top - menu_bar_height && mouse.y <= top
+}
+
+/// Query whether the pointer currently sits inside the menu bar row of the
+/// screen hosting the bar window. This covers auto-hide reveal, where on
+/// recent macOS the pointer enters the row before the system marks the menu
+/// bar visible.
+///
+/// Must be called on the macOS main thread. Returns `None` if an `AppKit`
+/// object is unavailable or an Objective-C message throws an exception.
+fn query_mouse_in_menu_bar_on_main(frame: &NSRect) -> Option<bool> {
+    unsafe {
+        // SAFETY: Class::get returns None if a class is not registered.
+        // The messages are safe because we are on the main thread, required
+        // by AppKit. With the "exception" feature enabled, ObjC exceptions
+        // are caught and returned as Err(MessageError).
+        let status_bar_class = Class::get("NSStatusBar")?;
+
+        let status_bar: *mut Object = msg_send![status_bar_class, systemStatusBar];
+        if status_bar.is_null() {
+            return None;
+        }
+
+        let menu_bar_height: f64 = msg_send![status_bar, thickness];
+        let mouse: NSPoint = msg_send![class!(NSEvent), mouseLocation];
+
+        Some(mouse_in_menu_bar_row(mouse, *frame, menu_bar_height))
+    }
 }
 
 #[cfg(test)]
@@ -473,30 +566,161 @@ mod tests {
         assert_eq!(super::nsmenu_bool_to_option(result), None);
     }
 
+    // --- mouse_in_menu_bar_row ---
+
+    const TEST_SCREEN: NSRect = NSRect {
+        origin: NSPoint { x: 0.0, y: 0.0 },
+        size: NSSize { width: 1920.0, height: 1200.0 },
+    };
+
+    #[test]
+    fn mouse_in_menu_bar_row_inside_is_true() {
+        assert!(mouse_in_menu_bar_row(
+            NSPoint { x: 960.0, y: 1190.0 },
+            TEST_SCREEN,
+            22.0
+        ));
+    }
+
+    #[test]
+    fn mouse_in_menu_bar_row_below_is_false() {
+        assert!(!mouse_in_menu_bar_row(
+            NSPoint { x: 960.0, y: 1177.0 },
+            TEST_SCREEN,
+            22.0
+        ));
+    }
+
+    #[test]
+    fn mouse_in_menu_bar_row_top_edge_is_included() {
+        assert!(mouse_in_menu_bar_row(
+            NSPoint { x: 10.0, y: 1200.0 },
+            TEST_SCREEN,
+            22.0
+        ));
+    }
+
+    #[test]
+    fn mouse_in_menu_bar_row_bottom_edge_is_included() {
+        assert!(mouse_in_menu_bar_row(
+            NSPoint { x: 10.0, y: 1178.0 },
+            TEST_SCREEN,
+            22.0
+        ));
+    }
+
+    #[test]
+    fn mouse_in_menu_bar_row_above_screen_is_false() {
+        assert!(!mouse_in_menu_bar_row(
+            NSPoint { x: 10.0, y: 1200.5 },
+            TEST_SCREEN,
+            22.0
+        ));
+    }
+
+    #[test]
+    fn mouse_in_menu_bar_row_uses_screen_origin() {
+        let frame = NSRect {
+            origin: NSPoint { x: 0.0, y: 100.0 },
+            size: NSSize { width: 1920.0, height: 1200.0 },
+        };
+        assert!(mouse_in_menu_bar_row(
+            NSPoint { x: 10.0, y: 1280.0 },
+            frame,
+            22.0
+        ));
+        assert!(!mouse_in_menu_bar_row(
+            NSPoint { x: 10.0, y: 1277.0 },
+            frame,
+            22.0
+        ));
+    }
+
+    #[test]
+    fn mouse_in_menu_bar_row_uses_secondary_screen_frame() {
+        // A screen placed above the primary (AppKit bottom-left origin). The
+        // hover check must use the bar window's own screen frame, not the
+        // hardcoded main screen.
+        let primary = NSRect {
+            origin: NSPoint { x: 0.0, y: 0.0 },
+            size: NSSize { width: 1920.0, height: 1080.0 },
+        };
+        let secondary = NSRect {
+            origin: NSPoint { x: 0.0, y: 1080.0 },
+            size: NSSize { width: 2560.0, height: 1440.0 },
+        };
+
+        // Pointer at the very top of the secondary screen: inside its row...
+        let mouse = NSPoint { x: 1280.0, y: 2516.0 };
+        assert!(mouse_in_menu_bar_row(mouse, secondary, 24.0));
+        // ...but far outside the primary screen's row.
+        assert!(!mouse_in_menu_bar_row(mouse, primary, 24.0));
+
+        // Just below the secondary screen's row is outside it.
+        assert!(!mouse_in_menu_bar_row(
+            NSPoint { x: 1280.0, y: 2495.0 },
+            secondary,
+            24.0
+        ));
+    }
+
     // --- resolve_menu_bar_visible ---
 
     #[test]
-    fn resolve_uses_primary_when_available() {
+    fn resolve_visible_when_nsmenu_true() {
         assert_eq!(
-            resolve_menu_bar_visible(Some(true), || Ok(false), None),
+            resolve_menu_bar_visible(Some(true), Some(false), || Ok(false), None),
             Some(true)
         );
         assert_eq!(
-            resolve_menu_bar_visible(Some(false), || Ok(true), None),
+            resolve_menu_bar_visible(Some(true), None, || Ok(false), None),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn resolve_hover_overrides_nsmenu_false() {
+        // Auto-hide reveal: the pointer enters the menu bar row before the
+        // system reports the menu bar visible (observed on macOS 26+).
+        assert_eq!(
+            resolve_menu_bar_visible(Some(false), Some(true), || Ok(false), None),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn resolve_hidden_when_both_signals_agree_false() {
+        assert_eq!(
+            resolve_menu_bar_visible(Some(false), Some(false), || Ok(true), None),
             Some(false)
         );
     }
 
     #[test]
-    fn resolve_falls_back_when_primary_none() {
-        assert_eq!(resolve_menu_bar_visible(None, || Ok(true), None), Some(true));
-        assert_eq!(resolve_menu_bar_visible(None, || Ok(false), None), Some(false));
+    fn resolve_falls_back_when_both_signals_unknown() {
+        assert_eq!(
+            resolve_menu_bar_visible(None, None, || Ok(true), None),
+            Some(true)
+        );
+        assert_eq!(
+            resolve_menu_bar_visible(None, None, || Ok(false), None),
+            Some(false)
+        );
     }
 
     #[test]
-    fn resolve_does_not_call_fallback_when_primary_succeeds() {
+    fn resolve_falls_back_when_nsmenu_false_and_hover_unknown() {
+        assert_eq!(
+            resolve_menu_bar_visible(Some(false), None, || Ok(true), None),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn resolve_visible_does_not_call_fallback() {
         let mut fallback_called = false;
         let result = resolve_menu_bar_visible(
+            Some(false),
             Some(true),
             || {
                 fallback_called = true;
@@ -507,14 +731,34 @@ mod tests {
         assert_eq!(result, Some(true));
         assert!(
             !fallback_called,
-            "fallback should not be invoked when primary succeeds"
+            "fallback should not run when visibility is known"
         );
     }
 
     #[test]
-    fn resolve_calls_fallback_when_primary_none() {
+    fn resolve_hidden_does_not_call_fallback() {
         let mut fallback_called = false;
         let result = resolve_menu_bar_visible(
+            Some(false),
+            Some(false),
+            || {
+                fallback_called = true;
+                Ok(true)
+            },
+            None,
+        );
+        assert_eq!(result, Some(false));
+        assert!(
+            !fallback_called,
+            "fallback should not run when visibility is known"
+        );
+    }
+
+    #[test]
+    fn resolve_calls_fallback_when_both_signals_unknown() {
+        let mut fallback_called = false;
+        let result = resolve_menu_bar_visible(
+            None,
             None,
             || {
                 fallback_called = true;
@@ -523,26 +767,26 @@ mod tests {
             None,
         );
         assert_eq!(result, Some(true));
-        assert!(
-            fallback_called,
-            "fallback should be invoked when primary is None"
-        );
+        assert!(fallback_called, "fallback should run when visibility is unknown");
     }
 
     #[test]
-    fn resolve_preserves_prior_when_both_fail() {
+    fn resolve_preserves_prior_when_all_fail() {
         assert_eq!(
-            resolve_menu_bar_visible(None, || Err("fail".into()), Some(true)),
+            resolve_menu_bar_visible(None, None, || Err("fail".into()), Some(true)),
             Some(true)
         );
         assert_eq!(
-            resolve_menu_bar_visible(None, || Err("fail".into()), Some(false)),
+            resolve_menu_bar_visible(None, None, || Err("fail".into()), Some(false)),
             Some(false)
         );
     }
 
     #[test]
     fn resolve_returns_none_when_all_fail_and_no_prior() {
-        assert_eq!(resolve_menu_bar_visible(None, || Err("fail".into()), None), None);
+        assert_eq!(
+            resolve_menu_bar_visible(None, None, || Err("fail".into()), None),
+            None
+        );
     }
 }

@@ -51,6 +51,10 @@ fn initialize_default_ratios(layout: LayoutType, window_count: usize) -> Vec<f64
 // Split Ratio Resize
 // ============================================================================
 
+fn split_is_horizontal(layout: LayoutType, is_landscape: bool) -> bool {
+    matches!(layout, LayoutType::SplitHorizontal) || (layout == LayoutType::Split && is_landscape)
+}
+
 /// Resize a split at the given index, respecting minimum window sizes.
 ///
 /// When a window that needs to shrink hits its minimum size, it "locks" and
@@ -106,6 +110,7 @@ pub fn on_resize_split(
     if ratios.is_empty() {
         ratios = initialize_default_ratios(layout, window_count);
     }
+    let original_ratios = ratios.clone();
 
     // Validate index based on layout
     let max_index = match layout {
@@ -133,9 +138,8 @@ pub fn on_resize_split(
     };
 
     // Determine which dimension we're resizing (for split layouts)
-    let is_horizontal = matches!(layout, LayoutType::Split | LayoutType::SplitHorizontal)
-        || (layout == LayoutType::Split
-            && screen.visible_frame.width >= screen.visible_frame.height);
+    let is_horizontal =
+        split_is_horizontal(layout, screen.visible_frame.width >= screen.visible_frame.height);
     let total_size = if is_horizontal {
         screen.visible_frame.width
     } else {
@@ -190,6 +194,12 @@ pub fn on_resize_split(
         }
     }
 
+    // No-op if the delta was zero or blocked by minimum-size constraints
+    if ratios == original_ratios {
+        tracing::debug!("resize_split: no change at index {window_index} (delta: {delta})");
+        return;
+    }
+
     state.update_workspace(workspace_id, |ws| {
         ws.split_ratios = ratios;
     });
@@ -221,6 +231,12 @@ fn on_resize_master(state: &mut TilingState, workspace_id: Uuid, delta: f64) {
     });
 
     let new_ratio = (current_ratio + delta).clamp(0.1, 0.9);
+
+    // No-op if the ratio did not change (delta zero or clamped at the bounds)
+    if (new_ratio - current_ratio).abs() < f64::EPSILON {
+        tracing::debug!("Resize master ratio: no change ({current_ratio:.4})");
+        return;
+    }
 
     state.update_workspace(workspace_id, |ws| {
         ws.master_ratio = Some(new_ratio);
@@ -539,6 +555,12 @@ pub fn on_resize_focused_window(state: &mut TilingState, dimension: ResizeDimens
         return;
     }
 
+    // No-op if the amount is zero
+    if amount == 0 {
+        tracing::debug!("resize_focused_window: amount is zero");
+        return;
+    }
+
     let focused_idx = workspace.focused_window_index.unwrap_or(0);
     let Some(&focused_id) = window_ids.get(focused_idx) else {
         tracing::debug!("resize_focused_window: no window at focused index");
@@ -667,6 +689,18 @@ pub fn on_resize_focused_window(state: &mut TilingState, dimension: ResizeDimens
             }
         }
         LayoutType::Split | LayoutType::SplitHorizontal | LayoutType::SplitVertical => {
+            let is_horizontal = split_is_horizontal(layout, is_landscape);
+            let resizes_split = matches!(
+                (dimension, is_horizontal),
+                (ResizeDimension::Width, true) | (ResizeDimension::Height, false)
+            );
+            if !resizes_split {
+                tracing::debug!(
+                    "resize_focused_window: {dimension:?} has no effect on {layout:?} layout"
+                );
+                return;
+            }
+
             // Split: cumulative ratios, each window (except last) has a ratio
             if window_index >= layoutable.len() - 1 {
                 if window_index > 0 {
@@ -924,6 +958,14 @@ mod tests {
         assert_eq!(ratios.len(), 2);
         assert!((ratios[0] - 0.333).abs() < 0.01);
         assert!((ratios[1] - 0.666).abs() < 0.01);
+    }
+
+    #[test]
+    fn split_axis_matches_layout_and_screen_orientation() {
+        assert!(split_is_horizontal(LayoutType::Split, true));
+        assert!(!split_is_horizontal(LayoutType::Split, false));
+        assert!(split_is_horizontal(LayoutType::SplitHorizontal, false));
+        assert!(!split_is_horizontal(LayoutType::SplitVertical, true));
     }
 
     #[test]

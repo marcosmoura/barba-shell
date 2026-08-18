@@ -13,6 +13,17 @@ use crate::modules::tiling::state::{LayoutType, TilingState};
 
 /// Set the layout for a workspace.
 pub fn on_set_layout(state: &mut TilingState, workspace_id: Uuid, layout: LayoutType) {
+    let Some(workspace) = state.get_workspace(workspace_id) else {
+        tracing::warn!("set_layout: workspace {workspace_id} not found");
+        return;
+    };
+
+    // No-op if the layout is already active (also avoids clearing ratios)
+    if workspace.layout == layout {
+        tracing::debug!("Set workspace {workspace_id} layout: already {layout:?}");
+        return;
+    }
+
     state.update_workspace(workspace_id, |ws| {
         ws.layout = layout;
         // Clear all runtime ratio overrides when layout changes

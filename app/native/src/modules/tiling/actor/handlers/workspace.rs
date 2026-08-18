@@ -305,11 +305,25 @@ pub fn on_cycle_workspace(state: &mut TilingState, direction: CycleDirection) {
 /// Resets all split ratios to equal distribution and clears inferred minimum
 /// sizes so the layout is calculated fresh, as if the app had just started.
 pub fn on_balance_workspace(state: &mut TilingState, workspace_id: Uuid) {
+    let Some(workspace) = state.get_workspace(workspace_id) else {
+        tracing::debug!("balance_workspace: workspace not found");
+        return;
+    };
+
     // Get window IDs in this workspace before clearing ratios
-    let window_ids: Vec<u32> = state
-        .get_workspace(workspace_id)
-        .map(|ws| ws.window_ids.to_vec())
-        .unwrap_or_default();
+    let window_ids: Vec<u32> = workspace.window_ids.to_vec();
+
+    // No-op if there is nothing to balance
+    let has_inferred_minimums = window_ids
+        .iter()
+        .any(|&id| state.get_window(id).is_some_and(|w| w.inferred_minimum_size.is_some()));
+    if workspace.split_ratios.is_empty()
+        && workspace.master_ratio.is_none()
+        && !has_inferred_minimums
+    {
+        tracing::debug!("balance_workspace: nothing to balance");
+        return;
+    }
 
     // Clear all runtime ratio overrides, restoring config defaults
     state.update_workspace(workspace_id, |ws| {

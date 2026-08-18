@@ -263,6 +263,7 @@ pub fn on_window_destroyed(
 /// Updates the focus state to point to this window, its workspace, and screen.
 /// Also updates workspace visibility - when a window is focused, its workspace
 /// becomes visible (and any other workspace on the same screen becomes hidden).
+#[allow(clippy::too_many_lines)] // one workspace-visibility pass per focus event
 pub fn on_window_focused(state: &mut TilingState, window_id: u32) -> VisibilityDelta {
     let Some(window) = state.get_window(window_id) else {
         tracing::trace!("Window {window_id} not tracked - ignoring focus event");
@@ -279,6 +280,14 @@ pub fn on_window_focused(state: &mut TilingState, window_id: u32) -> VisibilityD
     // Capture previous focus state to detect workspace changes
     let previous_focus = eyeball::Observable::get(&state.focus).clone();
     let previous_workspace_id = previous_focus.focused_workspace_id;
+
+    // No-op if the window is already focused in its workspace
+    if previous_focus.focused_window_id == Some(window_id)
+        && previous_focus.focused_workspace_id == Some(window.workspace_id)
+    {
+        tracing::trace!("Window {window_id} already focused - ignoring focus event");
+        return VisibilityDelta::default();
+    }
 
     let workspace = state.get_workspace(window.workspace_id);
     let screen_id = workspace.as_ref().map(|ws| ws.screen_id);
@@ -600,6 +609,12 @@ fn detect_and_update_inferred_minimum(
 pub fn on_window_minimized(state: &mut TilingState, window_id: u32, minimized: bool) {
     tracing::debug!("Handling window minimized: {window_id} = {minimized}");
 
+    // No-op if the minimized state did not change
+    if state.get_window(window_id).is_some_and(|w| w.is_minimized == minimized) {
+        tracing::trace!("Window {window_id} already minimized={minimized} - ignoring event");
+        return;
+    }
+
     // Get workspace info before updating
     let workspace_info = state.get_window(window_id).and_then(|w| {
         state.get_workspace(w.workspace_id).map(|ws| (ws.id, ws.name, ws.window_ids))
@@ -642,6 +657,12 @@ pub fn on_window_title_changed(state: &mut TilingState, window_id: u32, title: &
 /// Handles a window fullscreen state changed event.
 pub fn on_window_fullscreen_changed(state: &mut TilingState, window_id: u32, fullscreen: bool) {
     tracing::debug!("Handling window fullscreen changed: {window_id} = {fullscreen}");
+
+    // No-op if the fullscreen state did not change
+    if state.get_window(window_id).is_some_and(|w| w.is_fullscreen == fullscreen) {
+        tracing::trace!("Window {window_id} already fullscreen={fullscreen} - ignoring event");
+        return;
+    }
 
     // Get workspace before updating
     let workspace_id = state.get_window(window_id).map(|w| w.workspace_id);

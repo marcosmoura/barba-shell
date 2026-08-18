@@ -37,6 +37,12 @@ pub fn on_cycle_focus(state: &mut TilingState, direction: CycleDirection) {
         return;
     }
 
+    // No-op if the only layoutable window is already focused
+    if layoutable.len() == 1 && focus.focused_window_id == Some(layoutable[0]) {
+        tracing::debug!("cycle_focus: only one layoutable window, already focused");
+        return;
+    }
+
     // Find current focused position
     let current_idx = focus
         .focused_window_id

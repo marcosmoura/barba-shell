@@ -4,22 +4,21 @@ import { useWidgetToggle } from '@/hooks';
 
 import type { ClockState } from './Clock.types';
 
+const formatter = new Intl.DateTimeFormat('en-US', {
+  hour12: false,
+  weekday: 'short',
+  month: 'short',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+});
+
 function getClock(): string {
   function findDatePart(parts: Intl.DateTimeFormatPart[], part: string): string {
     return parts.find((p) => p.type === part)?.value ?? '';
   }
 
-  const options: Intl.DateTimeFormatOptions = {
-    hour12: false,
-    weekday: 'short',
-    month: 'short',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  };
-
-  const formatter = new Intl.DateTimeFormat('en-US', options);
   const time = new Date();
   const parts = formatter.formatToParts(time);
 

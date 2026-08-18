@@ -1,0 +1,81 @@
+name: Quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Quality (macOS)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.22.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 26
+          cache: pnpm
+
+      - name: Setup Rust (reads rust-toolchain.toml)
+        run: rustup show
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Rust tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-nextest
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Install Playwright WebKit (for browser tests)
+        run: pnpm exec playwright install webkit
+
+      - name: Lint (UI)
+        run: |
+          pnpm tsc --noEmit
+          pnpm exec oxlint app/ui
+          pnpm exec stylelint --formatter verbose --allow-empty-input './app/ui/**/*.(styles.ts|css)'
+
+      - name: Format check (UI)
+        run: pnpm exec oxfmt --check
+
+      - name: Lint (Native)
+        run: cargo clippy --workspace --all -- -D warnings
+
+      - name: Format check (Native)
+        run: cargo fmt --all -- --check
+
+      - name: Test (UI)
+        run: pnpm test:ui
+
+      - name: Test (Native)
+        run: pnpm test:native
+
+      - name: Coverage (UI)
+        run: pnpm test:ui:coverage
+
+      - name: Security audit
+        run: |
+          pnpm audit --prod
+          cargo audit --target-os macos
+
+      - name: Build (frontend)
+        run: pnpm build
+
+      - name: Build (native)
+        run: cargo build --workspace

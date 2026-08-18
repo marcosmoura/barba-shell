@@ -61,7 +61,7 @@ export type SpacesState = {
   workspaces: Workspaces;
   focusedWorkspace: string | null | undefined;
   focusedApp: Omit<SpaceApp, 'displayName'> | null | undefined;
-  onSpaceClick: (name: string) => () => Promise<void>;
-  onAppClick: (windowId: number) => () => Promise<void>;
+  onSpaceClick: (name: string) => void;
+  onAppClick: (windowId: number) => void;
   isEnabled: boolean;
 };

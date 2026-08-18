@@ -17,7 +17,7 @@ export const AppList = memo(function AppList({ apps, focusedApp, onAppClick }: A
             displayName={displayName}
             windowId={windowId}
             isFocused={focusedApp?.windowId === windowId}
-            onClick={onAppClick(windowId)}
+            onClick={onAppClick}
           />
         ))}
       </AnimatePresence>

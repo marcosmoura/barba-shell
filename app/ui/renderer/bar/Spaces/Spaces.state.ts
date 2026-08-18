@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { useQueryClient, useSuspenseQuery } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
@@ -42,10 +42,12 @@ function getSortedWorkspaces(workspaces: TilingWorkspace[] | undefined): TilingW
   });
 }
 
-async function fetchWorkspacesData() {
+export async function fetchWorkspacesData() {
   try {
-    const workspaces = await invoke<TilingWorkspace[]>('get_tiling_workspaces');
-    const focusedWorkspace = await invoke<string | null>('get_tiling_focused_workspace');
+    const [workspaces, focusedWorkspace] = await Promise.all([
+      invoke<TilingWorkspace[]>('get_tiling_workspaces'),
+      invoke<string | null>('get_tiling_focused_workspace'),
+    ]);
 
     return {
       workspacesData: getSortedWorkspaces(workspaces)?.map(({ name }) => name),
@@ -61,10 +63,12 @@ async function fetchWorkspacesData() {
   }
 }
 
-async function fetchAppsData() {
+export async function fetchAppsData() {
   try {
-    const windows = await invoke<TilingWindow[]>('get_tiling_current_workspace_windows');
-    const focusedWindow = await invoke<TilingWindow | null>('get_tiling_focused_window');
+    const [windows, focusedWindow] = await Promise.all([
+      invoke<TilingWindow[]>('get_tiling_current_workspace_windows'),
+      invoke<TilingWindow | null>('get_tiling_focused_window'),
+    ]);
 
     const apps = windows.map(({ appName, id, title }) => ({
       appName,
@@ -181,21 +185,21 @@ export function useSpaces(): SpacesState {
     queryClient.invalidateQueries({ queryKey: ['tiling_workspace_apps'] });
   }, [queryClient]);
 
-  const onSpaceClick = useCallback(
-    (name: string) => () =>
-      invokeWithErrorHandling<void>(
-        'focus_tiling_workspace',
-        { name },
-        'Error switching workspace',
-      ),
-    [],
-  );
+  const onSpaceClick = useCallback((name: string) => {
+    void invokeWithErrorHandling<void>(
+      'focus_tiling_workspace',
+      { name },
+      'Error switching workspace',
+    );
+  }, []);
 
-  const onAppClick = useCallback(
-    (windowId: number) => () =>
-      invokeWithErrorHandling<void>('focus_tiling_window', { windowId }, 'Error focusing window'),
-    [],
-  );
+  const onAppClick = useCallback((windowId: number) => {
+    void invokeWithErrorHandling<void>(
+      'focus_tiling_window',
+      { windowId },
+      'Error focusing window',
+    );
+  }, []);
 
   // Listen for tiling initialization — when tiling finishes its async startup,
   // flip isEnabled and refetch workspace data that was empty on first render.
@@ -216,13 +220,26 @@ export function useSpaces(): SpacesState {
   // Fast-path: if tiling is already initialized (e.g. after a manual reload),
   // enable immediately without waiting for the INITIALIZED event.
   useLayoutEffect(() => {
+    let mounted = true;
+
     (async () => {
       const enabled = await invoke<boolean>('is_tiling_enabled');
 
-      if (enabled) {
+      if (mounted && enabled) {
         setIsEnabled(true);
       }
     })();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  // Clear the focus-change debounce timer on unmount.
+  useEffect(() => {
+    return () => {
+      clearTimeout(focusDebounceTimerRef.current || 0);
+    };
   }, []);
 
   return {

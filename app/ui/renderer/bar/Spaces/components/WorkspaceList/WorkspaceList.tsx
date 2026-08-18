@@ -22,7 +22,7 @@ export const WorkspaceList = memo(function WorkspaceList({
             key={name}
             name={name}
             isFocused={focusedWorkspace === name}
-            onClick={onSpaceClick(name)}
+            onClick={onSpaceClick}
           />
         ))}
       </Surface>

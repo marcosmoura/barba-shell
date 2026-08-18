@@ -10,5 +10,5 @@ export type FocusedApp = Omit<App, 'displayName'> | null | undefined;
 export type AppListProps = {
   apps: App[];
   focusedApp: FocusedApp;
-  onAppClick: (windowId: number) => () => void;
+  onAppClick: (windowId: number) => void;
 };

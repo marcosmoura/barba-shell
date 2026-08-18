@@ -1,4 +1,4 @@
-import { memo, useMemo } from 'react';
+import { memo, useCallback, useMemo } from 'react';
 
 import { cx } from '@linaria/core';
 import { AnimatePresence, motion } from 'motion/react';
@@ -23,6 +23,9 @@ export const App = memo(function App({
   isFocused,
   onClick,
 }: AppProps) {
+  // Stable per-item closure so memo() isn't defeated on list re-renders.
+  const handleClick = useCallback(() => onClick(windowId), [onClick, windowId]);
+
   const transition = useMemo(
     () => ({
       duration: Math.max(motionRaw.duration, (displayName.length * motionRaw.duration) / 15),
@@ -42,7 +45,7 @@ export const App = memo(function App({
       <Surface
         as={Button}
         className={cx(styles.app, isFocused && styles.appFocused)}
-        onClick={onClick}
+        onClick={handleClick}
         animated={false}
       >
         <Icon icon={getAppIcon(appName)} />

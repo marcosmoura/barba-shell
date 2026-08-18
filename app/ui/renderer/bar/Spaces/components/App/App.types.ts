@@ -3,5 +3,5 @@ export type AppProps = {
   displayName: string;
   windowId: number;
   isFocused: boolean;
-  onClick: () => void;
+  onClick: (windowId: number) => void;
 };

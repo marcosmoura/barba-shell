@@ -356,9 +356,22 @@ fn non_connected_wifi_info(
     empty_wifi_info(WifiStatus::Unknown)
 }
 
+/// Gets the current Wi-Fi status.
+///
+/// The shell/CoreWLAN work is blocking, so it runs on a blocking thread via
+/// `spawn_blocking`. A synchronous Tauri command would execute on the main
+/// thread and stall the UI; an `async` command without `spawn_blocking`
+/// would occupy an async-runtime worker with blocking I/O.
 #[tauri::command]
+pub async fn get_wifi_info() -> WifiInfo {
+    tauri::async_runtime::spawn_blocking(get_wifi_info_blocking)
+        .await
+        .unwrap_or_else(|_| empty_wifi_info(WifiStatus::Unknown))
+}
+
+/// Blocking Wi-Fi status computation. Runs on the blocking thread pool.
 #[must_use]
-pub fn get_wifi_info() -> WifiInfo {
+fn get_wifi_info_blocking() -> WifiInfo {
     let wifi_hardware_interfaces = get_wifi_hardware_interface_names();
     let candidate_interfaces = get_candidate_interface_names(&wifi_hardware_interfaces);
     let summaries = collect_wifi_summaries(&candidate_interfaces);

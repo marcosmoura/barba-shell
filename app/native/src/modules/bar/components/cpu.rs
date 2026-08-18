@@ -26,8 +26,21 @@ pub struct CpuInfo {
 static SYS: LazyLock<Mutex<System>> = LazyLock::new(|| Mutex::new(System::new_all()));
 
 /// Fetch current CPU metrics (usage and temperature) on demand.
+///
+/// The sysinfo/SMC reads are blocking, so they run on a blocking thread via
+/// `spawn_blocking`. A synchronous Tauri command would execute on the main
+/// thread and stall the UI; an `async` command without `spawn_blocking`
+/// would occupy an async-runtime worker with blocking I/O.
 #[tauri::command]
-pub fn get_cpu_info() -> CpuInfo {
+pub async fn get_cpu_info() -> CpuInfo {
+    tauri::async_runtime::spawn_blocking(get_cpu_info_blocking)
+        .await
+        .unwrap_or_default()
+}
+
+/// Blocking CPU metrics computation. Runs on the blocking thread pool.
+#[must_use]
+fn get_cpu_info_blocking() -> CpuInfo {
     let usage = get_cpu_usage().round();
     let temperature = get_cpu_temperature().map(f32::round);
 
@@ -283,6 +296,15 @@ mod tests {
         let usage = get_cpu_usage();
         assert!(
             (0.0..=100.0).contains(&usage),
+            "CPU usage should be between 0 and 100"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_cpu_info_command_awaits_blocking_computation() {
+        let info = get_cpu_info().await;
+        assert!(
+            (0.0..=100.0).contains(&info.usage),
             "CPU usage should be between 0 and 100"
         );
     }

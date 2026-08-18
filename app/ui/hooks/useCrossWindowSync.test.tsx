@@ -157,9 +157,85 @@ describe('useCrossWindowSync', () => {
       // Both hooks should interact with the store
       expect(getStore).toHaveBeenCalled();
     });
+
+    test('uses the same store ID for object keys with different property order', async () => {
+      const queryClient = createTestQueryClient();
+
+      await renderHook(
+        () => {
+          useCrossWindowSync({
+            queryKey: ['test', { a: 1, b: 2 }],
+            syncAcrossWindows: true,
+            data: { value: 1 },
+          });
+          useCrossWindowSync({
+            queryKey: ['test', { b: 2, a: 1 }],
+            syncAcrossWindows: true,
+            data: { value: 1 },
+          });
+        },
+        { wrapper: createQueryClientWrapper(queryClient) },
+      );
+
+      expect(getStore).toHaveBeenCalledWith('query-["test",{"a":1,"b":2}]');
+    });
   });
 
   describe('data synchronization', () => {
+    test('syncs store data from other windows into the query cache', async () => {
+      const queryClient = createTestQueryClient();
+      const setQueryDataSpy = vi.spyOn(queryClient, 'setQueryData');
+
+      const { rerender } = await renderHook(
+        () =>
+          useCrossWindowSync({
+            queryKey: ['test'],
+            syncAcrossWindows: true,
+            data: undefined,
+          }),
+        { wrapper: createQueryClientWrapper(queryClient) },
+      );
+
+      // Simulate the store receiving data from another window.
+      mockUseStore.setState({ data: { value: 1 }, lastUpdated: Date.now() });
+
+      await rerender();
+
+      await vi.waitFor(() => {
+        expect(setQueryDataSpy).toHaveBeenCalledWith(['test'], { value: 1 });
+      });
+    });
+
+    test('does not re-sync when re-rendered with an identical query key', async () => {
+      const queryClient = createTestQueryClient();
+      const setQueryDataSpy = vi.spyOn(queryClient, 'setQueryData');
+      const data = { value: 1 };
+
+      const { rerender } = await renderHook(
+        (props?: { data: { value: number } }) =>
+          useCrossWindowSync({
+            queryKey: ['test'],
+            syncAcrossWindows: true,
+            data: props?.data,
+          }),
+        {
+          wrapper: createQueryClientWrapper(queryClient),
+          initialProps: { data },
+        },
+      );
+
+      await vi.waitFor(() => {
+        expect(mockSetData).toHaveBeenCalledWith({ value: 1 });
+      });
+
+      // Re-renders with a fresh queryKey of identical content must not re-sync.
+      await rerender({ data });
+      await rerender({ data });
+
+      expect(mockSetData).toHaveBeenCalledTimes(1);
+      expect(setQueryDataSpy).not.toHaveBeenCalled();
+    });
+
     test('only syncs when data reference changes', async () => {
       const queryClient = createTestQueryClient();
       const data = { value: 42 };

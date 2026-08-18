@@ -4,9 +4,9 @@
  * This module provides functionality for synchronizing React Query cache
  * state across multiple Tauri windows using Zustand stores with @tauri-store/zustand.
  */
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 
-import { useQueryClient, type QueryKey } from '@tanstack/react-query';
+import { hashKey, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import type { StoreApi, UseBoundStore } from 'zustand';
 
 import { createStore, getStore, destroyStore, getStoreIds, type State } from '@/utils/createStore';
@@ -40,7 +40,7 @@ export interface UseCrossWindowSyncOptions<TData> {
  * Creates a unique store ID from a query key.
  */
 function queryKeyToStoreId(queryKey: QueryKey): string {
-  return `query-${JSON.stringify(queryKey)}`;
+  return `query-${hashKey(queryKey)}`;
 }
 
 /**
@@ -116,6 +116,16 @@ export function useCrossWindowSync<TData>({
   const isSyncingFromQueryRef = useRef(false);
   const lastSyncedDataRef = useRef<TData | undefined>(undefined);
 
+  // Serialize the query key so effects depend on its content rather than its
+  // (often recreated) array reference. Callers frequently inline query keys,
+  // which would otherwise re-run the sync effect on every render.
+  const queryKeyHash = useMemo(() => hashKey(queryKey), [queryKey]);
+  const queryKeyRef = useRef(queryKey);
+
+  useEffect(() => {
+    queryKeyRef.current = queryKey;
+  }, [queryKey]);
+
   // Get or create the store for this query
   const useQueryStore = getOrCreateQueryStore<TData>(queryKey);
 
@@ -148,9 +158,9 @@ export function useCrossWindowSync<TData>({
     if (storeData !== undefined && storeData !== lastSyncedDataRef.current) {
       lastSyncedDataRef.current = storeData;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      queryClient.setQueryData(queryKey, storeData as any);
+      queryClient.setQueryData(queryKeyRef.current, storeData as any);
     }
-  }, [storeData, syncAcrossWindows, queryClient, queryKey]);
+  }, [storeData, syncAcrossWindows, queryClient, queryKeyHash]);
 }
 
 /**

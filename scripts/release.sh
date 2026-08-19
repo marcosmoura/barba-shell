@@ -11,6 +11,7 @@ set -euo pipefail
 # What happens:
 # 1. Dependencies are installed with pnpm (locked).
 # 2. Tests, coverage, lint, and a security audit are run (failures abort).
+#    Use --skip-checks to skip all of the above.
 # 3. The Tauri bundle is produced (release by default, override via BUNDLE_PROFILE).
 # 4. The CLI binary is built with cargo.
 # 5. The Rust binaries are installed with `cargo install --path`.
@@ -28,7 +29,7 @@ BUNDLE_PATH=""
 INSTALL_PATH="${APPLICATIONS_DIR}/${APP_NAME}.app"
 SUDO_REFRESHED=0
 SIGNING_IDENTITY="Stache App"
-SKIP_TESTS=0
+SKIP_CHECKS=0
 
 log() {
   echo ''
@@ -236,25 +237,25 @@ main() {
   progress "Installing JavaScript dependencies via pnpm"
   pnpm install --frozen-lockfile
 
-  if ((SKIP_TESTS == 0)); then
+  if ((SKIP_CHECKS == 0)); then
     progress "Running tests"
     pnpm run test || fail "Tests failed. Aborting release."
 
     progress "Running coverage"
     pnpm run test:ui:coverage || fail "Coverage failed. Aborting release."
+
+    progress "Linting"
+    pnpm run lint || fail "Lint failed. Aborting release."
+
+    progress "Auditing dependencies"
+    pnpm audit --prod || fail "JavaScript security audit failed. Aborting release."
+    pnpm run tauri:audit || fail "Security audit failed. Aborting release."
+
+    progress "Formatting code"
+    pnpm run format
   else
-    log "Skipping tests (--skip-tests)"
+    log "Skipping checks (--skip-checks)"
   fi
-
-  progress "Linting"
-  pnpm run lint || fail "Lint failed. Aborting release."
-
-  progress "Auditing dependencies"
-  pnpm audit --prod || fail "JavaScript security audit failed. Aborting release."
-  pnpm run tauri:audit || fail "Security audit failed. Aborting release."
-
-  progress "Formatting code"
-  pnpm run format
 
   progress "Ensuring code signing certificate exists"
   ensure_signing_certificate
@@ -280,8 +281,8 @@ main() {
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
   case "$1" in
-  --skip-tests)
-    SKIP_TESTS=1
+  --skip-checks)
+    SKIP_CHECKS=1
     shift
     ;;
   *)

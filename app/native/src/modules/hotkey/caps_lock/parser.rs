@@ -78,6 +78,8 @@ fn keycode_for_name(key_name: &str) -> Option<i64> {
         "TAB" => Some(48),
         "SPACE" => Some(49),
         "BACKQUOTE" | "GRAVE" => Some(50),
+        // ISO section key: the dedicated `§` key on ISO/ABNT2 layouts.
+        "§" => Some(10),
         "BACKSPACE" | "DELETE" => Some(51),
         "ESCAPE" => Some(53),
         "LEFT" | "ARROWLEFT" => Some(123),

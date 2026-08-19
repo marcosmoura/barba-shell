@@ -57,7 +57,7 @@ const K_CG_KEYBOARD_EVENT_KEYCODE: u32 = 9;
 const K_CG_KEYBOARD_EVENT_AUTOREPEAT: u32 = 8;
 
 /// `kVK_F18` — physical Caps Lock arrives here after the hidutil remap.
-const KEY_F18: i64 = 80;
+const KEY_F18: i64 = 0x4F;
 /// How long to wait for the event tap thread before giving up on the remap.
 const EVENT_TAP_READY_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -338,6 +338,10 @@ mod tests {
             parse_shortcut("CapsLock+Backquote"),
             CapsShortcut::Binding(CapsKey::new(50))
         );
+        assert_eq!(
+            parse_shortcut("CapsLock+§"),
+            CapsShortcut::Binding(CapsKey::new(10))
+        );
     }
 
     #[test]
@@ -617,8 +621,9 @@ mod tests {
 
     #[test]
     fn remapped_caps_events_are_detected() {
-        assert!(is_remapped_caps_lock_event(K_CG_EVENT_KEY_DOWN, KEY_F18));
-        assert!(is_remapped_caps_lock_event(K_CG_EVENT_KEY_UP, KEY_F18));
+        assert!(is_remapped_caps_lock_event(K_CG_EVENT_KEY_DOWN, 0x4F));
+        assert!(is_remapped_caps_lock_event(K_CG_EVENT_KEY_UP, 0x4F));
+        assert!(!is_remapped_caps_lock_event(K_CG_EVENT_KEY_DOWN, 0x50));
     }
 
     #[test]

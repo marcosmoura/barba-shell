@@ -28,6 +28,7 @@ target/
 .env
 coverage
 test-results
+.vitest-attachments/
 
 # Sidecar binaries and resources (downloaded, not committed)
 app/native/binaries/*

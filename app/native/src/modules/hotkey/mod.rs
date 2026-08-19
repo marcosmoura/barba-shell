@@ -7,6 +7,7 @@
 //! and uses Tauri's global-shortcut plugin to register system-wide hotkeys.
 
 mod caps_lock;
+mod section;
 
 use std::collections::HashMap;
 use std::process::Command;
@@ -45,10 +46,15 @@ pub fn register_configured_hotkeys<R: Runtime>(app: &AppHandle<R>) {
         return;
     }
 
-    let (planned_shortcuts, caps_bindings) = collect_planned_shortcuts(keybindings);
+    let (planned_shortcuts, caps_bindings, section_bindings) =
+        collect_planned_shortcuts(keybindings);
 
     if !caps_bindings.is_empty() {
         caps_lock::start(caps_bindings);
+    }
+
+    if !section_bindings.is_empty() {
+        section::start(section_bindings);
     }
 
     if planned_shortcuts.is_empty() {
@@ -103,9 +109,14 @@ pub fn shutdown() { caps_lock::shutdown(); }
 
 fn collect_planned_shortcuts(
     keybindings: &HashMap<String, ShortcutCommands>,
-) -> (PlannedShortcutMap, caps_lock::CapsBindings) {
+) -> (
+    PlannedShortcutMap,
+    caps_lock::CapsBindings,
+    section::SectionBindings,
+) {
     let mut planned_shortcuts = HashMap::new();
     let mut caps_bindings = HashMap::new();
+    let mut section_bindings = HashMap::new();
     let mut sorted_keybindings: Vec<_> = keybindings.iter().collect();
 
     sorted_keybindings.sort_by_key(|(left, _)| *left);
@@ -130,28 +141,52 @@ fn collect_planned_shortcuts(
             caps_lock::CapsShortcut::Invalid(err) => {
                 tracing::warn!(shortcut = %shortcut_key, normalized = %shortcut_str, error = %err, "invalid CapsLock shortcut");
             }
-            caps_lock::CapsShortcut::NotCaps => match shortcut_str.parse::<Shortcut>() {
-                Ok(shortcut) => {
-                    if let Some((previous_raw, _, _)) = planned_shortcuts.insert(
-                        shortcut,
-                        (shortcut_key.clone(), shortcut_str.clone(), commands.clone()),
-                    ) {
-                        tracing::warn!(
-                            shortcut = %shortcut_key,
-                            normalized = %shortcut_str,
-                            previous = %previous_raw,
-                            "duplicate shortcut after normalization; only one binding will be used"
-                        );
+            caps_lock::CapsShortcut::NotCaps => {
+                match section::parse_section_shortcut(&shortcut_str) {
+                    section::SectionShortcut::Binding(mods) => {
+                        if let Some(previous) =
+                            section_bindings.insert(mods, section::SectionBinding {
+                                raw_shortcut: shortcut_key.clone(),
+                                commands: commands.clone(),
+                            })
+                        {
+                            tracing::warn!(
+                                shortcut = %shortcut_key,
+                                normalized = %shortcut_str,
+                                previous = %previous.raw_shortcut,
+                                "duplicate § shortcut after normalization; only one binding will be used"
+                            );
+                        }
+                    }
+                    section::SectionShortcut::Invalid(err) => {
+                        tracing::warn!(shortcut = %shortcut_key, normalized = %shortcut_str, error = %err, "invalid § shortcut");
+                    }
+                    section::SectionShortcut::NotSection => {
+                        match shortcut_str.parse::<Shortcut>() {
+                            Ok(shortcut) => {
+                                if let Some((previous_raw, _, _)) = planned_shortcuts.insert(
+                                    shortcut,
+                                    (shortcut_key.clone(), shortcut_str.clone(), commands.clone()),
+                                ) {
+                                    tracing::warn!(
+                                        shortcut = %shortcut_key,
+                                        normalized = %shortcut_str,
+                                        previous = %previous_raw,
+                                        "duplicate shortcut after normalization; only one binding will be used"
+                                    );
+                                }
+                            }
+                            Err(err) => {
+                                tracing::warn!(shortcut = %shortcut_key, error = %err, "invalid shortcut");
+                            }
+                        }
                     }
                 }
-                Err(err) => {
-                    tracing::warn!(shortcut = %shortcut_key, error = %err, "invalid shortcut");
-                }
-            },
+            }
         }
     }
 
-    (planned_shortcuts, caps_bindings)
+    (planned_shortcuts, caps_bindings, section_bindings)
 }
 
 /// Normalizes a shortcut string to a consistent format for macOS.
@@ -163,6 +198,7 @@ fn collect_planned_shortcuts(
 /// - "Alt" and "Opt" are normalized to "Option" (macOS Option key)
 /// - "Super" and "Meta" are normalized to "Command"
 /// - backtick (`` ` ``) is normalized to "Backquote"
+/// - the literal `§` key is left untouched for direct Carbon registration
 fn normalize_shortcut(shortcut: &str) -> String {
     let mut result = String::with_capacity(shortcut.len() + 8);
 
@@ -498,7 +534,7 @@ mod tests {
             ShortcutCommands::Single("stache reload".to_string()),
         );
 
-        let (standard, caps) = collect_planned_shortcuts(&keybindings);
+        let (standard, caps, _section) = collect_planned_shortcuts(&keybindings);
 
         assert_eq!(standard.len(), 1);
         assert_eq!(caps.len(), 1);
@@ -517,7 +553,7 @@ mod tests {
             ShortcutCommands::Single("stache reload".to_string()),
         );
 
-        let (standard, caps) = collect_planned_shortcuts(&keybindings);
+        let (standard, caps, _section) = collect_planned_shortcuts(&keybindings);
 
         assert_eq!(standard.len(), 1);
         assert!(caps.is_empty());
@@ -536,12 +572,83 @@ mod tests {
             ),
         ]);
 
-        let (_standard, caps) = collect_planned_shortcuts(&keybindings);
+        let (_standard, caps, _section) = collect_planned_shortcuts(&keybindings);
         let binding = caps.get(&caps_lock::CapsKey::new(1)).expect("caps binding exists");
 
         assert!(
             matches!(&binding.commands, ShortcutCommands::Single(command) if command == "second")
         );
+    }
+
+    #[test]
+    fn test_normalize_shortcut_section_key() {
+        assert_eq!(normalize_shortcut("§"), "§");
+        assert_eq!(normalize_shortcut("Command+§"), "Command+§");
+        assert_eq!(normalize_shortcut("Ctrl+Opt+Shift+§"), "Control+Option+Shift+§");
+    }
+
+    #[test]
+    fn test_collect_planned_shortcuts_separates_section_bindings() {
+        let mut keybindings = HashMap::new();
+        keybindings.insert(
+            "§".to_string(),
+            ShortcutCommands::Single("stache reload".to_string()),
+        );
+        keybindings.insert(
+            "Command+§".to_string(),
+            ShortcutCommands::Single("screencapture -i -c".to_string()),
+        );
+        keybindings.insert(
+            "Command+Control+R".to_string(),
+            ShortcutCommands::Single("stache reload".to_string()),
+        );
+        keybindings.insert(
+            "CapsLock+§".to_string(),
+            ShortcutCommands::Single("caps section".to_string()),
+        );
+
+        let (standard, caps, section) = collect_planned_shortcuts(&keybindings);
+
+        assert_eq!(standard.len(), 1);
+        assert_eq!(caps.len(), 1);
+        assert!(caps.contains_key(&caps_lock::CapsKey::new(10)));
+        assert_eq!(section.len(), 2);
+        assert!(section.contains_key(&0));
+        assert!(section.contains_key(&section::MOD_CMD));
+    }
+
+    #[test]
+    fn test_collect_planned_shortcuts_section_duplicate_last_wins() {
+        let keybindings = HashMap::from([
+            (
+                "Command+§".to_string(),
+                ShortcutCommands::Single("second".to_string()),
+            ),
+            (
+                "Cmd+§".to_string(),
+                ShortcutCommands::Single("first".to_string()),
+            ),
+        ]);
+
+        let (_standard, _caps, section) = collect_planned_shortcuts(&keybindings);
+        let binding = section.get(&section::MOD_CMD).expect("section binding exists");
+
+        assert!(
+            matches!(&binding.commands, ShortcutCommands::Single(command) if command == "second")
+        );
+    }
+
+    #[test]
+    fn test_collect_planned_shortcuts_rejects_invalid_section_shortcut() {
+        let keybindings = HashMap::from([(
+            "Fn+§".to_string(),
+            ShortcutCommands::Single("ignored".to_string()),
+        )]);
+
+        let (standard, _caps, section) = collect_planned_shortcuts(&keybindings);
+
+        assert!(standard.is_empty());
+        assert!(section.is_empty());
     }
 
     // ========================================================================

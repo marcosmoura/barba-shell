@@ -95,6 +95,12 @@ pub fn register_configured_hotkeys<R: Runtime>(app: &AppHandle<R>) {
     tracing::info!(registered, failed, "finished registering global shortcuts");
 }
 
+/// Restores the Caps Lock remapping applied for `CapsLock+<key>` bindings.
+///
+/// Called during application shutdown so the physical Caps Lock key returns to
+/// its normal behavior after Stache exits.
+pub fn shutdown() { caps_lock::shutdown(); }
+
 fn collect_planned_shortcuts(
     keybindings: &HashMap<String, ShortcutCommands>,
 ) -> (PlannedShortcutMap, caps_lock::CapsBindings) {

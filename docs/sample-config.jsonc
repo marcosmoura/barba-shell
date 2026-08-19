@@ -88,8 +88,10 @@
   //   - "Option" or "Alt" (Option/Alt key)
   //   - "Shift" (Shift key)
   //   - "Super" or "Meta" (mapped to Command on macOS)
-  //   - "CapsLock" (Stache-only pseudo modifier; only "CapsLock+<single key>" is supported;
-  //     tap alone toggles Caps Lock)
+  //   - "CapsLock" (Stache-only pseudo modifier; only "CapsLock+<single key>" is supported)
+  //     While any "CapsLock+<key>" binding is configured, Stache remaps the Caps
+  //     Lock key at the HID layer: tapping Caps Lock alone does nothing (no toggle,
+  //     LED stays off), and holding it with a bound key runs the command.
   //
   // Values can be:
   //   - A single command string
@@ -114,8 +116,9 @@
     // "Command+H": "",
 
     // Example: Use Caps Lock as a Stache modifier
-    // Press and hold Caps Lock with S to run the command.
-    // Press and release Caps Lock alone to toggle capitalization normally.
+    // Hold Caps Lock and press S to run the command.
+    // While this binding is configured, tapping Caps Lock alone does nothing:
+    // Caps Lock never toggles and its LED stays off.
     // "CapsLock+S": "screencapture -i -c",
 
     // Example: Open specific applications

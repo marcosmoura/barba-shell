@@ -2,8 +2,9 @@
 //!
 //! Guarantees correct cleanup order on exit or restart:
 //! 1. Restore applications hidden by Stache.
-//! 2. Shut down the tiling window manager.
-//! 3. Stop the IPC socket server.
+//! 2. Restore the Caps Lock remapping applied for `CapsLock` keybindings.
+//! 3. Shut down the tiling window manager.
+//! 4. Stop the IPC socket server.
 //!
 //! # Signal Handling
 //!
@@ -28,7 +29,7 @@ use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use tauri::{AppHandle, Runtime};
 
-use crate::modules::tiling;
+use crate::modules::{hotkey, tiling};
 use crate::platform;
 
 // ============================================================================
@@ -288,6 +289,7 @@ pub fn cleanup_once() {
                 restored = summary.restored,
                 "restored applications hidden by Stache"
             );
+            hotkey::shutdown();
         },
         tiling::shutdown,
         platform::ipc_socket::stop_server,

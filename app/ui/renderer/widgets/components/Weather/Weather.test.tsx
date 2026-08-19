@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { render } from 'vitest-browser-react';
 
 import type { WeatherData } from '@/stores/WeatherStore';
@@ -71,8 +71,14 @@ const createMockWeather = (overrides: Partial<WeatherData> = {}): WeatherData =>
 
 describe('Weather widget', () => {
   beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-18T14:00:00'));
     mockWeather = undefined;
     mockInvoke.mockClear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   test('renders a loading state without weather data', async () => {

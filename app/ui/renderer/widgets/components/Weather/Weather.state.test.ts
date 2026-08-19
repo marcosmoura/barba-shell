@@ -119,6 +119,9 @@ describe('useWeatherWidget', () => {
   });
 
   test('limits the hourly rain forecast to the next 12 hours', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-18T14:00:00'));
+
     const hours = Array.from({ length: 24 }, (_, index) => ({
       datetime: `${String(index).padStart(2, '0')}:00`,
       temp: 20,
@@ -152,6 +155,8 @@ describe('useWeatherWidget', () => {
 
     expect(result.current.weather?.hourlyRainForecast.length).toBeGreaterThan(0);
     expect(result.current.weather?.hourlyRainForecast.length).toBeLessThanOrEqual(12);
+
+    vi.useRealTimers();
   });
 
   test('formats OpenMeteo ISO timestamps and includes hours from the next day', async () => {
